@@ -14,7 +14,7 @@ import (
 	"orchestrator/internal/orchestrator"
 )
 
-func TestOutputScrollKeyboardAndMouse(t *testing.T) {
+func TestOutputScrollKeyboard(t *testing.T) {
 	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -30,12 +30,7 @@ func TestOutputScrollKeyboardAndMouse(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "line-39") || strings.Contains(view, "line-00") {
 		t.Fatalf("initial view not at bottom: %s", view)
 	}
-	next, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
-	m = next.(model)
-	if m.historyOffset != 3 {
-		t.Fatalf("mouse offset %d", m.historyOffset)
-	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyHome})
 	m = next.(model)
 	if m.historyOffset != m.maxScroll() || m.historyOffset == 0 {
 		t.Fatalf("home offset %d of %d", m.historyOffset, m.maxScroll())
@@ -45,12 +40,18 @@ func TestOutputScrollKeyboardAndMouse(t *testing.T) {
 	if m.historyOffset != 0 {
 		t.Fatalf("end offset %d", m.historyOffset)
 	}
-	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
-	m = next.(model)
-	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
-	m = next.(model)
-	if m.historyOffset != 0 {
-		t.Fatalf("wheel down offset %d", m.historyOffset)
+}
+
+func TestMouseWheelStaysWithTerminal(t *testing.T) {
+	task := orchestrator.Task{ID: "x", Title: "title", Output: strings.Repeat("output\n", 100)}
+	m := model{width: 100, height: 20, tasks: []orchestrator.Task{task}}
+	before := m.historyOffset
+	for _, button := range []tea.MouseButton{tea.MouseButtonWheelUp, tea.MouseButtonWheelDown} {
+		next, _ := m.Update(tea.MouseMsg{Button: button})
+		m = next.(model)
+	}
+	if m.historyOffset != before {
+		t.Fatalf("mouse wheel changed scroll offset: %d", m.historyOffset)
 	}
 }
 

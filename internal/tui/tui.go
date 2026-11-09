@@ -65,7 +65,10 @@ func Run(service *orchestrator.Service, workspace string) error {
 		router:    true,
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 	}
-	_, err := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	// Leave mouse reporting to the terminal so drag-selection and the terminal's
+	// own copy/paste bindings keep working. The UI has keyboard navigation for
+	// every mouse action.
+	_, err := tea.NewProgram(initial, tea.WithAltScreen()).Run()
 	return err
 }
 
@@ -123,25 +126,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
-	case tea.MouseMsg:
-		if m.help {
-			if msg.Button == tea.MouseButtonWheelUp {
-				m.scrollHelpBody(-3)
-			}
-			if msg.Button == tea.MouseButtonWheelDown {
-				m.scrollHelpBody(3)
-			}
-			return m, nil
-		}
-		if m.input.kind == "" && !m.router && m.cleanup.kind == "" && m.agentPicker.target == "" && m.profilePicker.target == "" {
-			switch msg.Button {
-			case tea.MouseButtonWheelUp:
-				m.scrollDetail(3)
-			case tea.MouseButtonWheelDown:
-				m.scrollDetail(-3)
-			}
-		}
-		return m, nil
 	case tea.KeyMsg:
 		if m.help {
 			return m.helpKey(msg.String())

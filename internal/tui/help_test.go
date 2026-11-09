@@ -8,7 +8,7 @@ import (
 )
 
 func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
-	m := model{width: 80, height: 18, help: true}
+	m := model{width: 80, height: 14, help: true}
 	view := m.View()
 	if !strings.Contains(view, "KEYBOARD SHORTCUTS") {
 		t.Fatal(view)
@@ -20,8 +20,13 @@ func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
 	}
 	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
 	m = next.(model)
+	if m.helpScroll != 0 {
+		t.Fatal("help consumed terminal mouse input")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(model)
 	if m.helpScroll == 0 {
-		t.Fatal("wheel did not scroll help")
+		t.Fatal("help did not scroll from keyboard")
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
 	m = next.(model)

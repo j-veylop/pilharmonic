@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"orchestrator/internal/orchestrator"
@@ -51,8 +50,6 @@ func TestExpandedActivityScrollableAndFits(t *testing.T) {
 		if !strings.Contains(m.View(), "ARGUMENTS") {
 			t.Fatalf("top missing: %s", m.View())
 		}
-		next, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
-		m = next.(model)
 		m.historyOffset = 0
 		view := m.View()
 		if !strings.Contains(view, "END-RESULT") {

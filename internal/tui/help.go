@@ -18,7 +18,6 @@ Ctrl-b / f     Full page up / down
 Ctrl-y / e     One detail line up / down
 PgUp / PgDn    Page details
 Home / End     Top / bottom of details
-Mouse wheel    Scroll details
 Enter          Toggle pane focus
 z              Expand details to full width
 Esc            Return / close expanded activity`},
@@ -52,6 +51,7 @@ Ctrl-u / d     Scroll expanded arguments and results`},
 ?              Open / close this help
 q              Quit (closes help when open)
 Ctrl-c         Quit application
+Drag / paste   Select and paste with the terminal
 
 COMPOSERS & PICKERS
 Enter          Submit input / confirm agent or profile

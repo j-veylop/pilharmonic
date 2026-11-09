@@ -72,3 +72,19 @@ func TestCancelComposerClearsTargetAndDraft(t *testing.T) {
 		t.Fatalf("canceled input retained state: %+v", m.input)
 	}
 }
+
+func TestBracketedPasteEntersComposers(t *testing.T) {
+	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q?\nsecond line"), Paste: true}
+
+	m := model{input: composer{kind: newTaskInput}}
+	m = key(m, paste)
+	if m.input.text != "q?\nsecond line" || m.help {
+		t.Fatalf("composer did not retain pasted text: %q", m.input.text)
+	}
+
+	m = model{router: true}
+	m = key(m, paste)
+	if m.routerDraft != "q?\nsecond line" || !m.router {
+		t.Fatalf("router did not retain pasted text: %q", m.routerDraft)
+	}
+}

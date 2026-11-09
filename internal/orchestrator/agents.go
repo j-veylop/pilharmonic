@@ -94,7 +94,7 @@ func (s *Service) SetTaskAgent(id, name string) error {
 		t.UpdatedAt = time.Now().UTC()
 		t.Events = append(t.Events, Event{t.UpdatedAt, "agent", "Executor selected: " + name})
 		if t.IsolationAuto && t.ExecutionWorkspace == "" {
-			isolated := taskMakesChanges(t.Prompt, name)
+			isolated := taskMakesChanges(t.Prompt, isInspectionSpecialist(name, s.runners[name]))
 			if isolated != t.Isolated {
 				t.Isolated = isolated
 				message := "Read-only inspection request keeps the source workspace; no managed worktree requested"

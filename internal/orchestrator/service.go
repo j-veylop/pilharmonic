@@ -336,11 +336,12 @@ type workspacePlan struct {
 func (s *Service) defaultWorkspacePlan(workspace, prompt, agent string) workspacePlan {
 	s.mu.Lock()
 	enabled := s.defaultIsolation
+	inspection := isInspectionSpecialist(agent, s.runners[agent])
 	s.mu.Unlock()
 	if !enabled || !workspaceIsolatable(workspace) {
 		return workspacePlan{}
 	}
-	return workspacePlan{isolated: taskMakesChanges(prompt, agent), automatic: true}
+	return workspacePlan{isolated: taskMakesChanges(prompt, inspection), automatic: true}
 }
 
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.

@@ -17,6 +17,13 @@ var inspectionRoles = map[string]bool{
 	"tester":   true,
 }
 
+// A command can replace a bundled specialist under the same name. Only the
+// bundled Pi executor carries the inspection instructions for that role.
+func isInspectionSpecialist(name string, runner Runner) bool {
+	pi, ok := runner.(PiRunner)
+	return ok && pi.instructions != "" && inspectionRoles[name]
+}
+
 // changeVerbs are imperative actions that normally require a writable,
 // isolated workspace. Only verbs in request position count, so inspecting an
 // existing change still stays in the source workspace.
@@ -224,17 +231,17 @@ func trimRequestPoliteness(text string) string {
 // requested. Requests matching neither signal retain automatic isolation.
 //
 // This is a lexical role heuristic, not proof of what an agent will do. A
-// misleading mandate or a custom executor using an inspection role name can
+// misleading mandate can
 // still write to the shared workspace. Operators can explicitly enable
 // isolation for any queued task.
-func taskMakesChanges(prompt, agent string) bool {
+func taskMakesChanges(prompt string, inspectionRole bool) bool {
 	if mandateRequestsChanges(prompt) {
 		return true
 	}
 	if inspectionRequest(prompt) {
 		return false
 	}
-	return !inspectionRoles[agent]
+	return !inspectionRole
 }
 
 // inspectionRequest recognizes an inspection opening even when the selected

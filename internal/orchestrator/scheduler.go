@@ -74,6 +74,13 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	t.ScheduleRequested = false
 	t.ScheduledAt = time.Time{}
 	t.UpdatedAt = time.Now().UTC()
+	// The configured executor can change between acceptance and launch,
+	// including across a restart. Preserve explicit workspace choices.
+	if t.IsolationAuto && !t.Isolated && t.ExecutionWorkspace == "" &&
+		taskMakesChanges(t.Prompt, isInspectionSpecialist(t.Agent, runner)) {
+		t.Isolated = true
+		t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Isolated worktree selected for the configured executor"})
+	}
 	t.Output = ""
 	t.Error = ""
 	t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""

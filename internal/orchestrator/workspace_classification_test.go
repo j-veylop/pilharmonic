@@ -54,7 +54,7 @@ func TestTaskMakesChangesClassification(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := taskMakesChanges(tc.prompt, tc.agent); got != tc.want {
+			if got := taskMakesChanges(tc.prompt, inspectionRoles[tc.agent]); got != tc.want {
 				t.Fatalf("taskMakesChanges(%q, %q) = %v, want %v", tc.prompt, tc.agent, got, tc.want)
 			}
 		})
@@ -189,9 +189,7 @@ func TestChangeRequestsRetainIsolation(t *testing.T) {
 func TestExecutorChangeReclassifiesAutomaticIsolation(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	for _, agent := range []string{"reviewer", "explorer", "implementer"} {
-		s.RegisterRunner(agent, runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-	}
+	s.LoadBuiltinSpecialists()
 	task, err := s.CreateTask("draft", "do work", repo)
 	if err != nil {
 		t.Fatal(err)
@@ -251,12 +249,7 @@ func TestAutomaticWorkspaceChoiceSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Shutdown() })
-	registerNoop := func(service *Service) {
-		for _, agent := range []string{"reviewer", "implementer"} {
-			service.RegisterRunner(agent, runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-		}
-	}
-	registerNoop(s)
+	s.LoadBuiltinSpecialists()
 
 	inspection, err := s.CreateTask("inspect", "review the parser", repo)
 	if err != nil {
@@ -283,7 +276,7 @@ func TestAutomaticWorkspaceChoiceSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = restored.Shutdown() })
-	registerNoop(restored)
+	restored.LoadBuiltinSpecialists()
 
 	gotInspection, _ := restored.GetTask(inspection.ID)
 	if gotInspection.Isolated || gotInspection.IsolationAuto {
@@ -335,5 +328,49 @@ func TestRelatedInspectionTaskUsesSharedWorkspace(t *testing.T) {
 	await(t, s, task.ID, Completed)
 	if run := <-seen; run.Workspace != repo {
 		t.Fatalf("related inspection runner cwd %q, want %q", run.Workspace, repo)
+	}
+}
+
+func TestCustomReviewerKeepsAmbiguousWorkIsolated(t *testing.T) {
+	repo := committedRepo(t)
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := openTestService(t, path)
+	s.LoadBuiltinSpecialists()
+	task, err := s.CreateTask("draft", "do work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTaskAgent(task.ID, "reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	if selected, _ := s.GetTask(task.ID); selected.Isolated {
+		t.Fatal("expected shared workspace for bundled reviewer")
+	}
+	if err := s.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+
+	restored := openTestService(t, path)
+	if err := restored.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"reviewer","command":"cat"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	restored.LoadBuiltinSpecialists()
+	draft, err := restored.CreateTask("another draft", "do work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.SetTaskAgent(draft.ID, "reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	if selected, _ := restored.GetTask(draft.ID); !selected.Isolated {
+		t.Fatal("custom reviewer selected the shared checkout")
+	}
+
+	if err := restored.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, restored, task.ID, Completed)
+	if !done.Isolated || done.ExecutionWorkspace == "" || done.ExecutionWorkspace == repo {
+		t.Fatalf("restored task ran without isolation: %+v", done)
 	}
 }

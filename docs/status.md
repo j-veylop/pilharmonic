@@ -310,10 +310,10 @@ rejection neither undoes a merge nor removes the retained worktree.
 - Isolation is the default for new change work when the source workspace is a
   Git repository with a committed `HEAD`, and can be disabled with
   `-isolation=false` or per task before start. Read-only inspection requests
-  and inspection-role tasks with no edit action share the source workspace.
-  Classification is a lexical role and request-opening heuristic: a custom
-  executor using an inspection role name, or a misleading mandate, can still
-  write to the shared workspace; an explicit `w` choice or `-isolation=false`
+  and bundled inspection-role tasks with no edit action share the source workspace.
+  Custom executor names do not establish inspection behavior. Classification
+  uses the mandate as a heuristic, so a misleading request can still lead
+  to writes in the shared workspace; an explicit `w` choice or `-isolation=false`
   controls the default.
   Isolation starts from that commit: uncommitted source files are absent, a
   repository with no commit cannot be isolated, and the `git` executable is

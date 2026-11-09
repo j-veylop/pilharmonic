@@ -104,6 +104,49 @@ func TestToolActivityInterleavedCallsKeepOneRowPerCall(t *testing.T) {
 	}
 }
 
+func TestThinkingBlocksAreHiddenByDefaultAndToggleable(t *testing.T) {
+	input := "Before\n[thinking]\nprivate reasoning\nsecond line\n[/thinking]\nAfter\n"
+	hidden := ansi.Strip(strings.Join(renderedOutput(input, 80), "\n"))
+	if strings.Contains(hidden, "private reasoning") || strings.Contains(hidden, "second line") {
+		t.Fatalf("hidden thinking leaked text: %q", hidden)
+	}
+	for _, want := range []string{"Before", "After", "thinking hidden"} {
+		if !strings.Contains(hidden, want) {
+			t.Fatalf("missing %q in %q", want, hidden)
+		}
+	}
+	shown := ansi.Strip(strings.Join(renderedOutputWithThinking(input, 80, defaultRunningGlyph, true), "\n"))
+	for _, want := range []string{"THINKING", "private reasoning", "second line", "Before", "After"} {
+		if !strings.Contains(shown, want) {
+			t.Fatalf("missing %q in %q", want, shown)
+		}
+	}
+	if strings.Contains(shown, "[thinking]") || strings.Contains(shown, "[/thinking]") {
+		t.Fatalf("raw marker leaked: %q", shown)
+	}
+}
+
+func TestThinkingBlocksAcceptClosingMarkerVariantsAndTruncatedTail(t *testing.T) {
+	for _, input := range []string{
+		"start\n[thinking]\nsecret\n[thinking end]\nend\n",
+		"start\n[thinking_start]\nsecret\n[thinking_end]\nend\n",
+		"start\n[thinking] secret\n[thinking] second secret\nend\n",
+	} {
+		hidden := ansi.Strip(strings.Join(renderedOutput(input, 60), "\n"))
+		if strings.Contains(hidden, "secret") || !strings.Contains(hidden, "start") || !strings.Contains(hidden, "end") {
+			t.Fatalf("marker variant failed: %q", hidden)
+		}
+		shown := ansi.Strip(strings.Join(renderedOutputWithThinking(input, 60, defaultRunningGlyph, true), "\n"))
+		if !strings.Contains(shown, "secret") || !strings.Contains(shown, "THINKING") {
+			t.Fatalf("shown marker variant failed: %q", shown)
+		}
+	}
+	truncated := ansi.Strip(strings.Join(renderedOutput("old tail\n[/thinking]\nvisible\n", 60), "\n"))
+	if strings.Contains(truncated, "[/thinking]") || !strings.Contains(truncated, "visible") {
+		t.Fatalf("truncated tail failed: %q", truncated)
+	}
+}
+
 func TestMarkdownSanitizesControlsAndPreservesLogs(t *testing.T) {
 	lines := renderedOutput("line-01\nline-02\n\x1b[999Cunsafe\ttext", 40)
 	all := strings.Join(lines, "\n")

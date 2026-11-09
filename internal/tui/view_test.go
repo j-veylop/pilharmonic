@@ -2,9 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"orchestrator/internal/orchestrator"
@@ -132,6 +134,39 @@ func TestDetailTabsOmitActivityTab(t *testing.T) {
 		if !strings.Contains(tabs, "OUTPUT") || !strings.Contains(tabs, "HISTORY") {
 			t.Fatalf("missing output/history tabs: %q", tabs)
 		}
+	}
+}
+
+func TestThinkingToggleChangesOutputAndKeepsLayoutBounded(t *testing.T) {
+	service, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := orchestrator.Task{ID: "thinking", Title: "reason", Prompt: "work", Status: orchestrator.Running,
+		Output: "visible before\n[thinking]\nprivate reasoning\n[/thinking]\nvisible after\n"}
+	m := model{service: service, width: 120, height: 30, tasks: []orchestrator.Task{task}}
+	hidden := ansi.Strip(m.View())
+	if strings.Contains(hidden, "private reasoning") || !strings.Contains(hidden, "thinking hidden") {
+		t.Fatalf("thinking should start hidden: %s", hidden)
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m = next.(model)
+	m.tasks = []orchestrator.Task{task}
+	if !m.thinking {
+		t.Fatal("T did not enable thinking")
+	}
+	shown := ansi.Strip(m.View())
+	if !strings.Contains(shown, "private reasoning") || !strings.Contains(shown, "THINKING") {
+		t.Fatalf("thinking not shown: %s", shown)
+	}
+	if lipgloss.Width(m.View()) > m.width || lipgloss.Height(m.View()) > m.height {
+		t.Fatal("thinking output overflowed the terminal")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m = next.(model)
+	m.tasks = []orchestrator.Task{task}
+	if m.thinking {
+		t.Fatal("T did not hide thinking")
 	}
 }
 

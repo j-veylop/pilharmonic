@@ -387,7 +387,7 @@ func (m model) detailContent(width int) []string {
 		if t.Output == "" {
 			add(mutedStyle.Render("Waiting for output…"))
 		} else {
-			lines = append(lines, renderedOutputWithGlyph(t.Output, width, m.runningGlyph())...)
+			lines = append(lines, renderedOutputWithThinking(t.Output, width, m.runningGlyph(), m.thinking)...)
 		}
 	}
 	return lines
@@ -467,14 +467,14 @@ func (m model) detailPanel(width, height int) string {
 }
 
 func (m model) footer(w int) string {
-	footerText := "n new · / route · r run · h/l focus · z expand · tab history · t activity · ? help · q quit"
+	footerText := "n new · / route · r run · h/l focus · z expand · tab history · t activity · T thinking · ? help · q quit"
 	switch {
 	case m.router:
 		footerText = routerFooterHint()
 	case m.activity:
 		footerText = "t output · j/k select · enter expand · esc collapse · wheel/^u/^d scroll · h tasks · ? help"
 	case m.detailFocus || m.fullscreen:
-		footerText = "j/k scroll · ^u/^d page · gg/G · h tasks · ? help · q quit"
+		footerText = "j/k scroll · ^u/^d page · gg/G · T thinking · h tasks · ? help · q quit"
 	case w < 76:
 		footerText = "j/k tasks · l details · / route · z expand · ? help · q quit"
 	}

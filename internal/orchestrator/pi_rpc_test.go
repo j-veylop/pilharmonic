@@ -208,6 +208,26 @@ while read line; do :; done
 	}
 }
 
+func TestPiRPCCapturesThinkingBlocks(t *testing.T) {
+	script := `read initial
+printf '%s\n' '{"type":"response","id":"initial","success":true,"data":{"disposition":"started"}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"private reasoning"}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"private reasoning"}}' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"answer"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}' '{"type":"agent_settled"}'
+while read line; do :; done
+`
+	var output bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := (PiRunner{Command: fakePi(t, script)}).RunLive(ctx, Task{Prompt: "do work", Workspace: t.TempDir()}, &output, nil, func(string, bool, string) {}); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if !strings.Contains(got, thinkingStartMarker) || !strings.Contains(got, thinkingEndMarker) || !strings.Contains(got, "answer") {
+		t.Fatalf("missing thinking block or answer: %q", got)
+	}
+	if strings.Count(got, "private reasoning") != 1 {
+		t.Fatalf("thinking content duplicated or lost: %q", got)
+	}
+}
+
 func TestPiRPCEmitsStructuredProgressReport(t *testing.T) {
 	script := `read initial
 printf '%s\n' '{"type":"response","id":"initial","success":true,"data":{"disposition":"started"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}' '{"type":"agent_settled"}'

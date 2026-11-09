@@ -28,6 +28,32 @@ func TestPiStream(t *testing.T) {
 		t.Fatal(output.String())
 	}
 }
+func TestPiStreamCapturesThinkingBlocks(t *testing.T) {
+	path := fakePi(t, `printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"private "}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"reasoning"}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"private reasoning"}}' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"answer"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}'`)
+	var output bytes.Buffer
+	if err := (PiRunner{Command: path}).Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, &output); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if !strings.Contains(got, thinkingStartMarker) || !strings.Contains(got, thinkingEndMarker) {
+		t.Fatalf("missing thinking markers: %q", got)
+	}
+	if strings.Count(got, "private reasoning") != 1 || !strings.Contains(got, "answer") {
+		t.Fatalf("thinking or answer duplicated/lost: %q", got)
+	}
+}
+
+func TestPiStreamUsesEndContentWhenThinkingHasNoDeltas(t *testing.T) {
+	path := fakePi(t, `printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"[Reasoning redacted]"}}' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"answer"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}'`)
+	var output bytes.Buffer
+	if err := (PiRunner{Command: path}).Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Reasoning redacted") {
+		t.Fatalf("thinking content lost: %q", output.String())
+	}
+}
+
 func TestPiRunnersRequestDedicatedFileTools(t *testing.T) {
 	check := func(t *testing.T, path string) string {
 		t.Helper()

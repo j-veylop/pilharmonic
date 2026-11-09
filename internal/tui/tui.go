@@ -26,6 +26,7 @@ type isolationResultMsg struct {
 
 type model struct {
 	activity         bool
+	thinking         bool
 	activityFilter   int
 	activityID       string
 	activityAttempt  string
@@ -373,6 +374,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activity {
 				m.historyOffset = m.maxScroll()
 			}
+		case "T":
+			m.thinking = !m.thinking
+			m.clampScroll()
 		case "tab":
 			m.activity = false
 			m.activityExpanded = false

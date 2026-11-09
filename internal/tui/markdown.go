@@ -15,9 +15,10 @@ import (
 // not rebuild the Markdown renderer, without retaining prior task transcripts.
 var markdownCache struct {
 	sync.Mutex
-	text  string
-	width int
-	lines []string
+	text     string
+	width    int
+	thinking bool
+	lines    []string
 }
 
 // toolMarkerPattern matches the inline tool markers written by the Pi adapter.
@@ -39,22 +40,70 @@ func parseToolMarker(line string) (transcriptToolCall, bool) {
 	return transcriptToolCall{status: match[1], summary: strings.TrimSpace(terminalText(match[2]))}, true
 }
 
+// parseThinkingMarker recognizes the display-only boundaries written by the Pi
+// adapter. Like tool markers, these are hints: agent text that happens to look
+// like a marker is still untrusted data.
+func parseThinkingMarker(line string) (open, closing bool) {
+	switch strings.TrimSpace(strings.TrimRight(line, "\r")) {
+	case "[thinking]", "[thinking start]", "[thinking_start]":
+		return true, false
+	case "[/thinking]", "[thinking end]", "[thinking_end]":
+		return false, true
+	}
+	return false, false
+}
+
+// parseInlineThinking accepts the compact "[thinking] text" form as well as the
+// line-delimited block form. It is a convenience for adapters that annotate each
+// delta instead of writing explicit start and end boundaries.
+func parseInlineThinking(line string) (string, bool) {
+	trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
+	if !strings.HasPrefix(trimmed, "[thinking]") {
+		return "", false
+	}
+	content := strings.TrimSpace(strings.TrimPrefix(trimmed, "[thinking]"))
+	return content, content != ""
+}
+
+func appendThinking(out []string, block string, width int, showThinking bool) []string {
+	if !showThinking {
+		out = append(out, strings.Split(ansi.Hardwrap(mutedStyle.Render("▌ thinking hidden · T to show"), width, true), "\n")...)
+		return append(out, "")
+	}
+	if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+		out = append(out, "")
+	}
+	out = append(out, strings.Split(ansi.Hardwrap(mutedStyle.Render("▌ THINKING"), width, true), "\n")...)
+	if strings.TrimSpace(block) == "" {
+		out = append(out, mutedStyle.Render("(no thinking text)"))
+	} else {
+		out = append(out, renderMarkdown(block, width)...)
+	}
+	return append(out, "")
+}
+
 func renderedOutput(text string, width int) []string {
 	return renderedOutputWithGlyph(text, width, defaultRunningGlyph)
 }
 
 // renderedOutputWithGlyph reuses the Markdown render cache and substitutes the
-// current spinner frame for running tool rows. The cached lines keep a
-// placeholder so animation does not force a full Glamour re-render per frame.
+// current spinner frame for running tool rows. Thinking blocks stay hidden.
 func renderedOutputWithGlyph(text string, width int, glyph string) []string {
+	return renderedOutputWithThinking(text, width, glyph, false)
+}
+
+// renderedOutputWithThinking renders a transcript and chooses whether thinking
+// blocks are visible. The cached lines keep a placeholder so animation does not
+// force a full Glamour re-render per frame.
+func renderedOutputWithThinking(text string, width int, glyph string, showThinking bool) []string {
 	if width < 1 {
 		return nil
 	}
 	markdownCache.Lock()
 	defer markdownCache.Unlock()
-	if markdownCache.lines == nil || markdownCache.text != text || markdownCache.width != width {
-		lines := renderTranscript(text, width)
-		markdownCache.text, markdownCache.width, markdownCache.lines = text, width, lines
+	if markdownCache.lines == nil || markdownCache.text != text || markdownCache.width != width || markdownCache.thinking != showThinking {
+		lines := renderTranscriptWithThinking(text, width, showThinking)
+		markdownCache.text, markdownCache.width, markdownCache.thinking, markdownCache.lines = text, width, showThinking, lines
 	}
 	result := append([]string(nil), markdownCache.lines...)
 	if glyph == "" {
@@ -66,16 +115,63 @@ func renderedOutputWithGlyph(text string, width int, glyph string) []string {
 	return result
 }
 
-// renderTranscript keeps assistant prose and tool activity as separate visual
-// blocks: prose goes through Markdown, tool markers become compact status rows.
+// renderTranscript keeps the historical hidden-thinking behavior for callers
+// that only need the default transcript.
 func renderTranscript(text string, width int) []string {
+	return renderTranscriptWithThinking(text, width, false)
+}
+
+// renderTranscriptWithThinking keeps assistant prose, thinking and tool
+// activity as separate visual blocks: prose goes through Markdown, tool markers
+// become compact status rows, and thinking is either collapsed or shown.
+func renderTranscriptWithThinking(text string, width int, showThinking bool) []string {
 	raw := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	var out []string
 	for i := 0; i < len(raw); {
+		if open, closing := parseThinkingMarker(raw[i]); open || closing {
+			if closing {
+				// A retained tail can start after the opening marker was trimmed.
+				i++
+				continue
+			}
+			i++
+			start := i
+			for i < len(raw) {
+				if _, closing := parseThinkingMarker(raw[i]); closing {
+					break
+				}
+				i++
+			}
+			block := strings.Trim(terminalText(strings.Join(raw[start:i], "\n")), "\n")
+			if i < len(raw) {
+				i++
+			}
+			out = appendThinking(out, block, width, showThinking)
+			continue
+		}
+		if _, ok := parseInlineThinking(raw[i]); ok {
+			var parts []string
+			for i < len(raw) {
+				part, ok := parseInlineThinking(raw[i])
+				if !ok {
+					break
+				}
+				parts = append(parts, part)
+				i++
+			}
+			out = appendThinking(out, terminalText(strings.Join(parts, "\n")), width, showThinking)
+			continue
+		}
 		if _, ok := parseToolMarker(raw[i]); !ok {
 			start := i
 			for i < len(raw) {
 				if _, ok := parseToolMarker(raw[i]); ok {
+					break
+				}
+				if open, closing := parseThinkingMarker(raw[i]); open || closing {
+					break
+				}
+				if _, ok := parseInlineThinking(raw[i]); ok {
 					break
 				}
 				i++

@@ -41,6 +41,7 @@ p              Report: kind followed by message
 VIEWS & ACTIVITY
 Tab            Switch output / history
 t              Toggle tool activity
+T              Show / hide thinking blocks
 j / k          Select activity in detail focus
 Enter          Expand / collapse selected tool call
 v              All calls / latest attempt / errors

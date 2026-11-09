@@ -30,8 +30,10 @@ type rpcEvent struct {
 	ToolName      string          `json:"toolName"`
 	IsError       bool            `json:"isError"`
 	Assistant     struct {
-		Type  string `json:"type"`
-		Delta string `json:"delta"`
+		Type         string `json:"type"`
+		Delta        string `json:"delta"`
+		Content      string `json:"content"`
+		ContentIndex int    `json:"contentIndex"`
 	} `json:"assistantMessageEvent"`
 	Message struct {
 		Role         string `json:"role"`
@@ -132,6 +134,7 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 	}()
 	pending := map[string]bool{}
 	toolInputs := map[string]ToolActivity{}
+	thinkingDeltas := map[int]bool{}
 	initialOK, settled, sawAssistant := false, false, false
 	agentErr := ""
 	for {
@@ -233,8 +236,27 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 					ack(e.ID, e.Success, reason)
 				}
 			case "message_update":
-				if e.Assistant.Type == "text_delta" {
-					if _, err = io.WriteString(out, e.Assistant.Delta); err != nil {
+				var text string
+				switch e.Assistant.Type {
+				case "text_delta":
+					text = e.Assistant.Delta
+				case "thinking_start":
+					thinkingDeltas[e.Assistant.ContentIndex] = false
+					text = thinkingStartMarker
+				case "thinking_delta":
+					if e.Assistant.Delta != "" {
+						thinkingDeltas[e.Assistant.ContentIndex] = true
+						text = e.Assistant.Delta
+					}
+				case "thinking_end":
+					if !thinkingDeltas[e.Assistant.ContentIndex] && e.Assistant.Content != "" {
+						text = "\n" + e.Assistant.Content
+					}
+					delete(thinkingDeltas, e.Assistant.ContentIndex)
+					text += thinkingEndMarker
+				}
+				if text != "" {
+					if _, err = io.WriteString(out, text); err != nil {
 						return err
 					}
 				}

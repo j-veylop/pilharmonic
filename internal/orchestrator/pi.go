@@ -23,6 +23,11 @@ type PiRunner struct{ Command string }
 const (
 	piTools        = "read,bash,edit,write,grep,find,ls"
 	piToolGuidance = "Orchestrator execution policy: use the read tool to inspect files, edit or write to change them, and grep, find or ls to search or list. Use bash only to run commands such as builds, tests and formatters, not for reading, searching, listing or editing files."
+
+	// Thinking markers are display hints written to the output transcript. The
+	// terminal can collapse them without changing the task's durable output.
+	thinkingStartMarker = "\n[thinking]\n"
+	thinkingEndMarker   = "\n[/thinking]\n"
 )
 
 // piArgs returns the Pi flags shared by the JSON and RPC adapters. Unknown tool
@@ -76,14 +81,17 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 	var streamErr error
 	var agentErr string
 	sawAssistant := false
+	thinkingDeltas := false
 	for scanner.Scan() {
 		var event struct {
 			Type      string `json:"type"`
 			ToolName  string `json:"toolName"`
 			IsError   bool   `json:"isError"`
 			Assistant struct {
-				Type  string `json:"type"`
-				Delta string `json:"delta"`
+				Type         string `json:"type"`
+				Delta        string `json:"delta"`
+				Content      string `json:"content"`
+				ContentIndex int    `json:"contentIndex"`
 			} `json:"assistantMessageEvent"`
 			Message struct {
 				Role         string `json:"role"`
@@ -98,8 +106,22 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 		var text string
 		switch event.Type {
 		case "message_update":
-			if event.Assistant.Type == "text_delta" {
+			switch event.Assistant.Type {
+			case "text_delta":
 				text = event.Assistant.Delta
+			case "thinking_start":
+				thinkingDeltas = false
+				text = thinkingStartMarker
+			case "thinking_delta":
+				if event.Assistant.Delta != "" {
+					thinkingDeltas = true
+					text = event.Assistant.Delta
+				}
+			case "thinking_end":
+				if !thinkingDeltas && event.Assistant.Content != "" {
+					text = "\n" + event.Assistant.Content
+				}
+				text += thinkingEndMarker
 			}
 		case "tool_execution_start":
 			text = "\n[tool started: " + event.ToolName + "]\n"

@@ -294,7 +294,11 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("parent", "mandate", t.TempDir())
+	const instruction = "Delegate repository inspection to explorer."
+	if err := s.RegisterProfile(Profile{Name: "lead", CoordinatorInstructions: instruction}); err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateTaskWithProfile("parent", "mandate", t.TempDir(), "lead")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,6 +306,9 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	running := <-seen
+	if !strings.Contains(piPrompt(running), instruction) {
+		t.Fatal("missing coordinator instructions in Pi prompt")
+	}
 	if !strings.Contains(running.controlGuidance, `"reviewer" — Review Go concurrency.`) || !strings.Contains(running.controlGuidance, "--agent NAME") {
 		t.Fatal("missing specialist selection guidance")
 	}

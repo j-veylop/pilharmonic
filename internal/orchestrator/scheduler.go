@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -89,11 +90,19 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 		t.controlSocket = s.controlPath
 		t.controlToken = newID()
 		t.controlGuidance = s.subagentGuidanceLocked(s.subagentMaxDepth-t.Depth, s.subagentMaxChildren)
+		if t.ParentID == "" && t.Agent == DefaultRouteAgent && profile.CoordinatorInstructions != "" &&
+			(len(profile.Tools) == 0 || slices.Contains(profile.Tools, "bash")) {
+			t.controlGuidance += "\nCoordinator instructions:\n" + profile.CoordinatorInstructions
+		}
 	} else {
 		t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
 	}
 	t.SpecialistTools = ceiling
-	t.Attempts = append(t.Attempts, Attempt{ID: id, Agent: t.Agent, Tools: profile.Tools, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt})
+	attempt := Attempt{ID: id, Agent: t.Agent, Tools: profile.Tools, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt}
+	if selector, ok := runner.(interface{ RequestedModel(*Profile) string }); ok {
+		attempt.RequestedModel = selector.RequestedModel(&profile)
+	}
+	t.Attempts = append(t.Attempts, attempt)
 	t.recordStartDeliveries(id, t.UpdatedAt)
 	t.Events = append(t.Events, Event{t.UpdatedAt, "started", "Agent started (attempt " + id + ")"})
 	if err := s.save(); err != nil {

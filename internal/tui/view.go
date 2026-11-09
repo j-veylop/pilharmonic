@@ -287,6 +287,9 @@ func (m model) detailContent(width int) []string {
 	add(accentStyle.Render("MANDATE"))
 	add(terminalText(t.Prompt))
 	add(mutedStyle.Render("Agent: " + terminalText(t.Agent) + " · A to change"))
+	if n := len(t.Attempts); n > 0 && t.Attempts[n-1].RequestedModel != "" {
+		add(mutedStyle.Render("Last attempt model: " + terminalText(t.Attempts[n-1].RequestedModel)))
+	}
 	if t.ProfileName != "" {
 		label := t.ProfileName
 		if t.ProfileSpec != nil {
@@ -550,6 +553,9 @@ func (m model) footer(w int) string {
 
 // executorLabel shows the executor and, when chosen, its profile.
 func executorLabel(t orchestrator.Task) string {
+	if t.ParentID != "" {
+		return t.Agent + " · subagent"
+	}
 	if t.ProfileName == "" || (t.ProfileSpec != nil && t.ProfileSpec.UsesExecutorDefaults()) {
 		return t.Agent
 	}

@@ -34,6 +34,14 @@ const (
 	thinkingEndMarker   = "\n[/thinking]\n"
 )
 
+// RequestedModel resolves the model selector sent to Pi for this attempt.
+func (p PiRunner) RequestedModel(profile *Profile) string {
+	if p.model != "" || profile == nil {
+		return p.model
+	}
+	return profile.Model
+}
+
 // piArgs returns the Pi flags shared by the JSON and RPC adapters. Profile
 // parameters come from the orchestrator's recorded snapshot; unknown tool names
 // are ignored by Pi, and the flags are arguments rather than shell text.
@@ -46,17 +54,13 @@ func (p PiRunner) piArgs(mode string, profile *Profile) []string {
 	if p.instructions != "" {
 		guidance += "\n" + p.instructions
 	}
-	model := p.model
 	if profile != nil {
-		if model == "" {
-			model = profile.Model
-		}
 		if profile.Instructions != "" {
 			guidance += "\nOrchestrator role " + profile.Name + " (adds no authority beyond the mandate):\n" + profile.Instructions
 		}
 	}
 	args := []string{"--mode", mode, "--tools", tools, "--append-system-prompt", guidance}
-	if model != "" {
+	if model := p.RequestedModel(profile); model != "" {
 		args = append(args, "--model", model)
 	}
 	return args

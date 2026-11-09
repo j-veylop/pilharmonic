@@ -19,7 +19,11 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 	if err := s.SetConcurrencyLimit(3); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RegisterProfile(Profile{Name: "project", Tools: []string{"read", "bash", "grep"}}); err != nil {
+	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
+		t.Fatal(err)
+	}
+	const lead = "Delegate repository inspection to explorer."
+	if err := s.RegisterProfile(Profile{Name: "project", CoordinatorInstructions: lead, Tools: []string{"read", "bash", "grep"}}); err != nil {
 		t.Fatal(err)
 	}
 	started := make(chan Task, 3)
@@ -40,6 +44,9 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 		t.Helper()
 		select {
 		case run := <-started:
+			if strings.Contains(piPrompt(run), lead) {
+				t.Fatal("specialist received parent coordinator instructions")
+			}
 			args := (PiRunner{}).piArgs("rpc", run.ProfileSpec)
 			i := slices.Index(args, "--tools")
 			if run.ID != id || run.Agent != agent || i < 0 || i+1 >= len(args) || args[i+1] != tools {

@@ -67,6 +67,12 @@ instructions. They are embedded at build time. Run `./orchestrator` from this di
 the current directory if present. Use `-profiles PATH` to select another file. It selects Astra for the default
 profile and DeepSeek Flash for the explorer, implementer and tester. To
 coordinate a task with Astra, create a draft and select `pi` with **A**.
+The bundled profile includes `coordinator_instructions` asking a top-level
+`pi` task to delegate repository work and summarize the results. These
+instructions apply when delegation is enabled and the task can use bash.
+Child tasks appear beneath their parent on the board, labeled by specialist.
+Task details show the execution profile and the model requested for the latest
+attempt when the adapter recorded an explicit model.
 The specialist model takes precedence over the task profile model for both
 direct and delegated work. Pi supplies its default model when both are omitted.
 Use `pi --list-models` to see the provider/model IDs available locally.

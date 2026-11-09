@@ -59,3 +59,18 @@ func TestImplementerSummaryDistinguishesExecutorFromProfile(t *testing.T) {
 		t.Fatalf("configured profile: summary %q, picker %q", got, profileLabel(p))
 	}
 }
+
+func TestChildSummaryAndAttemptModel(t *testing.T) {
+	task := orchestrator.Task{ParentID: "parent", Agent: "explorer", ProfileName: "coordinator",
+		Attempts: []orchestrator.Attempt{{RequestedModel: "deepseek/deepseek-flash"}}}
+	if got := executorLabel(task); got != "explorer · subagent" {
+		t.Fatalf("child summary: %s", got)
+	}
+	m := model{tasks: []orchestrator.Task{task}}
+	detail := strings.Join(m.detailContent(100), "\n")
+	for _, want := range []string{"Profile: coordinator", "Last attempt model: deepseek/deepseek-flash"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("missing %q in %s", want, detail)
+		}
+	}
+}

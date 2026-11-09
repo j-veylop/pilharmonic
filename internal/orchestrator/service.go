@@ -66,15 +66,16 @@ type Thread struct {
 
 // Attempt records one execution separately from the task mandate.
 type Attempt struct {
-	ID         string    `json:"id"`
-	Agent      string    `json:"agent"`
-	Tools      []string  `json:"tools,omitempty"`
-	Profile    string    `json:"profile,omitempty"`
-	Status     Status    `json:"status"`
-	StartedAt  time.Time `json:"started_at"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
-	Output     string    `json:"output,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	ID             string    `json:"id"`
+	Agent          string    `json:"agent"`
+	Tools          []string  `json:"tools,omitempty"`
+	Profile        string    `json:"profile,omitempty"`
+	RequestedModel string    `json:"requested_model,omitempty"`
+	Status         Status    `json:"status"`
+	StartedAt      time.Time `json:"started_at"`
+	FinishedAt     time.Time `json:"finished_at,omitempty"`
+	Output         string    `json:"output,omitempty"`
+	Error          string    `json:"error,omitempty"`
 }
 
 type Task struct {

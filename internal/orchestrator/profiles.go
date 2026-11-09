@@ -38,6 +38,8 @@ type Profile struct {
 	Tools        []string `json:"tools,omitempty"`
 	Model        string   `json:"model,omitempty"`
 	Instructions string   `json:"instructions,omitempty"`
+	// CoordinatorInstructions guide top-level pi runs when shell delegation is available.
+	CoordinatorInstructions string `json:"coordinator_instructions,omitempty"`
 	// NoIntegrate keeps a successful isolated attempt's changes out of the
 	// source checkout. The worktree is retained for the operator.
 	NoIntegrate bool `json:"no_integrate,omitempty"`
@@ -49,7 +51,7 @@ type Profile struct {
 // execution overrides. Check the snapshot because operators can redefine it.
 func (p Profile) UsesExecutorDefaults() bool {
 	return p.Name == DefaultProfileName && len(p.Tools) == 0 && p.Model == "" &&
-		p.Instructions == "" && !p.NoIntegrate && !p.NoSubagents
+		p.Instructions == "" && p.CoordinatorInstructions == "" && !p.NoIntegrate && !p.NoSubagents
 }
 
 // ProfileSupport is an optional adapter interface. The service validates a
@@ -112,7 +114,7 @@ func (p Profile) validate() error {
 	if len(p.Model) > 200 || strings.IndexFunc(p.Model, unicode.IsSpace) >= 0 || strings.IndexFunc(p.Model, unicode.IsControl) >= 0 {
 		return fmt.Errorf("profile %q model must be a single token of at most 200 characters", p.Name)
 	}
-	if len(p.Instructions) > maxProfileInstructions {
+	if len(p.Instructions)+len(p.CoordinatorInstructions) > maxProfileInstructions {
 		return fmt.Errorf("profile %q instructions exceed 16 KiB", p.Name)
 	}
 	if len(p.Tools) > maxProfileTools {

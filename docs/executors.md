@@ -6,6 +6,17 @@ The built-in Pi adapter uses RPC for progress and follow-ups. It converts Pi's t
 
 The built-in Pi adapter requests Pi's dedicated file tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) and appends a trusted system-prompt instruction to prefer them: `read` for inspection, `edit`/`write` for changes, `grep`/`find`/`ls` for searching and listing, and `bash` only for commands such as builds and tests. Pi's default palette omits `grep`, `find` and `ls`, and its generated prompt then tells the model to use `bash` for file operations, which made delegated tasks read, search and edit through shell commands. Unknown tool names are ignored by Pi, so installations that lack one of these tools still start with the tools they have. The instruction grants no authority and is passed as process arguments, never through a shell.
 
+An adapter may declare the profile parameters it can translate by implementing
+`ProfileSupport` (`SupportsProfile(Profile) error`). The service validates the
+recorded profile against the executor before it starts a task, so an executor
+that cannot set a model or restrict a tool palette fails the start instead of
+ignoring the request. A runner that does not implement `ProfileSupport` accepts
+only trusted profile instructions and the default parameters. Pi maps tools and
+model to process arguments and appends role instructions to its system prompt;
+`CommandRunner` carries role instructions on stdin and refuses tool and model
+selection. The orchestrator, not the adapter, decides delegation credentials and
+automatic integration from the recorded profile.
+
 An adapter may declare optional capabilities by implementing `CapabilityReporter`; the registry checks the `LiveRunner` interface directly for live follow-ups. Tool activity and structured reports default to disabled unless declared. An adapter that can produce an explicit structured observation may type-assert its `io.Writer` output sink to `ReportRecorder` and call `RecordReport(kind, message)`. Such reports are accepted only while the task's attempt is running, are stored with an `adapter` source and the attempt ID, and are never derived from assistant prose. If the sink does not support reporting, the adapter simply omits the observation. Pi declares live context, tool activity and structured reports, and records a progress report when it accepts the initial prompt.
 
 Adapters must treat `Task.Workspace` as the execution directory they are given. For an isolated task that is a prepared Git worktree created from committed `HEAD`, and retries reuse the same worktree; an adapter must not clean, reset or relocate it. The orchestrator may commit remaining worktree changes and merge them into the source repository after a successful attempt, so an adapter must not assume the worktree stays at its initial commit. Isolation does not grant new authority or make the agent sandboxed.

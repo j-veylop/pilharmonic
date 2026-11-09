@@ -33,6 +33,9 @@ type model struct {
 	agentTask        string
 	agentChoices     []orchestrator.AgentInfo
 	agentIndex       int
+	profileTask      string
+	profileChoices   []orchestrator.Profile
+	profileIndex     int
 	service          *orchestrator.Service
 	workspace        string
 	tasks            []orchestrator.Task
@@ -133,7 +136,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.input.kind == "" && !m.router && m.cleanup.kind == "" && m.agentTask == "" {
+		if m.input.kind == "" && !m.router && m.cleanup.kind == "" && m.agentTask == "" && m.profileTask == "" {
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
 				m.scrollDetail(3)
@@ -175,6 +178,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.cleanup.kind != "" {
 			return m.cleanupKey(msg.String())
+		}
+		if m.profileTask != "" {
+			switch msg.String() {
+			case "esc":
+				m.profileTask = ""
+				m.profileChoices = nil
+			case "ctrl+c":
+				return m, tea.Quit
+			case "up", "k":
+				if m.profileIndex > 0 {
+					m.profileIndex--
+				}
+			case "down", "j":
+				if m.profileIndex < len(m.profileChoices)-1 {
+					m.profileIndex++
+				}
+			case "enter":
+				if len(m.profileChoices) > 0 {
+					name := m.profileChoices[m.profileIndex].Name
+					if err := m.service.SetTaskProfile(m.profileTask, name); err != nil {
+						m.notice = err.Error()
+					} else {
+						m.notice = "Profile selected: " + name
+					}
+					m.tasks = m.service.ListTasks()
+					m.clamp()
+				}
+				m.profileTask = ""
+				m.profileChoices = nil
+			}
+			return m, nil
 		}
 		if m.agentTask != "" {
 			switch msg.String() {
@@ -275,6 +309,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					for i, agent := range m.agentChoices {
 						if agent.Name == task.Agent {
 							m.agentIndex = i
+						}
+					}
+					m.notice = ""
+				}
+			}
+		case "P":
+			if len(m.tasks) > 0 {
+				task := m.tasks[m.selected]
+				if task.Status != orchestrator.Queued || task.ScheduleRequested {
+					m.notice = "Choose a profile before starting."
+				} else {
+					m.profileTask = task.ID
+					m.profileChoices = m.service.ListProfiles()
+					m.profileIndex = 0
+					for i, profile := range m.profileChoices {
+						if profile.Name == task.ProfileName {
+							m.profileIndex = i
 						}
 					}
 					m.notice = ""

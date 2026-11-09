@@ -68,6 +68,7 @@ type Thread struct {
 type Attempt struct {
 	ID         string    `json:"id"`
 	Agent      string    `json:"agent"`
+	Profile    string    `json:"profile,omitempty"`
 	Status     Status    `json:"status"`
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at,omitempty"`
@@ -107,13 +108,17 @@ type Task struct {
 	Workspace          string         `json:"workspace"`
 	Status             Status         `json:"status"`
 	Agent              string         `json:"agent"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
-	Output             string         `json:"output,omitempty"`
-	Error              string         `json:"error,omitempty"`
-	Trigger            Trigger        `json:"trigger"`
-	Decision           Decision       `json:"decision"`
-	Events             []Event        `json:"events"`
+	// ProfileName records the chosen profile and ProfileSpec freezes the
+	// definition accepted with the task, so later catalog edits cannot change it.
+	ProfileName string    `json:"profile,omitempty"`
+	ProfileSpec *Profile  `json:"profile_spec,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Output      string    `json:"output,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	Trigger     Trigger   `json:"trigger"`
+	Decision    Decision  `json:"decision"`
+	Events      []Event   `json:"events"`
 
 	// Control credentials are process-local: they are never written to the state
 	// file and are cleared when the attempt ends.
@@ -139,12 +144,15 @@ type LiveRunner interface {
 }
 
 type Service struct {
-	mu                sync.Mutex
-	mergeMu           sync.Mutex
-	path              string
-	data              state
-	runners           map[string]Runner
-	agentDescriptions map[string]string
+	mu       sync.Mutex
+	mergeMu  sync.Mutex
+	path     string
+	data     state
+	runners  map[string]Runner
+	profiles map[string]Profile
+	// routeProfile is the profile the local router assigns, and the fallback for
+	// tasks created without an explicit choice.
+	routeProfile      string
 	cancel            map[string]context.CancelFunc
 	discarding        map[string]bool
 	wg                sync.WaitGroup
@@ -154,6 +162,7 @@ type Service struct {
 	live              map[string]chan Trigger
 	pending           map[string]*pendingRequest
 	policies          map[string]Policy
+	agentDescriptions map[string]string
 
 	defaultIsolation bool
 
@@ -172,14 +181,16 @@ func Open(path string) (*Service, error) {
 	}
 	s := &Service{
 		path:              path,
-		agentDescriptions: map[string]string{DefaultRouteAgent: "General-purpose coding agent."},
 		runners:           map[string]Runner{DefaultRouteAgent: PiRunner{}},
+		profiles:          builtinProfiles(),
+		routeProfile:      DefaultProfileName,
 		cancel:            make(map[string]context.CancelFunc),
 		discarding:        make(map[string]bool),
 		limit:             defaultConcurrency,
 		live:              make(map[string]chan Trigger),
 		pending:           make(map[string]*pendingRequest),
 		defaultIsolation:  true,
+		agentDescriptions: map[string]string{DefaultRouteAgent: "General-purpose coding agent."},
 		policies: map[string]Policy{
 			LocalPolicySource:    localPolicy{},
 			SubagentPolicySource: subagentPolicy{},
@@ -293,6 +304,7 @@ func (s *Service) save() error {
 	return os.Rename(name, s.path)
 }
 func clone(t Task) Task {
+	t.ProfileSpec = cloneProfileRef(t.ProfileSpec)
 	t.Activities = cloneActivities(t.Activities)
 	t.Events = append([]Event(nil), t.Events...)
 	t.Reports = append([]Report(nil), t.Reports...)
@@ -344,15 +356,21 @@ func (s *Service) defaultTaskIsolation(workspace string) bool {
 
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.
 func (s *Service) CreateTask(title, prompt, workspace string) (Task, error) {
+	return s.CreateTaskWithProfile(title, prompt, workspace, "")
+}
+
+// CreateTaskWithProfile creates a manual request assigned to a named profile. An
+// empty name uses the routing default. The resolved profile is snapshotted.
+func (s *Service) CreateTaskWithProfile(title, prompt, workspace, profile string) (Task, error) {
 	return s.createTaskWithIsolation(title, prompt, workspace, s.defaultTaskIsolation(workspace),
-		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual}, s.selectAgent(prompt))
+		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual}, s.selectAgent(prompt), profile)
 }
 
 // createTaskWithIsolation persists an accepted request after the source's
 // authorization policy approves it. Routing details are optional so the
 // deterministic router can record its assignment events in the same write as
 // the decision.
-func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isolated bool, auth AuthorizationRequest, agent string, routedMessages ...string) (Task, error) {
+func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isolated bool, auth AuthorizationRequest, agent, profile string, routedMessages ...string) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if title == "" || prompt == "" {
@@ -378,6 +396,12 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	if err != nil {
 		return Task{}, err
 	}
+	s.mu.Lock()
+	profileName, profileSpec, err := s.resolveProfileLocked(profile)
+	s.mu.Unlock()
+	if err != nil {
+		return Task{}, err
+	}
 	decision.CreatedAt = now
 	events := []Event{{now, "accepted", "Manual request accepted"}}
 	for _, message := range routedMessages {
@@ -386,7 +410,7 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	if isolated {
 		events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
 	}
-	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: agent, CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now}, Decision: decision, Events: events}
+	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: agent, ProfileName: profileName, ProfileSpec: profileSpec, CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now}, Decision: decision, Events: events}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data.Tasks = append(s.data.Tasks, t)
@@ -426,6 +450,13 @@ func (s *Service) Start(ctx context.Context, id string) error {
 		}
 		if _, ok := s.runners[t.Agent]; !ok {
 			return fmt.Errorf("agent %q unavailable", t.Agent)
+		}
+		profile, err := s.profileForTaskLocked(*t)
+		if err != nil {
+			return err
+		}
+		if err = validateProfileForRunner(s.runners[t.Agent], profile); err != nil {
+			return err
 		}
 		if len(s.cancel) < s.limit {
 			return s.startLocked(ctx, t)
@@ -512,21 +543,26 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 	}
 	s.mu.Lock()
 	merge := mergeOutcome{}
+	integrationSkipped := false
 	if err == nil && ctx.Err() == nil && t.Isolated {
-		for i := range s.data.Tasks {
-			owner := &s.data.Tasks[i]
-			if owner.ID != t.ID {
-				continue
+		if t.noAutoIntegrate() {
+			integrationSkipped = true
+		} else {
+			for i := range s.data.Tasks {
+				owner := &s.data.Tasks[i]
+				if owner.ID != t.ID {
+					continue
+				}
+				if s.hasInheritedWorkspaceLocked(*owner, true) {
+					merge.Status = MergeWaiting
+				} else {
+					owner.integrating = true
+					s.mu.Unlock()
+					merge = s.autoMergeIsolated(t)
+					s.mu.Lock()
+				}
+				break
 			}
-			if s.hasInheritedWorkspaceLocked(*owner, true) {
-				merge.Status = MergeWaiting
-			} else {
-				owner.integrating = true
-				s.mu.Unlock()
-				merge = s.autoMergeIsolated(t)
-				s.mu.Lock()
-			}
-			break
 		}
 	}
 	defer s.mu.Unlock()
@@ -561,6 +597,9 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 		}
 		task.Events = append(task.Events, Event{task.UpdatedAt, string(task.Status), task.Error})
 		task.integrating = false
+		if integrationSkipped {
+			task.Events = append(task.Events, Event{task.UpdatedAt, "integration_skipped", "Profile " + task.ProfileName + " does not integrate prepared work; worktree retained for the operator"})
+		}
 		if merge.Status != "" {
 			task.recordMerge(merge)
 		}

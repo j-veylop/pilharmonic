@@ -109,7 +109,7 @@ func TestBuiltinSpecialistsRespectConfiguredExecutor(t *testing.T) {
 	}
 	s.LoadBuiltinSpecialists()
 	reviewer, ok := s.runners["reviewer"].(PiRunner)
-	if !ok || reviewer.instructions == "" || !strings.Contains(strings.Join(reviewer.piArgs("rpc"), " "), reviewer.instructions) {
+	if !ok || reviewer.instructions == "" || !strings.Contains(strings.Join(reviewer.piArgs("rpc", nil), " "), reviewer.instructions) {
 		t.Fatal("missing built-in review instructions")
 	}
 	if _, ok := s.runners["tester"].(CommandRunner); !ok || s.agentDescriptions["tester"] != "Custom test runner" {
@@ -143,7 +143,7 @@ func TestSpecialistSelectionAndModel(t *testing.T) {
 		}
 	}
 	for _, mode := range []string{"rpc", "json"} {
-		args := s.runners["tester"].(PiRunner).piArgs(mode)
+		args := s.runners["tester"].(PiRunner).piArgs(mode, nil)
 		if args[len(args)-2] != "--model" || args[len(args)-1] != "provider/example" {
 			t.Fatalf("unexpected args %v", args)
 		}

@@ -217,7 +217,7 @@ func TestSubagentControlRoundTripAndCredentials(t *testing.T) {
 	if token == "" {
 		t.Fatal("running parent received no control token")
 	}
-	if _, err = s.spawnSubagent(parent.ID, "", "bad credential", "", "wrong"); err == nil || !strings.Contains(err.Error(), "credential") {
+	if _, err = s.spawnSubagent(parent.ID, "", "bad credential", "", "", "wrong"); err == nil || !strings.Contains(err.Error(), "credential") {
 		t.Fatalf("bad token accepted: %v", err)
 	}
 

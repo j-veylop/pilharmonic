@@ -244,7 +244,7 @@ func (m model) taskPanel(width, height int) string {
 			if i == m.selected {
 				row = selectionRow(rowText, inner)
 			}
-			lines = append(lines, row, fit("  "+mutedStyle.Render(terminalText(t.Agent))+"  "+workspaceBadgeFor(t).render()+"  "+taskLabel(t), inner, 1))
+			lines = append(lines, row, fit("  "+mutedStyle.Render(executorLabel(t))+"  "+workspaceBadgeFor(t).render()+"  "+taskLabel(t), inner, 1))
 		}
 	}
 	return focusedPanel(strings.Join(lines, "\n"), width, height, !m.detailFocus && !m.fullscreen)
@@ -286,7 +286,10 @@ func (m model) detailContent(width int) []string {
 	add := func(s string) { lines = append(lines, strings.Split(ansi.Hardwrap(s, width, true), "\n")...) }
 	add(accentStyle.Render("MANDATE"))
 	add(terminalText(t.Prompt))
-	add(mutedStyle.Render("Executor: " + terminalText(t.Agent) + " · A to change"))
+	add(mutedStyle.Render("Agent: " + terminalText(t.Agent) + " · A to change"))
+	if t.ProfileName != "" {
+		add(mutedStyle.Render("Profile: " + terminalText(t.ProfileName) + " · P to change"))
+	}
 	if t.ParentID != "" {
 		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
 	}
@@ -439,13 +442,16 @@ func transcriptTab(label string, active bool) string {
 func (m model) detailTabRow(t orchestrator.Task, width int) string {
 	row := transcriptTab("OUTPUT", !m.history && !m.activity) + faintStyle.Render("│") +
 		transcriptTab("HISTORY", m.history && !m.activity) + faintStyle.Render("  ·  ") +
-		mutedStyle.Render(terminalText(t.Agent))
+		mutedStyle.Render(terminalText(executorLabel(t)))
 	return fit(row, width, 1)
 }
 
 func (m model) detailPanel(width, height int) string {
 	if m.agentTask != "" {
 		return m.agentPanel(width, height)
+	}
+	if m.profileTask != "" {
+		return m.profilePanel(width, height)
 	}
 	inner := width - 4
 	if len(m.tasks) == 0 {
@@ -532,7 +538,55 @@ func (m model) footer(w int) string {
 	if m.agentTask != "" {
 		footer = mutedStyle.Render("↑↓ choose agent · enter select · esc cancel")
 	}
+	if m.profileTask != "" {
+		footer = mutedStyle.Render("↑↓ choose profile · enter select · esc cancel")
+	}
 	return ansi.Hardwrap(footer, w, true)
+}
+
+// executorLabel shows the executor and, when chosen, its profile.
+func executorLabel(t orchestrator.Task) string {
+	if t.ProfileName == "" {
+		return t.Agent
+	}
+	return t.Agent + " · " + t.ProfileName
+}
+
+func (m model) profilePanel(width, height int) string {
+	lines := []string{titleStyle.Render("SELECT PROFILE"), mutedStyle.Render("Queued task only"), ""}
+	slots := max(1, (height-7)/2)
+	start := max(0, m.profileIndex-slots+1)
+	for i := start; i < len(m.profileChoices) && i < start+slots; i++ {
+		profile := m.profileChoices[i]
+		prefix := "  "
+		style := titleStyle
+		if i == m.profileIndex {
+			prefix = ""
+			style = accentStyle
+		}
+		row := style.Render(prefix + terminalText(profile.Name))
+		if i == m.profileIndex {
+			row = selectionRow(terminalText(profile.Name), width-4)
+		}
+		details := profile.Description
+		if profile.Model != "" {
+			details += " · model " + profile.Model
+		}
+		if profile.NoIntegrate {
+			details += " · no auto-integration"
+		}
+		if profile.NoSubagents {
+			details += " · no delegation"
+		}
+		if len(profile.Tools) > 0 {
+			details += " · tools " + strings.Join(profile.Tools, ",")
+		}
+		lines = append(lines, row, mutedStyle.Render("  "+terminalText(strings.TrimPrefix(details, " · "))))
+	}
+	if len(m.profileChoices) == 0 {
+		lines = append(lines, mutedStyle.Render("No registered profiles."))
+	}
+	return panel(strings.Join(lines, "\n"), width, height)
 }
 
 func (m model) agentPanel(width, height int) string {

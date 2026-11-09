@@ -26,6 +26,7 @@ Esc            Return / close expanded activity`},
 a              Related task in selected thread
 b              Spawn subagent from running task
 A              Choose executor before scheduling
+P              Choose profile (role, model, tools) before scheduling
 w              Toggle worktree isolation (default on when possible)
 r / R          Start / requeue task
 v / V          Approve / reject prepared worktree commit
@@ -52,9 +53,9 @@ q              Quit (closes help when open)
 Ctrl-c         Quit application
 
 COMPOSERS & PICKERS
-Enter          Submit input / confirm agent
+Enter          Submit input / confirm agent or profile
 Esc            Cancel input / close picker
-j / k          Select agent in picker
+j / k          Select in executor or profile picker
 Typing         Text in composers`},
 }
 

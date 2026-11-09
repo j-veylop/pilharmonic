@@ -26,6 +26,8 @@ func run() (err error) {
 	state := flag.String("state", "", "path to the state file (default: user config directory)")
 	workspace := flag.String("workspace", "", "working directory for new tasks (default: current directory)")
 	agents := flag.String("agents", "", "path to optional agent command configuration JSON")
+	profiles := flag.String("profiles", "", "path to optional profile (role) configuration JSON")
+	profile := flag.String("profile", "", "default profile for routed and unchosen tasks (default: implementer)")
 	maxConcurrent := flag.Int("max-concurrent", 2, "maximum simultaneous agent processes")
 	isolation := flag.Bool("isolation", true, "start new tasks in an isolated Git worktree when possible")
 	subagents := flag.Bool("subagents", true, "allow running agents to spawn child tasks")
@@ -61,6 +63,16 @@ func run() (err error) {
 	}
 	if *agents != "" {
 		if err := service.LoadAgents(*agents); err != nil {
+			return err
+		}
+	}
+	if *profiles != "" {
+		if err := service.LoadProfiles(*profiles); err != nil {
+			return err
+		}
+	}
+	if *profile != "" {
+		if err := service.SetRoutingProfile(*profile); err != nil {
 			return err
 		}
 	}

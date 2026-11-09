@@ -28,6 +28,7 @@ type subagentRequest struct {
 	Title          string `json:"title,omitempty"`
 	Prompt         string `json:"prompt"`
 	Agent          string `json:"agent,omitempty"`
+	Profile        string `json:"profile,omitempty"`
 	Wait           bool   `json:"wait"`
 	StartTimeoutMS int64  `json:"start_timeout_ms,omitempty"`
 	TimeoutMS      int64  `json:"timeout_ms,omitempty"`
@@ -184,7 +185,7 @@ func (s *Service) handleSubagentControl(ctx context.Context, conn net.Conn) {
 	if timeout > 2*time.Hour {
 		timeout = 2 * time.Hour
 	}
-	task, err := s.spawnSubagent(req.TaskID, req.Title, req.Prompt, req.Agent, req.Token)
+	task, err := s.spawnSubagent(req.TaskID, req.Title, req.Prompt, req.Agent, req.Profile, req.Token)
 	if err != nil {
 		_ = json.NewEncoder(conn).Encode(subagentResponse{TaskID: task.ID, Error: err.Error()})
 		return
@@ -215,6 +216,7 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	flags.SetOutput(stderr)
 	title := flags.String("title", "", "short display title for the child task")
 	agent := flags.String("agent", "", "executor for the child (default: automatic selection, then parent executor)")
+	profile := flags.String("profile", "", "profile for the child (default: parent profile)")
 	socket := flags.String("socket", "", "control socket (default: ORCHESTRATOR_CONTROL_SOCKET)")
 	noWait := flags.Bool("no-wait", false, "record and start the child without waiting for it")
 	startTimeout := flags.Duration("start-timeout", defaultStartTimeout, "how long to wait for a free execution slot")
@@ -265,6 +267,7 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		Title:          *title,
 		Prompt:         string(prompt),
 		Agent:          *agent,
+		Profile:        *profile,
 		Wait:           !*noWait,
 		StartTimeoutMS: startTimeout.Milliseconds(),
 		TimeoutMS:      timeout.Milliseconds(),

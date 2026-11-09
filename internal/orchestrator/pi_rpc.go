@@ -45,7 +45,7 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 	if name == "" {
 		name = "pi"
 	}
-	cmd := exec.CommandContext(ctx, name, append(p.piArgs("rpc"), "--no-session")...)
+	cmd := exec.CommandContext(ctx, name, append(p.piArgs("rpc", t.ProfileSpec), "--no-session")...)
 	cmd.Dir = t.Workspace
 	cmd.Env = t.runnerEnvironment()
 	stdin, err := cmd.StdinPipe()

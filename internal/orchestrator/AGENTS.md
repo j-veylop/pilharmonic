@@ -2,6 +2,7 @@
 
 Read the root `AGENTS.md` and `docs/design.md` first. This package is the owner of task state and must not depend on the terminal UI.
 
+- Profiles (roles) are orchestrator data. Snapshot the resolved profile when a task is accepted, record it on the attempt, and never let an executor or a delegated child choose a broader one.
 - Treat router decisions and original task mandates as durable history. A later trigger is context and must not silently widen the mandate.
 - Persist state transitions before acknowledging them. Keep rollback paths for synchronous persistence errors; report uncertain delivery honestly. Keep task and thread history consistent.
 - Hold the service mutex for shared state and copy slices returned to callers. Never block on a subprocess or network call while holding the mutex.

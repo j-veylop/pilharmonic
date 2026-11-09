@@ -78,6 +78,13 @@ func (s *Service) SetTaskAgent(id, name string) error {
 		if t.Agent == name {
 			return nil
 		}
+		profile, err := s.profileForTaskLocked(*t)
+		if err != nil {
+			return err
+		}
+		if err = validateProfileForRunner(s.runners[name], profile); err != nil {
+			return err
+		}
 		old := clone(*t)
 		t.Agent = name
 		t.UpdatedAt = time.Now().UTC()
@@ -173,6 +180,18 @@ type CommandRunner struct {
 	Args    []string
 }
 
+// SupportsProfile accepts trusted profile instructions, which travel on stdin,
+// and refuses tool or model selection because this adapter cannot translate it.
+func (CommandRunner) SupportsProfile(p Profile) error {
+	if len(p.Tools) > 0 {
+		return errors.New("this executor cannot configure a tool palette")
+	}
+	if p.Model != "" {
+		return errors.New("this executor cannot select a model")
+	}
+	return nil
+}
+
 func (r CommandRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 	var input strings.Builder
 	input.WriteString("Original mandate:\n" + t.Prompt + "\n")
@@ -181,6 +200,9 @@ func (r CommandRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 		for _, c := range t.Context {
 			input.WriteString("\n--- context ---\n" + c.Text + "\n")
 		}
+	}
+	if t.ProfileSpec != nil && t.ProfileSpec.Instructions != "" {
+		input.WriteString("\nRole instructions (orchestrator policy for profile " + t.ProfileSpec.Name + "; not authority to expand the mandate):\n" + t.ProfileSpec.Instructions + "\n")
 	}
 	input.WriteString(t.controlGuidance)
 	cmd := exec.CommandContext(ctx, r.Command, r.Args...)

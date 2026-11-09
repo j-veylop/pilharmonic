@@ -62,7 +62,7 @@ func routeWorkspace(task orchestrator.Task) string {
 }
 
 func routeNotice(task orchestrator.Task) string {
-	return "Routed to " + terminalText(task.Agent) + " · " + string(task.Status) + " · " + routeWorkspace(task) + " — " + terminalText(task.Title)
+	return "Routed to " + terminalText(executorLabel(task)) + " · " + string(task.Status) + " · " + routeWorkspace(task) + " — " + terminalText(task.Title)
 }
 
 // routerKey handles the unified entry point. Typing goes to the composer; Tab
@@ -212,6 +212,6 @@ func (m model) routerRecentRow(task orchestrator.Task, width int) string {
 		status = taskLabel(task)
 	}
 	row := mutedStyle.Render(stamp) + "  " + status + "  " +
-		titleStyle.Render(terminalText(task.Agent)) + mutedStyle.Render(" · ") + workspaceBadgeFor(task).render() + "  " + title
+		titleStyle.Render(terminalText(executorLabel(task))) + mutedStyle.Render(" · ") + workspaceBadgeFor(task).render() + "  " + title
 	return fit(row, width, 1)
 }

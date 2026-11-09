@@ -66,7 +66,7 @@ instructions. They are embedded at build time. To select a Pi model, set
 `ORCHESTRATOR_MODEL_<ROLE>` before launch, using the uppercase specialist name.
 For example, `ORCHESTRATOR_MODEL_REVIEWER=provider/model-id go run .` sets the
 reviewer's model. Use `pi --list-models` to find an available ID. An unset
-variable uses Pi's configured default. These settings apply to the bundled Pi
+variable falls back to the task profile's model, then Pi's configured default. These settings apply to the bundled Pi
 roles; custom command executors take their model arguments from `agents.json`.
 
 Open the task board, create a draft with **n**, then press **A** to see their
@@ -89,6 +89,34 @@ Save the following as `agents.json` and run `go run . -agents agents.json`. On t
 Each executor can have an optional `description`. Parents with delegation enabled see the registered names and descriptions and can pass `--agent NAME` to the subagent helper. Omitting the flag selects from the child mandate, with the parent’s executor as fallback.
 
 The command receives the mandate and queued context on stdin. Its stdout and stderr appear in the output view. Configure only trusted executables and supply the configuration again on later launches. Pi also supports live follow-ups, structured tool activity and reports. See the [executor contract](docs/executors.md).
+
+## Profiles
+
+A profile is a role the orchestrator assigns to a task: tool palette, model,
+trusted instructions, whether prepared isolated work is merged automatically and
+whether the task may delegate. Profiles are configuration; the service snapshots
+the one a task was accepted with and records it on every attempt. Press `P` on a
+queued task to choose one, or pass `-profiles profiles.json`:
+
+```json
+{
+  "profiles": [
+    {"name": "explorer", "description": "Read-only reconnaissance",
+     "tools": ["read", "grep", "find", "ls"], "no_integrate": true,
+     "instructions": "Inspect and report; do not change files."},
+    {"name": "implementer", "model": "provider/model-id"},
+    {"name": "reviewer", "tools": ["read", "grep", "find", "ls", "bash"],
+     "no_integrate": true, "no_subagents": true}
+  ]
+}
+```
+
+The built-in `implementer` profile reproduces the default behavior and is used
+when no profile is chosen; declaring a profile with that name replaces it. Tool
+names are the executor's own, so `explorer` above is meaningful for Pi. An
+executor that cannot honor a profile's tools or model fails the start rather than
+silently ignoring them. A profile is not a sandbox: agents keep the host user's
+permissions.
 
 ## Development
 

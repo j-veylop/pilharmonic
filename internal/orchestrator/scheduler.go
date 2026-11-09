@@ -52,6 +52,13 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	if !ok {
 		return fmt.Errorf("agent %q unavailable", t.Agent)
 	}
+	profile, err := s.profileForTaskLocked(*t)
+	if err != nil {
+		return profileError{err}
+	}
+	if err = validateProfileForRunner(runner, profile); err != nil {
+		return profileError{err}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -67,14 +74,21 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
 	t.MergedAt = time.Time{}
 	t.resetReview()
-	if s.controlPath != "" && s.subagentMaxDepth > t.Depth && s.subagentMaxChildren > 0 {
+	// A task accepted before profiles existed has no snapshot yet; record the one
+	// it actually runs with.
+	if t.ProfileSpec == nil {
+		t.ProfileName = profile.Name
+		t.ProfileSpec = &profile
+		t.Events = append(t.Events, Event{t.UpdatedAt, "profile", "Profile resolved: " + t.ProfileName})
+	}
+	if s.controlPath != "" && s.subagentMaxDepth > t.Depth && s.subagentMaxChildren > 0 && !profile.NoSubagents {
 		t.controlSocket = s.controlPath
 		t.controlToken = newID()
 		t.controlGuidance = s.subagentGuidanceLocked(s.subagentMaxDepth-t.Depth, s.subagentMaxChildren)
 	} else {
 		t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
 	}
-	t.Attempts = append(t.Attempts, Attempt{ID: id, Agent: t.Agent, Status: Running, StartedAt: t.UpdatedAt})
+	t.Attempts = append(t.Attempts, Attempt{ID: id, Agent: t.Agent, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt})
 	t.recordStartDeliveries(id, t.UpdatedAt)
 	t.Events = append(t.Events, Event{t.UpdatedAt, "started", "Agent started (attempt " + id + ")"})
 	if err := s.save(); err != nil {
@@ -136,10 +150,48 @@ func (s *Service) scheduleLocked() error {
 				}
 				continue
 			}
+			// An ineligible profile fails its own task instead of wedging the
+			// queue behind a start that can never succeed.
+			if isProfileError(err) {
+				if failErr := s.failIneligibleLocked(task, err); failErr != nil {
+					s.persistErr = failErr
+					return failErr
+				}
+				continue
+			}
 			s.persistErr = err
 			return err
 		}
 	}
+	return nil
+}
+
+// profileError marks a task whose recorded profile the selected executor cannot
+// honor. It is reported to the caller and, in the queue, failed per task.
+type profileError struct{ err error }
+
+func (e profileError) Error() string { return e.err.Error() }
+func (e profileError) Unwrap() error { return e.err }
+
+func isProfileError(err error) bool {
+	var target profileError
+	return errors.As(err, &target)
+}
+
+// failIneligibleLocked records a durable failure for a task that cannot start.
+func (s *Service) failIneligibleLocked(t *Task, cause error) error {
+	old := clone(*t)
+	t.Status = Failed
+	t.ScheduleRequested = false
+	t.ScheduledAt = time.Time{}
+	t.UpdatedAt = time.Now().UTC()
+	t.Error = cause.Error()
+	t.Events = append(t.Events, Event{t.UpdatedAt, "failed", "Execution parameters rejected: " + cause.Error()})
+	if err := s.save(); err != nil {
+		*t = old
+		return err
+	}
+	s.removePendingLocked(t.ID)
 	return nil
 }
 

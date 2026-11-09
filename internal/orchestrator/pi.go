@@ -34,19 +34,47 @@ const (
 	thinkingEndMarker   = "\n[/thinking]\n"
 )
 
-// piArgs returns the Pi flags shared by the JSON and RPC adapters. Unknown tool
-// names are ignored by Pi, and the flags are arguments rather than shell text.
-func (p PiRunner) piArgs(mode string) []string {
+// piArgs returns the Pi flags shared by the JSON and RPC adapters. Profile
+// parameters come from the orchestrator's recorded snapshot; unknown tool names
+// are ignored by Pi, and the flags are arguments rather than shell text.
+func (p PiRunner) piArgs(mode string, profile *Profile) []string {
+	tools := piTools
+	if profile != nil && len(profile.Tools) > 0 {
+		tools = strings.Join(profile.Tools, ",")
+	}
 	guidance := piToolGuidance
 	if p.instructions != "" {
 		guidance += "\n" + p.instructions
 	}
-
-	args := []string{"--mode", mode, "--tools", piTools, "--append-system-prompt", guidance}
-	if p.model != "" {
-		args = append(args, "--model", p.model)
+	model := p.model
+	if profile != nil {
+		if model == "" {
+			model = profile.Model
+		}
+		if profile.Instructions != "" {
+			guidance += "\nOrchestrator role " + profile.Name + " (adds no authority beyond the mandate):\n" + profile.Instructions
+		}
+	}
+	args := []string{"--mode", mode, "--tools", tools, "--append-system-prompt", guidance}
+	if model != "" {
+		args = append(args, "--model", model)
 	}
 	return args
+}
+
+// SupportsProfile accepts the parameters this adapter can translate. Pi ignores
+// unknown tool names, so tool validation stays syntactic; the catalog's tool
+// list is advisory for a Pi installation that lacks one of them.
+func (PiRunner) SupportsProfile(p Profile) error {
+	for _, tool := range p.Tools {
+		if len(tool) > 128 {
+			return fmt.Errorf("tool name %q is too long", tool)
+		}
+	}
+	if p.Model != "" && len(p.Model) > 200 {
+		return errors.New("model selector is too long")
+	}
+	return nil
 }
 
 func (PiRunner) Capabilities() AgentCapabilities {
@@ -191,7 +219,7 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 	if name == "" {
 		name = "pi"
 	}
-	cmd := exec.CommandContext(ctx, name, append(p.piArgs("json"), "--", piPrompt(t))...)
+	cmd := exec.CommandContext(ctx, name, append(p.piArgs("json", t.ProfileSpec), "--", piPrompt(t))...)
 	cmd.Dir = t.Workspace
 	cmd.Env = t.runnerEnvironment()
 	stdout, err := cmd.StdoutPipe()

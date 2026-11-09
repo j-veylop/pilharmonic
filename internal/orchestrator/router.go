@@ -16,6 +16,13 @@ const LocalPolicyVersion = "local-1"
 // DefaultRouteAgent is the executor assigned by the local routing policy.
 const DefaultRouteAgent = "pi"
 
+// routingProfile returns the profile name the local router assigns.
+func (s *Service) routingProfile() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resolveProfileNameLocked("")
+}
+
 // SubmitRequest is the unified entry point for local work. It records one
 // explicit request, accepts it under the deterministic local policy, records
 // the assignment, and requests execution. Acceptance, assignment and start
@@ -26,14 +33,18 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 		return Task{}, errors.New("request text is required")
 	}
 	isolated := s.defaultTaskIsolation(workspace)
+	profile, err := s.routingProfile()
+	if err != nil {
+		return Task{}, err
+	}
 	workspaceChoice := "shared workspace"
 	if isolated {
 		workspaceChoice = "isolated committed-HEAD worktree"
 	}
 	agent := s.selectAgent(text)
-	assignment := fmt.Sprintf("Router assignment: agent %s, %s, execution requested (%s)", agent, workspaceChoice, LocalPolicyVersion)
+	assignment := fmt.Sprintf("Router assignment: agent %s, profile %s, %s, execution requested (%s)", agent, profile, workspaceChoice, LocalPolicyVersion)
 	task, err := s.createTaskWithIsolation(requestTitle(text), text, workspace, isolated,
-		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter}, agent, assignment)
+		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter}, agent, profile, assignment)
 	if err != nil {
 		return Task{}, err
 	}

@@ -44,11 +44,18 @@ func (s *Service) SetSubagentLimits(maxDepth, maxChildren int) error {
 // attempt. It does not inherit the parent's context or authority beyond the
 // delegated mandate, and its lifecycle is independent after creation.
 func (s *Service) SpawnSubagent(parentID, title, prompt, agent string) (Task, error) {
-	return s.spawnSubagent(parentID, title, prompt, agent, "")
+	return s.spawnSubagent(parentID, title, prompt, agent, "", "")
 }
 
-func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (Task, error) {
-	task, err := s.createSubagent(parentID, title, prompt, agent, token)
+// SpawnSubagentWithProfile requests a child with a named profile. The child
+// profile must not grant more than the parent's recorded profile; see
+// checkDelegatedProfile.
+func (s *Service) SpawnSubagentWithProfile(parentID, title, prompt, agent, profile string) (Task, error) {
+	return s.spawnSubagent(parentID, title, prompt, agent, profile, "")
+}
+
+func (s *Service) spawnSubagent(parentID, title, prompt, agent, profile, token string) (Task, error) {
+	task, err := s.createSubagent(parentID, title, prompt, agent, profile, token)
 	if err != nil {
 		return Task{}, err
 	}
@@ -61,7 +68,7 @@ func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (T
 	return current, nil
 }
 
-func (s *Service) createSubagent(parentID, title, prompt, agent, token string) (Task, error) {
+func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token string) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -99,6 +106,13 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, token string) (
 	if parent.integrating {
 		return Task{}, errors.New("parent worktree is being integrated")
 	}
+	parentProfile, err := s.profileForTaskLocked(*parent)
+	if err != nil {
+		return Task{}, err
+	}
+	if parentProfile.NoSubagents {
+		return Task{}, fmt.Errorf("profile %q does not allow delegation", parentProfile.Name)
+	}
 	if parent.Status != Running {
 		return Task{}, fmt.Errorf("parent task is %s, not running", parent.Status)
 	}
@@ -119,8 +133,16 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, token string) (
 	if agent == "" {
 		agent = s.selectAgentLocked(prompt, parent.Agent)
 	}
-	if _, ok := s.runners[agent]; !ok {
+	runner, ok := s.runners[agent]
+	if !ok {
 		return Task{}, fmt.Errorf("agent %q unavailable", agent)
+	}
+	childProfile, profileErr := s.childProfileLocked(parentProfile, parent.Agent, agent, profile)
+	if profileErr != nil {
+		return Task{}, profileErr
+	}
+	if profileErr = validateProfileForRunner(runner, childProfile); profileErr != nil {
+		return Task{}, profileErr
 	}
 	workspace := parent.ExecutionWorkspace
 	if workspace == "" {
@@ -157,22 +179,24 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, token string) (
 	}
 	decision.CreatedAt = now
 	task := Task{
-		ID:        id,
-		ThreadID:  threadID,
-		ParentID:  parent.ID,
-		Depth:     depth,
-		Title:     title,
-		Prompt:    prompt,
-		Workspace: workspace,
-		Status:    Queued,
-		Agent:     agent,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Trigger:   trigger,
-		Decision:  decision,
+		ID:          id,
+		ThreadID:    threadID,
+		ParentID:    parent.ID,
+		Depth:       depth,
+		Title:       title,
+		Prompt:      prompt,
+		Workspace:   workspace,
+		Status:      Queued,
+		Agent:       agent,
+		ProfileName: childProfile.Name,
+		ProfileSpec: &childProfile,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Trigger:     trigger,
+		Decision:    decision,
 		Events: []Event{
 			{now, "accepted", "Subagent mandate accepted from running task " + parent.ID},
-			{now, "delegated", "Policy " + SubagentPolicyVersion + " · depth " + fmt.Sprint(depth) + " · workspace inherited from parent"},
+			{now, "delegated", "Policy " + SubagentPolicyVersion + " · depth " + fmt.Sprint(depth) + " · profile " + childProfile.Name + " · workspace inherited from parent"},
 		},
 	}
 	s.data.Tasks = append(s.data.Tasks, task)
@@ -185,6 +209,29 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, token string) (
 		return Task{}, err
 	}
 	return clone(task), nil
+}
+
+// childProfileLocked resolves the profile a delegated child runs with. An empty
+// request inherits the parent's snapshot. A different executor requires the
+// parent's own profile, because a profile's tool palette is only meaningful for
+// the adapter that translated it.
+func (s *Service) childProfileLocked(parent Profile, parentAgent, agent, requested string) (Profile, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" || requested == parent.Name {
+		return cloneProfile(parent), nil
+	}
+	if agent != parentAgent {
+		return Profile{}, fmt.Errorf("a delegated task may only change its executor when it keeps profile %q", parent.Name)
+	}
+	resolved, err := s.resolveProfileNameLocked(requested)
+	if err != nil {
+		return Profile{}, err
+	}
+	spec := cloneProfile(s.profiles[resolved])
+	if err = checkDelegatedProfile(parent, spec); err != nil {
+		return Profile{}, err
+	}
+	return spec, nil
 }
 
 func (s *Service) noteSubagentStartFailure(id string, cause error) {
@@ -218,7 +265,7 @@ func (s *Service) subagentGuidanceLocked(remainingDepth, maxChildren int) string
 
 Subagent delegation is available while this task runs:
   "$ORCHESTRATOR_SUBAGENT_CLI" subagent --title "short title"
-Pass the delegated instructions on stdin. The command waits for the child and prints its result; add --no-wait to return immediately with the child task ID. The child has its own mandate and fresh context, shares this workspace, and inherits no authority from this conversation. Delegation cannot widen the original mandate. Remaining depth: %d; at most %d child task(s) for this task.
+Pass the delegated instructions on stdin. The command waits for the child and prints its result; add --no-wait to return immediately with the child task ID. The child has its own mandate and fresh context, shares this workspace, and inherits no authority from this conversation. Delegation cannot widen the original mandate or this task's profile; pass --profile only to narrow it. Remaining depth: %d; at most %d child task(s) for this task.
 
 Choose a registered executor with --agent NAME when its specialty fits the child mandate. Omit --agent for automatic specialist selection, falling back to the parent executor.
 Available executors:

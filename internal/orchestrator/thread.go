@@ -58,8 +58,21 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 			continue
 		}
 		now := time.Now().UTC()
-		trigger := Trigger{ID: triggerID, Source: "manual", Text: prompt, CreatedAt: now}
-		decision := Decision{TriggerID: triggerID, Outcome: "accept", Reason: "explicit local request", CreatedAt: now}
+		trigger := Trigger{ID: triggerID, Source: LocalPolicySource, Text: prompt, CreatedAt: now}
+		decision, err := s.authorizeLocked(AuthorizationRequest{
+			Source:    LocalPolicySource,
+			Actor:     LocalActor,
+			Purpose:   PurposeRelated,
+			TriggerID: triggerID,
+			ThreadID:  threadID,
+			ParentID:  parentID,
+			Text:      prompt,
+			Workspace: abs,
+		})
+		if err != nil {
+			return Task{}, err
+		}
+		decision.CreatedAt = now
 		events := []Event{{now, "accepted", "Manual request accepted in existing thread"}}
 		if isolated {
 			events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})

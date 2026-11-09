@@ -39,12 +39,18 @@ type Trigger struct {
 	DeliveryError string    `json:"delivery_error,omitempty"`
 }
 
-// Decision records the router's response. Currently only explicit local requests are accepted.
+// Decision records the router's response and the authorization evidence behind
+// it. PolicyID, PolicyVersion, Source, Actor and InputDigest make the decision
+// auditable without storing a second copy of the mandate.
 type Decision struct {
 	TriggerID     string    `json:"trigger_id"`
 	Outcome       string    `json:"outcome"`
 	Reason        string    `json:"reason"`
+	PolicyID      string    `json:"policy_id,omitempty"`
 	PolicyVersion string    `json:"policy_version,omitempty"`
+	Source        string    `json:"source,omitempty"`
+	Actor         string    `json:"actor,omitempty"`
+	InputDigest   string    `json:"input_digest,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 type Event struct {
@@ -138,6 +144,7 @@ type Service struct {
 	limit      int
 	live       map[string]chan Trigger
 	pending    map[string]*pendingRequest
+	policies   map[string]Policy
 
 	defaultIsolation bool
 
@@ -155,7 +162,7 @@ func Open(path string) (*Service, error) {
 	if path == "" {
 		return nil, errors.New("state path is required")
 	}
-	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}, defaultIsolation: true, subagentMaxDepth: DefaultMaxSubagentDepth, subagentMaxChildren: DefaultMaxSubagents, controlConns: map[net.Conn]struct{}{}}
+	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}, defaultIsolation: true, policies: map[string]Policy{LocalPolicySource: localPolicy{}, SubagentPolicySource: subagentPolicy{}}, subagentMaxDepth: DefaultMaxSubagentDepth, subagentMaxChildren: DefaultMaxSubagents, controlConns: map[net.Conn]struct{}{}}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -312,18 +319,19 @@ func (s *Service) defaultTaskIsolation(workspace string) bool {
 
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.
 func (s *Service) CreateTask(title, prompt, workspace string) (Task, error) {
-	return s.createTask(title, prompt, workspace, "explicit local request", "")
+	return s.createTask(title, prompt, workspace, AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual})
 }
 
 // createTask persists an accepted request with the default workspace choice.
-func (s *Service) createTask(title, prompt, workspace, reason, policy string, routedMessages ...string) (Task, error) {
-	return s.createTaskWithIsolation(title, prompt, workspace, s.defaultTaskIsolation(workspace), reason, policy, routedMessages...)
+func (s *Service) createTask(title, prompt, workspace string, auth AuthorizationRequest, routedMessages ...string) (Task, error) {
+	return s.createTaskWithIsolation(title, prompt, workspace, s.defaultTaskIsolation(workspace), auth, routedMessages...)
 }
 
-// createTaskWithIsolation persists an accepted request. Routing details are
-// optional so the deterministic router can record its policy version and
-// assignment events in the same write as the acceptance decision.
-func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isolated bool, reason, policy string, routedMessages ...string) (Task, error) {
+// createTaskWithIsolation persists an accepted request after the source's
+// authorization policy approves it. Routing details are optional so the
+// deterministic router can record its assignment events in the same write as
+// the decision.
+func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isolated bool, auth AuthorizationRequest, routedMessages ...string) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if title == "" || prompt == "" {
@@ -353,6 +361,12 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 		return Task{}, err
 	}
 	now := time.Now().UTC()
+	auth.TriggerID, auth.ThreadID, auth.Text, auth.Workspace = triggerID, threadID, prompt, abs
+	decision, err := s.authorize(auth)
+	if err != nil {
+		return Task{}, err
+	}
+	decision.CreatedAt = now
 	events := []Event{{now, "accepted", "Manual request accepted"}}
 	for _, message := range routedMessages {
 		events = append(events, Event{now, "routed", message})
@@ -360,7 +374,7 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	if isolated {
 		events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
 	}
-	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: "manual", Text: prompt, CreatedAt: now}, Decision: Decision{TriggerID: triggerID, Outcome: "accept", Reason: reason, PolicyVersion: policy, CreatedAt: now}, Events: events}
+	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now}, Decision: decision, Events: events}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data.Tasks = append(s.data.Tasks, t)

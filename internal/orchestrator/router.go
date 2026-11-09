@@ -32,7 +32,7 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 	}
 	assignment := fmt.Sprintf("Router assignment: agent %s, %s, execution requested (%s)", DefaultRouteAgent, workspaceChoice, LocalPolicyVersion)
 	task, err := s.createTaskWithIsolation(requestTitle(text), text, workspace, isolated,
-		"trusted local request accepted by the deterministic router", LocalPolicyVersion, assignment)
+		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter}, assignment)
 	if err != nil {
 		return Task{}, err
 	}

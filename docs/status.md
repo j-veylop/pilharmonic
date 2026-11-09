@@ -17,16 +17,17 @@ adapter status reports, retries, deletion and default Git-worktree isolation wit
 automatic merging of successful isolated work are supported locally. The UI opens on a deterministic router that accepts work,
 assigns Pi and starts it; the task board exposes a tool-activity view, a
 shortcut-help popup and an agent chooser. Assistant output is rendered as
-Markdown. There is no
-external input source, no authorization policy engine and no GitHub integration.
-New tasks use a dedicated Git worktree when their source workspace is a Git
-repository with a committed `HEAD`; otherwise they share their source workspace.
+Markdown. Authorization is an explicit compiled-in policy gate with audit
+evidence, but there is no external input source, configurable policy engine or
+GitHub integration. New tasks use a dedicated Git worktree when their source
+workspace is a Git repository with a committed `HEAD`; otherwise they share
+their source workspace.
 
 ## Repository status (2026-11-09)
 
 - The history contains the baseline plus the router, tool-activity and staged lifecycle work on `main`.
 - `go test ./...` and `go vet ./...` pass.
-- Roughly 5.4k lines of implementation and 3.7k lines of tests. Dependencies
+- Roughly 5.7k lines of implementation and 3.9k lines of tests. Dependencies
   are Bubble Tea, Lip Gloss, Glamour and `charmbracelet/x/ansi`; everything else
   is the Go standard library.
 - Packages: the module root (entry point), `internal/orchestrator` (state,
@@ -73,19 +74,22 @@ reopening state after a crash or kill.
 The primary path starts at the router. Pressing Enter on the router screen calls
 `SubmitRequest` (`router.go`), which trims the request, derives a display title
 from its first line, and persists it through the same path as a manual draft.
-The decision records the deterministic policy version `local-1`, and a `routed`
-event records the assignment (Pi, an isolated worktree or shared workspace as
-applicable, execution requested). The router then calls `Start` immediately. The same screen lists tasks whose stage
+The decision records the local policy ID/version (`local` / `local-1`), the
+trusted local source and actor, and a versioned digest of the policy input. A
+`routed` event records the assignment (Pi, an isolated worktree or shared
+workspace as applicable, execution requested). The router then calls `Start`
+immediately. The same screen lists tasks whose stage
 needs a person and recent routes. One request becomes one task: the router does
 not decompose requests or evaluate them with a model.
 
 1. **Manual submission.** Pressing `n` creates a draft through `CreateTask`
    (`service.go`) instead of routing immediately. It validates title/prompt/
    workspace, selects isolation by default when the workspace is a repository
-   with a committed `HEAD`, generates task, trigger and thread IDs, and records
-   the explicit request as an accepted trigger, decision and event. All of it is
-   persisted before the call returns; a save failure rolls the slices back. A
-   manual draft is `queued` but deliberately not started.
+   with a committed `HEAD`, generates task, trigger and thread IDs, runs the
+   local authorization policy, and records the explicit request as an accepted
+   trigger, decision and event. All of it is persisted before the call returns;
+   a save failure rolls the slices back. A manual draft is `queued` but
+   deliberately not started.
 2. **Explicit start.** `r` (or the router after routing) calls `Start`. If a
    slot is free and an executor is registered, the task starts immediately. Otherwise the start request is
    marked `ScheduleRequested` with a timestamp and a persisted `scheduled`
@@ -191,9 +195,10 @@ not decompose requests or evaluate them with a model.
 `state.json` has two top-level slices: `tasks` and `threads`.
 
 - **Thread** holds the ordered triggers and routing decisions for a
-  conversation. A task's original trigger and decision are mirrored there; a
-  decision records its outcome, reason and, for routed requests, the policy
-  version.
+  conversation. A task's original trigger and decision are mirrored there. An
+  authorization decision records its outcome, reason, policy ID/version,
+  source, actor and a versioned SHA-256 digest of the normalized input; a
+  context decision records its outcome and reason.
 - **Task** holds the immutable `Prompt` (the mandate), the original
   `Trigger`/`Decision`, optional `ParentID` and `Depth` for delegated work,
   `Context` (immutable follow-up inputs with a current delivery summary),
@@ -225,6 +230,10 @@ attention.
 
 - The original request, the accept decision, the mandate and each attempt are
   distinct records; follow-ups are context, never a new mandate.
+- Task creation goes through the source's authorization policy. Policies return
+  an explicit outcome and policy ID/version, and the decision stores a digest of
+  the exact normalized input so it can be recomputed later. Model or agent
+  output never supplies an authorization decision.
 - State transitions are persisted before they are acknowledged, with
   compensating rollback on synchronous save errors.
 - At most `-max-concurrent` runners execute at once, including when starts and
@@ -259,9 +268,11 @@ attention.
 
 ## Known limits and current gaps
 
-- Only the trusted local UI is a source. Every request is accepted
-  deterministically; there is no policy engine, external trigger authentication
-  or model-assisted routing.
+- Only the trusted local UI and bounded subagent delegation are sources. The
+  built-in local and subagent policies are compiled in and both accept their
+  trusted source; there is no policy file, chooser or per-request policy
+  selection, no persistence of rejected requests, no dedicated audit export,
+  no external trigger authentication and no model-assisted routing.
 - The state file is intended for one running instance. Concurrent instances
   sharing a path would clobber each other. Whole-file rewrites happen on every
   output chunk, so large or chatty runs rewrite frequently.
@@ -337,6 +348,9 @@ Tests use fake runners and temporary state files; none needs model credentials.
 - `router_test.go`: deterministic acceptance, title derivation, durable policy
   version and routed event, automatic assignment/start, default isolated routing,
   FIFO scheduling at capacity and rejection of invalid requests.
+- `policy_test.go`: policy registration, audit evidence and digest durability,
+  rejection without task creation, canonical input digests and the built-in
+  local policy's source/empty-mandate checks.
 - `workspace_test.go`: isolated worktree preparation from committed `HEAD`,
   default isolation for new tasks, shared-workspace fallback and override,
   subdirectory workspaces, retry reuse, ownership and symlink rejection,

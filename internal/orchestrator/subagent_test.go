@@ -57,6 +57,10 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 	if done.Decision.Outcome != "accept" || done.Decision.PolicyVersion != SubagentPolicyVersion || !strings.Contains(done.Decision.Reason, parent.ID) {
 		t.Fatalf("bad child decision: %+v", done.Decision)
 	}
+	if done.Decision.PolicyID != SubagentPolicyID || done.Decision.Source != SubagentPolicySource ||
+		done.Decision.Actor != "task:"+parent.ID || !strings.HasPrefix(done.Decision.InputDigest, "sha256:") {
+		t.Fatalf("child audit evidence missing: %+v", done.Decision)
+	}
 	if done.Trigger.Source != "subagent" || done.Trigger.Text != "child mandate only" || done.Output != "child result" {
 		t.Fatalf("bad child record: %+v", done)
 	}

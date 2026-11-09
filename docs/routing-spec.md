@@ -2,7 +2,7 @@
 
 This is a development specification, not a claim that every feature is implemented. See `design.md` for the current scope.
 
-The deterministic local router and its unified entry point are implemented: trusted local submissions are accepted, assigned and started under policy `local-1`, with separate durable records. External sources, model-assisted evaluation and a configurable policy engine remain future work.
+The deterministic local router and its unified entry point are implemented: trusted local submissions are accepted, assigned and started under policy `local-1`, with separate durable records. Authorization is an explicit gate: a `Policy` receives a normalized request (source, actor, purpose, trigger/thread/parent identity, mandate, workspace and depth) and returns accept, reject or needs-review plus a policy ID and version. The built-in `local` policy (`local-1`) preserves deterministic local acceptance; the separate `subagent` policy (`subagent-1`) covers delegated children. Every task decision records the policy ID/version, source, actor and a versioned SHA-256 digest of the exact input, so a reviewer can recompute what was authorized. Rejected requests create no task and are currently returned as errors rather than persisted as audit records. A dedicated read-only audit export also remains future work. External sources, model-assisted evaluation and a configurable policy engine remain future work.
 
 ## Inputs and authority
 
@@ -22,7 +22,7 @@ Subagent delegation is implemented as a separate acceptance path (`subagent-1`),
 
 ## Next milestones
 
-1. Add explicit authorization policies and auditable decisions before introducing external sources.
+1. Add explicit authorization policies and auditable decisions before introducing external sources. The policy gate and audit evidence exist; policy configuration, rejected-request records and external-source authentication remain open.
 2. Extend structured reports to configured command adapters and richer assignment policy; Pi capabilities and adapter reports exist, and explicit operator reports already support waiting, blocked, ready and failed attention states.
 3. Add automatic cleanup, conflict resolution and in-app review for isolated worktrees. Default worktree isolation and automatic merging of successful work exist; cleanup and review remain open.
 4. Add external sources and model-assisted evaluation only after the deterministic authorization gate; evaluator output is untrusted and cannot authorize itself.

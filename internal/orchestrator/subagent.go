@@ -139,14 +139,23 @@ func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (T
 		return Task{}, err
 	}
 	now := time.Now().UTC()
-	trigger := Trigger{ID: triggerID, Source: "subagent", Text: prompt, CreatedAt: now}
-	decision := Decision{
-		TriggerID:     triggerID,
-		Outcome:       "accept",
-		Reason:        "delegated by running task " + parent.ID + "; child has a separate mandate",
-		PolicyVersion: SubagentPolicyVersion,
-		CreatedAt:     now,
+	trigger := Trigger{ID: triggerID, Source: SubagentPolicySource, Text: prompt, CreatedAt: now}
+	decision, err := s.authorizeLocked(AuthorizationRequest{
+		Source:    SubagentPolicySource,
+		Actor:     "task:" + parent.ID,
+		Purpose:   PurposeSubagent,
+		TriggerID: triggerID,
+		ThreadID:  threadID,
+		ParentID:  parent.ID,
+		Text:      prompt,
+		Workspace: workspace,
+		Depth:     depth,
+	})
+	if err != nil {
+		s.mu.Unlock()
+		return Task{}, err
 	}
+	decision.CreatedAt = now
 	task := Task{
 		ID:        id,
 		ThreadID:  threadID,

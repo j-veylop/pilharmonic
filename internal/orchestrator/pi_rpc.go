@@ -134,7 +134,7 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 	}()
 	pending := map[string]bool{}
 	toolInputs := map[string]ToolActivity{}
-	thinkingDeltas := map[int]bool{}
+	transcript := newPiTranscript(out)
 	initialOK, settled, sawAssistant := false, false, false
 	agentErr := ""
 	for {
@@ -236,27 +236,25 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 					ack(e.ID, e.Success, reason)
 				}
 			case "message_update":
-				var text string
 				switch e.Assistant.Type {
+				case "text_start":
+					if err = transcript.closeThinking(); err != nil {
+						return err
+					}
 				case "text_delta":
-					text = e.Assistant.Delta
+					if err = transcript.prose(e.Assistant.Delta); err != nil {
+						return err
+					}
 				case "thinking_start":
-					thinkingDeltas[e.Assistant.ContentIndex] = false
-					text = thinkingStartMarker
+					if err = transcript.thinkingStart(e.Assistant.ContentIndex); err != nil {
+						return err
+					}
 				case "thinking_delta":
-					if e.Assistant.Delta != "" {
-						thinkingDeltas[e.Assistant.ContentIndex] = true
-						text = e.Assistant.Delta
+					if err = transcript.thinkingDelta(e.Assistant.ContentIndex, e.Assistant.Delta); err != nil {
+						return err
 					}
 				case "thinking_end":
-					if !thinkingDeltas[e.Assistant.ContentIndex] && e.Assistant.Content != "" {
-						text = "\n" + e.Assistant.Content
-					}
-					delete(thinkingDeltas, e.Assistant.ContentIndex)
-					text += thinkingEndMarker
-				}
-				if text != "" {
-					if _, err = io.WriteString(out, text); err != nil {
+					if err = transcript.thinkingEnd(e.Assistant.ContentIndex, e.Assistant.Content); err != nil {
 						return err
 					}
 				}
@@ -296,12 +294,15 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 					}
 				}
 				if e.Type != "tool_execution_update" {
-					if _, err = fmt.Fprintf(out, "\n[%s] %s\n", activity.Status, activity.Summary()); err != nil {
+					if err = transcript.prose(fmt.Sprintf("\n[%s] %s\n", activity.Status, activity.Summary())); err != nil {
 						return err
 					}
 				}
 
 			case "message_end":
+				if err = transcript.closeThinking(); err != nil {
+					return err
+				}
 				if e.Message.Role == "assistant" {
 					sawAssistant = true
 					agentErr = ""
@@ -313,6 +314,9 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 					}
 				}
 			case "agent_settled":
+				if err = transcript.closeThinking(); err != nil {
+					return err
+				}
 				settled = true
 				if e.Aborted && agentErr == "" {
 					agentErr = "Pi reported an aborted run"

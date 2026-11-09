@@ -40,6 +40,75 @@ func (PiRunner) Capabilities() AgentCapabilities {
 	return AgentCapabilities{LiveContext: true, ToolActivity: true, StructuredReports: true}
 }
 
+// piTranscript writes Pi's display markers without letting a late
+// thinking_end bury prose. Some providers stream text before they emit the
+// authoritative thinking_end, so any assistant text or tool activity must close
+// an open thinking block first.
+type piTranscript struct {
+	out            io.Writer
+	openThinking   bool
+	thinkingIndex  int
+	thinkingDeltas bool
+}
+
+func newPiTranscript(out io.Writer) *piTranscript {
+	return &piTranscript{out: out}
+}
+
+func (t *piTranscript) write(text string) error {
+	if text == "" {
+		return nil
+	}
+	_, err := io.WriteString(t.out, text)
+	return err
+}
+
+func (t *piTranscript) closeThinking() error {
+	if !t.openThinking {
+		return nil
+	}
+	t.openThinking = false
+	t.thinkingDeltas = false
+	return t.write(thinkingEndMarker)
+}
+
+func (t *piTranscript) prose(text string) error {
+	if err := t.closeThinking(); err != nil {
+		return err
+	}
+	return t.write(text)
+}
+
+func (t *piTranscript) thinkingStart(index int) error {
+	if err := t.closeThinking(); err != nil {
+		return err
+	}
+	t.openThinking = true
+	t.thinkingIndex = index
+	return t.write(thinkingStartMarker)
+}
+
+func (t *piTranscript) thinkingDelta(index int, delta string) error {
+	if delta == "" || !t.openThinking || t.thinkingIndex != index {
+		return nil
+	}
+	t.thinkingDeltas = true
+	return t.write(delta)
+}
+
+func (t *piTranscript) thinkingEnd(index int, content string) error {
+	if !t.openThinking || t.thinkingIndex != index {
+		return nil
+	}
+	var text string
+	if !t.thinkingDeltas && content != "" {
+		text = "\n" + content
+	}
+	t.openThinking = false
+	t.thinkingDeltas = false
+	return t.write(text + thinkingEndMarker)
+}
+
 // adapterReport records an explicit structured observation when the output sink
 // supports it. It never derives reports from assistant prose.
 func adapterReport(out io.Writer, kind, message string) error {
@@ -81,7 +150,7 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 	var streamErr error
 	var agentErr string
 	sawAssistant := false
-	thinkingDeltas := false
+	transcript := newPiTranscript(out)
 	for scanner.Scan() {
 		var event struct {
 			Type      string `json:"type"`
@@ -103,35 +172,31 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 			streamErr = fmt.Errorf("invalid Pi JSON event: %w", err)
 			break
 		}
-		var text string
+		var writeErr error
 		switch event.Type {
 		case "message_update":
 			switch event.Assistant.Type {
+			case "text_start":
+				writeErr = transcript.closeThinking()
 			case "text_delta":
-				text = event.Assistant.Delta
+				writeErr = transcript.prose(event.Assistant.Delta)
 			case "thinking_start":
-				thinkingDeltas = false
-				text = thinkingStartMarker
+				writeErr = transcript.thinkingStart(event.Assistant.ContentIndex)
 			case "thinking_delta":
-				if event.Assistant.Delta != "" {
-					thinkingDeltas = true
-					text = event.Assistant.Delta
-				}
+				writeErr = transcript.thinkingDelta(event.Assistant.ContentIndex, event.Assistant.Delta)
 			case "thinking_end":
-				if !thinkingDeltas && event.Assistant.Content != "" {
-					text = "\n" + event.Assistant.Content
-				}
-				text += thinkingEndMarker
+				writeErr = transcript.thinkingEnd(event.Assistant.ContentIndex, event.Assistant.Content)
 			}
 		case "tool_execution_start":
-			text = "\n[tool started: " + event.ToolName + "]\n"
+			writeErr = transcript.prose("\n[tool started: " + event.ToolName + "]\n")
 		case "tool_execution_end":
 			result := "finished"
 			if event.IsError {
 				result = "failed"
 			}
-			text = "\n[tool " + result + ": " + event.ToolName + "]\n"
+			writeErr = transcript.prose("\n[tool " + result + ": " + event.ToolName + "]\n")
 		case "message_end":
+			writeErr = transcript.closeThinking()
 			if event.Message.Role == "assistant" {
 				sawAssistant = true
 				agentErr = ""
@@ -143,11 +208,9 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 				}
 			}
 		}
-		if text != "" {
-			if _, err := io.WriteString(out, text); err != nil {
-				streamErr = err
-				break
-			}
+		if writeErr != nil {
+			streamErr = writeErr
+			break
 		}
 	}
 	if streamErr == nil {

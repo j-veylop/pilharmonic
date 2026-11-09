@@ -121,7 +121,9 @@ not decompose requests or evaluate them with a model.
    markers become compact status rows with a coloured rail and glyph; a
    directly paired start/finish collapses into one finished row. Thinking
    markers collapse to one `thinking hidden` row by default, and `T` toggles
-   their content in a separate `THINKING` block. The TUI sanitizes output before
+   their content in a separate `THINKING` block. The adapter closes an open
+   thinking block before prose or tool activity, so a late provider
+   `thinking_end` cannot hide the answer. The TUI sanitizes output before
    display (strips ANSI, expands tabs, drops control characters), so agent text
    is rendered as data.
 7. **Thread work.** `a` creates a related task in the selected task's thread

@@ -43,6 +43,23 @@ func TestPiStreamCapturesThinkingBlocks(t *testing.T) {
 	}
 }
 
+func TestPiStreamClosesThinkingBeforeDelayedText(t *testing.T) {
+	path := fakePi(t, `printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"private reasoning"}}' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"answer"}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"private reasoning"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}'`)
+	var output bytes.Buffer
+	if err := (PiRunner{Command: path}).Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, &output); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	closeAt := strings.LastIndex(got, thinkingEndMarker)
+	answerAt := strings.LastIndex(got, "answer")
+	if closeAt < 0 || answerAt < 0 || closeAt > answerAt {
+		t.Fatalf("text was left inside thinking: %q", got)
+	}
+	if strings.Count(got, thinkingStartMarker) != 1 || strings.Count(got, thinkingEndMarker) != 1 || strings.Count(got, "private reasoning") != 1 {
+		t.Fatalf("unexpected thinking markers: %q", got)
+	}
+}
+
 func TestPiStreamUsesEndContentWhenThinkingHasNoDeltas(t *testing.T) {
 	path := fakePi(t, `printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"[Reasoning redacted]"}}' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"answer"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}'`)
 	var output bytes.Buffer

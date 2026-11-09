@@ -59,7 +59,7 @@ Press `t` to open tool activity for the selected task; it is a keyboard mode rat
 
 In the activity view (`t`), press `v` to cycle through all calls, the latest attempt, and errors only. Calls show timestamps and available duration; the detail header shows the current running tool action. Enter expands the selected call, and Esc returns to the list.
 
-Pi thinking blocks are captured in the output transcript but hidden by default so long reasoning does not displace the answer. Press `T` to show or hide them. A hidden block collapses to a compact `thinking hidden` row; a shown block is labelled `THINKING` and rendered separately from assistant prose and tool activity. The markers are a display hint from the Pi adapter, and thinking text remains untrusted agent output.
+Pi thinking blocks are captured in the output transcript but hidden by default so long reasoning does not displace the answer. Press `T` to show or hide them. A hidden block collapses to a compact `thinking hidden` row; a shown block is labelled `THINKING` and rendered separately from assistant prose and tool activity. The markers are a display hint from the Pi adapter, and thinking text remains untrusted agent output. The adapter closes an open thinking block before writing prose or tool activity, so a provider that reports `thinking_end` late cannot hide the answer inside the block.
 
 Agent output is rendered as Markdown using Glamour, including headings, lists, tables and code blocks. Long content still uses the existing scrolling controls. Press `?` for a centered shortcut-help popup; `h`/`l`, Left/Right or Tab change help topics; `j`/`k`, page keys and the wheel scroll within a topic, and `Esc` or `?` closes it. While help is open, task shortcuts are captured by the popup.
 

@@ -41,6 +41,8 @@ type model struct {
 	selected         int
 	router           bool
 	routerDraft      string
+	routerCursor     int
+	routerScroll     int
 	routerFocus      int
 	routerSelected   int
 	width, height    int
@@ -254,6 +256,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.router = true
 			m.routerFocus = 0
 			m.routerDraft = ""
+			m.routerCursor = 0
+			m.routerScroll = 0
 			m.notice = ""
 			m.clampRouter()
 		case "n":

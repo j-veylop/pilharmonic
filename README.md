@@ -12,6 +12,8 @@ go run .
 
 On the router screen, type a request and press **Enter**. The local router accepts it, selects an executor and requests execution. By default two agents can run at once. Additional start requests wait in FIFO order. Press **Esc** for the task board, **/** to return to the router, or **?** for the keyboard reference.
 
+Composers and the router input wrap long drafts and scroll as you move the cursor. Press **Ctrl-J** (or **Alt-Enter**) to insert a newline, then **Enter** to submit. Use **PgUp** and **PgDn** to move through long input.
+
 Use `go run . -help` for all startup flags. Common options are `-workspace` for the source directory, `-state` for the JSON state file and `-max-concurrent` for the process limit. The defaults are the current directory and `orchestrator/state.json` under the user config directory. Use a separate state file for each running instance. The state file contains prompts, recent output (up to 256 KiB per attempt), routing decisions and history in plain text.
 
 ## Task board

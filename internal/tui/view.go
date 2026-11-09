@@ -667,12 +667,18 @@ func (m model) footer(w int) string {
 	}
 	if m.input.kind != "" {
 		label := string(m.input.kind)
-		draft := strings.ReplaceAll(terminalText(m.input.text), "\n", " ")
-		room := w - lipgloss.Width(label+"  › ") - 1
-		if n := lipgloss.Width(draft) - room; n > 0 {
-			draft = ansi.TruncateLeft(draft, n+1, "…")
+		prefix := accentStyle.Render(label + "  › ")
+		pad := strings.Repeat(" ", lipgloss.Width(label+"  › "))
+		visible := m.input.viewLines(m.composerWidth(), m.composerHeight())
+		draft := make([]string, 0, len(visible))
+		for i, line := range visible {
+			if i == 0 {
+				draft = append(draft, prefix+line)
+			} else {
+				draft = append(draft, pad+line)
+			}
 		}
-		footer = accentStyle.Render(label+"  › ") + draft + "▏\n" + mutedStyle.Render("enter submit  ·  esc cancel")
+		footer = strings.Join(draft, "\n") + "\n" + mutedStyle.Render("enter submit  ·  ctrl+j newline  ·  esc cancel")
 	}
 	if m.agentPicker.target != "" {
 		footer = mutedStyle.Render("↑↓ choose agent · enter select · esc cancel")

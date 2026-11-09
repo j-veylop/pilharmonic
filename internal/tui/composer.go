@@ -3,9 +3,9 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"orchestrator/internal/orchestrator"
 )
@@ -22,6 +22,8 @@ const (
 	rejectReviewInput inputKind = "REJECT REVIEW"
 )
 
+const composerMaxLines = 6
+
 // The target is captured when the composer opens. Task ordering can change
 // while the operator is typing.
 type composer struct {
@@ -29,28 +31,61 @@ type composer struct {
 	target       string
 	reviewCommit string
 	text         string
+	cursor       int
+	scroll       int
 }
 
+func (c composer) editorState() editor {
+	return editor{text: c.text, cursor: c.cursor, scroll: c.scroll}
+}
+
+func (c *composer) setEditorState(e editor) {
+	c.text, c.cursor, c.scroll = e.text, e.cursor, e.scroll
+}
+
+func (c composer) viewLines(width, height int) []string {
+	return c.editorState().viewLines(width, height)
+}
+
+// editText keeps the old single-value editing helper for callers that only
+// need an append-only draft. Composers use editor so wrapped lines and cursor
+// movement remain possible.
 func editText(text string, msg tea.KeyMsg) string {
+	e := editor{text: text, cursor: len(text)}
 	switch msg.Type {
 	case tea.KeyBackspace, tea.KeyCtrlH:
-		_, n := utf8.DecodeLastRuneInString(text)
-		return text[:len(text)-n]
+		e.backspace()
 	case tea.KeyRunes:
-		return text + string(msg.Runes)
+		e.insert(string(msg.Runes))
 	case tea.KeySpace:
-		return text + " "
+		e.insert(" ")
 	}
-	return text
+	return e.text
+}
+
+func (m model) composerWidth() int {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	return max(1, width-lipgloss.Width(string(m.input.kind)+"  › ")-1)
+}
+
+func (m model) composerHeight() int {
+	height := m.height
+	if height <= 0 {
+		height = 24
+	}
+	return max(2, min(composerMaxLines, height/4))
 }
 
 func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
+	switch msg.String() {
+	case "ctrl+c":
 		return m, tea.Quit
-	case tea.KeyEsc:
+	case "esc":
 		m.input = composer{}
-	case tea.KeyEnter:
+	case "enter":
 		prompt := strings.TrimSpace(m.input.text)
 		if prompt == "" {
 			m.notice = "Enter a task first."
@@ -65,7 +100,9 @@ func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.tasks = m.service.ListTasks()
 		m.clamp()
 	default:
-		m.input.text = editText(m.input.text, msg)
+		e := m.input.editorState()
+		e.handleKey(msg, m.composerWidth(), m.composerHeight())
+		m.input.setEditorState(e)
 	}
 	return m, nil
 }

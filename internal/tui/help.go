@@ -57,6 +57,11 @@ Paste          Use the terminal shortcut in composers
 
 COMPOSERS & PICKERS
 Enter          Submit input / confirm agent or profile
+Ctrl-j         Insert newline in composer
+Alt-enter      Insert newline in composer
+Arrows         Move cursor / wrapped line
+Home / End     Line start / end
+PgUp / PgDn    Move through long input
 Esc            Cancel input / close picker
 j / k          Select in executor or profile picker
 Typing         Text in composers`},

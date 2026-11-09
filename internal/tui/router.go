@@ -75,6 +75,8 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.router = false
 		m.routerFocus = 0
 		m.routerDraft = ""
+		m.routerCursor = 0
+		m.routerScroll = 0
 		m.clampScroll()
 		return m, nil
 	case "tab":
@@ -110,8 +112,8 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.clampRouter()
 		return m, nil
 	}
-	switch msg.Type {
-	case tea.KeyEnter:
+	switch msg.String() {
+	case "enter":
 		text := strings.TrimSpace(m.routerDraft)
 		if text == "" {
 			m.notice = "Enter a request first."
@@ -129,6 +131,8 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		}
 		m.tasks = m.service.ListTasks()
 		m.routerDraft = ""
+		m.routerCursor = 0
+		m.routerScroll = 0
 		m.routerSelected = 0
 		for i, current := range m.tasks {
 			if current.ID == task.ID {
@@ -139,9 +143,48 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.clamp()
 		m.clampScroll()
 	default:
-		m.routerDraft = editText(m.routerDraft, msg)
+		e := m.routerEditor()
+		e.handleKey(msg, m.routerComposerWidth(), m.routerComposerHeight())
+		m.setRouterEditor(e)
 	}
 	return m, nil
+}
+
+func (m model) routerEditor() editor {
+	return editor{text: m.routerDraft, cursor: m.routerCursor, scroll: m.routerScroll}
+}
+
+func (m *model) setRouterEditor(e editor) {
+	m.routerDraft = e.text
+	m.routerCursor = e.cursor
+	m.routerScroll = e.scroll
+}
+
+func (m model) routerComposerWidth() int {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	inner := max(1, width-4)
+	return max(1, inner-lipgloss.Width("▸ ")-1)
+}
+
+func (m model) routerComposerHeight() int {
+	height := m.height
+	if height <= 0 {
+		height = 24
+	}
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	lines := max(2, min(composerMaxLines, height/4))
+	// The footer (notice and wrapped hints) and the panel border, header and
+	// blank share the terminal with the composer. Cap the composer rows so the
+	// cursor row is never clipped by the panel on short terminals.
+	footer := m.footer(width)
+	body := height - 1 - (strings.Count(footer, "\n") + 1)
+	return max(1, min(lines, body-4))
 }
 
 func (m model) routerPanel(width, height int) string {
@@ -150,7 +193,7 @@ func (m model) routerPanel(width, height int) string {
 	policy := lipgloss.NewStyle().Foreground(cyan).Bold(true).Render(orchestrator.LocalPolicyVersion)
 	lines = append(lines, accentStyle.Render("ROUTE WORK")+mutedStyle.Render("  ·  policy ")+policy)
 	lines = append(lines, "")
-	lines = append(lines, fit(m.routerComposer(), inner, 1))
+	lines = append(lines, m.routerComposerLines(inner)...)
 	lines = append(lines, "")
 	attention := m.attentionTasks()
 	lines = append(lines, accentStyle.Render(fmt.Sprintf("NEEDS ATTENTION  %02d", len(attention))))
@@ -182,17 +225,29 @@ func (m model) routerPanel(width, height int) string {
 }
 
 func (m model) routerComposer() string {
-	cursor := accentStyle.Render("▏")
+	return strings.Join(m.routerComposerLines(max(1, m.width-4)), "\n")
+}
+
+func (m model) routerComposerLines(width int) []string {
 	prefix := accentStyle.Render("▸ ")
+	pad := strings.Repeat(" ", lipgloss.Width("▸ "))
 	if m.routerFocus == 1 {
 		prefix = mutedStyle.Render("▸ ")
-		cursor = mutedStyle.Render("▏")
 	}
-	draft := terminalText(m.routerDraft)
-	if draft == "" && m.routerFocus == 0 {
-		return prefix + mutedStyle.Render("Describe the work…") + cursor
+	if m.routerDraft == "" && m.routerFocus == 0 {
+		return []string{prefix + mutedStyle.Render("Describe the work…") + "▏"}
 	}
-	return prefix + draft + cursor
+	contentWidth := max(1, width-lipgloss.Width("▸ ")-1)
+	visible := m.routerEditor().viewLines(contentWidth, m.routerComposerHeight())
+	lines := make([]string, 0, len(visible))
+	for i, line := range visible {
+		if i == 0 {
+			lines = append(lines, prefix+line)
+		} else {
+			lines = append(lines, pad+line)
+		}
+	}
+	return lines
 }
 
 func (m model) routerAttentionRow(task orchestrator.Task, index, width int) string {

@@ -107,6 +107,27 @@ func TestRouterEmptyState(t *testing.T) {
 	}
 }
 
+func TestRouterCursorVisibleWithNoticeInShortTerminal(t *testing.T) {
+	m := model{
+		router:       true,
+		width:        30,
+		height:       10,
+		notice:       "Routed to general · queued · shared workspace — title",
+		routerDraft:  strings.Repeat("word ", 12),
+		routerCursor: 0,
+	}
+	for i := 0; i < 3; i++ {
+		m = key(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	view := m.View()
+	if !strings.Contains(ansi.Strip(view), "▏") {
+		t.Fatalf("cursor row clipped by router panel with notice at 30x10: %s", ansi.Strip(view))
+	}
+	if width, height := lipgloss.Width(view), lipgloss.Height(view); width > 30 || height > 10 {
+		t.Fatalf("rendered %dx%d", width, height)
+	}
+}
+
 func TestRouterFitsTerminal(t *testing.T) {
 	now := time.Now()
 	m := model{router: true, width: 120, height: 35, tasks: []orchestrator.Task{

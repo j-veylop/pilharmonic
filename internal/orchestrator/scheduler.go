@@ -69,6 +69,7 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	t.Error = ""
 	t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
 	t.MergedAt = time.Time{}
+	t.resetReview()
 	if s.controlPath != "" && s.subagentMaxDepth > t.Depth && s.subagentMaxChildren > 0 {
 		token, tokenErr := newID()
 		if tokenErr != nil {

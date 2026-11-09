@@ -51,6 +51,7 @@ type model struct {
 	relatedTask      string
 	subagentTask     string
 	reportTask       string
+	reviewTask       string
 	followUpTask     string
 	historyOffset    int
 	notice           string
@@ -251,6 +252,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.relatedTask = ""
 				m.subagentTask = ""
 				m.reportTask = ""
+				m.reviewTask = ""
 				m.followUpTask = ""
 				m.draft = ""
 			case tea.KeyEnter:
@@ -259,7 +261,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice = "Enter a task before submitting."
 					break
 				}
-				if m.reportTask != "" {
+				if m.reviewTask != "" {
+					if err := m.service.RejectReview(m.reviewTask, prompt); err != nil {
+						m.notice = err.Error()
+					} else {
+						m.notice = "Review rejected; the retained worktree was not changed."
+					}
+					m.reviewTask = ""
+				} else if m.reportTask != "" {
 					kind, message, _ := strings.Cut(prompt, " ")
 					err := m.service.RecordReport(m.reportTask, kind, message)
 					if err != nil {
@@ -515,6 +524,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice = err.Error()
 				} else {
 					m.notice = "Task queued for retry; press r to start."
+				}
+			}
+		case "v":
+			if len(m.tasks) > 0 {
+				t := m.tasks[m.selected]
+				if !t.AwaitingReview() {
+					m.notice = "No prepared worktree commit is awaiting review."
+				} else if err := m.service.ApproveReview(t.ID, ""); err != nil {
+					m.notice = err.Error()
+				} else {
+					m.notice = "Review approved for commit " + t.ReviewCommit + "."
+				}
+			}
+		case "V":
+			if len(m.tasks) > 0 {
+				t := m.tasks[m.selected]
+				if !t.AwaitingReview() {
+					m.notice = "No prepared worktree commit is awaiting review."
+				} else {
+					m.reviewTask = t.ID
+					m.input = true
+					m.notice = "Reject review: enter a reason."
 				}
 			}
 		case "d":

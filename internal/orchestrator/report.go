@@ -136,6 +136,9 @@ func (t Task) Stage() string {
 	if t.undeliveredForAttempt(t.currentAttemptID()) {
 		return "input undelivered"
 	}
+	if t.AwaitingReview() {
+		return "awaiting review"
+	}
 	if r, ok := t.CurrentReport(); ok {
 		released := false
 		for _, c := range t.Context {

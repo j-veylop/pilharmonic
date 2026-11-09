@@ -14,6 +14,7 @@ const (
 	glyphCheck      = "\uf00c" // nf-fa-check
 	glyphConflict   = "\uf071" // nf-fa-exclamation_triangle
 	glyphMergeError = "\uf00d" // nf-fa-times
+	glyphReview     = "\uf06e" // nf-fa-eye
 	glyphShared     = "\uf07b" // nf-fa-folder
 	glyphInherited  = "\uf0c1" // nf-fa-link
 )
@@ -25,11 +26,16 @@ type workspaceBadge struct {
 }
 
 // workspaceBadgeFor summarizes where a task runs and what happened to its
-// isolated work. Merge results take precedence over the worktree branch because
-// they describe the final integration state; a conflict remains distinct from
-// other merge failures so it can be recognized at a glance.
+// isolated work. An outstanding or rejected review takes precedence because it
+// is an operator decision that still needs attention; merge results describe
+// the final integration state, and a conflict remains distinct from other merge
+// failures so it can be recognized at a glance.
 func workspaceBadgeFor(task orchestrator.Task) workspaceBadge {
 	switch {
+	case task.ReviewStatus == orchestrator.ReviewRejected:
+		return workspaceBadge{glyphMergeError, "rejected", statusFailed}
+	case task.AwaitingReview():
+		return workspaceBadge{glyphReview, "review", cyan}
 	case task.MergeStatus == orchestrator.MergeFailed && task.MergeConflict():
 		return workspaceBadge{glyphConflict, "conflict", statusFailed}
 	case task.MergeStatus == orchestrator.MergeFailed:

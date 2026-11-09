@@ -318,6 +318,23 @@ func (m model) detailContent(width int) []string {
 		}
 		add(lipgloss.NewStyle().Foreground(badge.color).Render(badge.glyph + " " + detail + terminalText(t.MergeError)))
 	}
+	switch t.ReviewStatus {
+	case orchestrator.ReviewPending:
+		add(accentStyle.Render("REVIEW PENDING") + mutedStyle.Render("  commit "+terminalText(t.ReviewCommit)+"  ·  v approve / V reject"))
+	case orchestrator.ReviewApproved, orchestrator.ReviewRejected:
+		label, color := "REVIEW APPROVED", statusCompleted
+		if t.ReviewStatus == orchestrator.ReviewRejected {
+			label, color = "REVIEW REJECTED", statusFailed
+		}
+		suffix := "  " + terminalText(t.ReviewedBy)
+		if !t.ReviewedAt.IsZero() {
+			suffix += "  " + t.ReviewedAt.Local().Format("Jan 02 15:04")
+		}
+		add(lipgloss.NewStyle().Foreground(color).Bold(true).Render(label) + mutedStyle.Render(suffix))
+	}
+	if t.ReviewNote != "" {
+		add(mutedStyle.Render("Review note: " + terminalText(t.ReviewNote)))
+	}
 	if children := m.childrenOf(t.ID); len(children) > 0 {
 		add(mutedStyle.Render(fmt.Sprintf("Subagents: %d", len(children))))
 	}

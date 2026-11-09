@@ -176,10 +176,13 @@ not decompose requests or evaluate them with a model.
     Merges are serialized. A no-change completion is recorded as `up_to_date`;
     a clean merge records the worktree and merge commits; a conflict or Git
     failure aborts the source merge and records `merge_failed` separately from
-    the successful attempt. The worktree is retained in every case. The latest
-    attempt is finalized, control credentials are cleared, terminal and merge
-    events are appended, state is saved, and the scheduler starts the next
-    waiting task if capacity opened.
+    the successful attempt. The worktree is retained in every case. A merged
+    commit, or a worktree commit whose merge failed, is then recorded as
+    `pending` review with its commit; an up-to-date completion has no new
+    commit and is not opened for review. The latest attempt is finalized,
+    control credentials are cleared, terminal, merge and review events are
+    appended, state is saved, and the scheduler starts the next waiting task if
+    capacity opened.
 11. **Retry, cancel, delete.** `R` requeues a failed, interrupted or canceled
     task without changing its mandate or attempts and requires a new `r`; a
     completed isolated task whose automatic merge failed is also retryable and
@@ -210,7 +213,8 @@ not decompose requests or evaluate them with a model.
   `Activities`, `Events`, scheduling flags, workspace, agent, status,
   timestamps, the isolation choice, the prepared execution workspace and its
   initial commit, merge status/error, worktree and merge commits, merge time,
-  latest output and error. Control credentials are not part of the stored task.
+  review status/commit/actor/time/note for a prepared worktree, latest output
+  and error. Control credentials are not part of the stored task.
 - **Attempt** is one execution: agent, status, start/finish, output and error.
   Task status and attempt status have separate lifecycles that are updated
   together today.
@@ -228,6 +232,19 @@ correct or reviewed. For an isolated task, `merge_status` separately records
 whether its changes were merged, were already up to date, or failed to merge;
 a merge failure leaves the execution attempt completed but makes the task need
 attention.
+
+Review status is independent of both process status and merge outcome:
+`pending` means an isolated task's prepared worktree commit awaits an operator
+decision, and `approved`/`rejected` record that decision with its commit, actor,
+time and optional note. Review opens when a successful isolated attempt
+produces a worktree commit that was merged or whose merge failed; an up-to-date
+completion opens no review. The local UI approves with `v` and rejects with `V`
+plus a required reason, and the service methods `ApproveReview` and
+`RejectReview` perform the same transition. A decision must match the pending
+commit, is persisted with a `review_approved` or `review_rejected` event before
+it is acknowledged, and a new attempt clears it. Review status does not gate
+automatic merging: merge outcome continues to be recorded separately, and a
+rejection neither undoes a merge nor removes the retained worktree.
 
 ## Invariants the code tries to keep
 
@@ -259,6 +276,11 @@ attention.
   serialized, create a merge commit, and abort on conflict instead of leaving
   the source checkout in a partial merge. Merge failure is recorded separately
   from execution success and makes the task need attention.
+- Review is a separate operator record, not a merge gate. A prepared worktree
+  commit that was merged or whose merge failed is opened for review once, a
+  decision is matched to that commit and persisted before it is acknowledged,
+  and a new attempt clears it. A decision never rewrites merge history or the
+  retained worktree.
 - A subagent is a new task with its own mandate, thread, decision and attempt;
   it is never a mutation of the parent's mandate. Spawn records are persisted
   before the child starts, and a failed start remains visible as a queued task
@@ -283,10 +305,11 @@ attention.
   repository with a committed `HEAD`, and can be disabled with
   `-isolation=false` or per task before start. Isolation starts from that
   commit: uncommitted source files are absent, a repository with no commit
-  cannot be isolated, and the `git` executable is required. Successful isolated tasks merge automatically, but
-  that is integration, not review: there is no in-app diff, review, conflict
-  resolution or discard action, and a conflicting merge must be resolved
-  outside the application. Worktrees are never cleaned up automatically, so
+  cannot be isolated, and the `git` executable is required. Successful isolated
+  tasks merge automatically, but that is integration, not review: review is a
+  recorded approve/reject decision on a prepared commit and does not gate
+  merging. There is no in-app diff, conflict resolution or discard action, and
+  a conflicting merge must be resolved outside the application. Worktrees are never cleaned up automatically, so
   they accumulate beside the state file. A dirty source checkout can make an
   otherwise clean worktree merge fail without changing the worktree. Tasks in
   workspaces that cannot be isolated, or that are explicitly opted out, share
@@ -361,10 +384,14 @@ Tests use fake runners and temporary state files; none needs model credentials.
 - `merge_test.go`: automatic merge of worktree changes, no merge for failed
   attempts, up-to-date no-change completion, conflict abort with retained
   worktree and serialized concurrent merges.
+- `review_test.go`: review transition validation, commit/actor checks,
+  opening a review for merged and failed-merge worktree commits, skipping
+  up-to-date and shared completions, service-level approval/rejection audit
+  and persistence across reopen, and clearing on start or retry.
 - `pi_test.go`, `pi_rpc_test.go`: event-stream translation, structured adapter
   reports, prompt composition,
   acknowledgement, failure and shutdown paths using fake commands.
 - `internal/tui/*_test.go`: scrolling, layout, Markdown rendering, help
-  navigation, agent picker, activity filters, isolation controls, deletion flow,
-  thread controls, the subagent composer and the router composer/attention
-  surface.
+  navigation, agent picker, activity filters, isolation controls, review badges,
+  details and approve/reject controls, deletion flow, thread controls, the
+  subagent composer and the router composer/attention surface.

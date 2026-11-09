@@ -84,6 +84,11 @@ type Task struct {
 	MergeCommit        string         `json:"merge_commit,omitempty"`
 	WorktreeCommit     string         `json:"worktree_commit,omitempty"`
 	MergedAt           time.Time      `json:"merged_at,omitempty"`
+	ReviewStatus       string         `json:"review_status,omitempty"`
+	ReviewCommit       string         `json:"review_commit,omitempty"`
+	ReviewedBy         string         `json:"reviewed_by,omitempty"`
+	ReviewedAt         time.Time      `json:"reviewed_at,omitempty"`
+	ReviewNote         string         `json:"review_note,omitempty"`
 	Activities         []ToolActivity `json:"activities,omitempty"`
 	Reports            []Report       `json:"reports,omitempty"`
 	Deliveries         []Delivery     `json:"deliveries,omitempty"`
@@ -534,6 +539,16 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 			}
 			task.Events = append(task.Events, Event{task.UpdatedAt, eventKind, message})
 		}
+		// Prepared isolated work is recorded for review separately from the merge
+		// outcome. An up-to-date completion has no new commit to review, and a
+		// merge that failed before committing has nothing reviewable yet.
+		if task.Isolated && merge.WorktreeCommit != "" && merge.Status != MergeUpToDate {
+			if reviewErr := task.beginReview(merge.WorktreeCommit); reviewErr != nil {
+				task.Events = append(task.Events, Event{task.UpdatedAt, "review_error", "Could not open review: " + reviewErr.Error()})
+			} else {
+				task.Events = append(task.Events, Event{task.UpdatedAt, "review_pending", "Prepared worktree commit " + merge.WorktreeCommit + " awaits review"})
+			}
+		}
 		if err := s.save(); err != nil {
 			s.persistErr = err
 		} else if !s.closing {
@@ -708,6 +723,7 @@ func (s *Service) Retry(id string) error {
 		t.Error = ""
 		t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
 		t.MergedAt = time.Time{}
+		t.resetReview()
 		message := "Manual retry requested"
 		if mergeFailed {
 			message = "Manual retry requested after automatic merge failure"

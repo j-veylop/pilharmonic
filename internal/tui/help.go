@@ -29,6 +29,7 @@ b              Spawn subagent from running task
 A              Choose executor before scheduling
 w              Toggle Git worktree isolation (default on if possible)
 r / R          Start / requeue unsuccessful task
+v / V          Approve / reject prepared worktree commit
 c              Cancel task
 d              Delete inactive task (confirm y)
 D              Delete all completed tasks (confirm y)

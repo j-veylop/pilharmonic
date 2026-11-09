@@ -73,7 +73,7 @@ func TestReadableToolTextResult(t *testing.T) {
 
 func TestActivityListDistinguishesStatuses(t *testing.T) {
 	view := ansi.Strip(activityModel().View())
-	for _, want := range []string{"✓", "finished", "⠿", "running", "main.go"} {
+	for _, want := range []string{"✓", "finished", "⠋", "running", "main.go"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in %s", want, view)
 		}

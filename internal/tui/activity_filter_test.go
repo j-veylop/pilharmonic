@@ -12,8 +12,8 @@ func TestActivityFiltersAndCurrentAction(t *testing.T) {
 		{ID: "same", AttemptID: "new", Name: "bash", Status: "running", Args: json.RawMessage(`{"command":"go test ./..."}`)},
 	}}
 	m := model{tasks: []orchestrator.Task{task}, activity: true}
-	if currentAction(task) != "▶ bash: go test ./..." {
-		t.Fatal(currentAction(task))
+	if m.currentAction(task) != "⠋ bash: go test ./..." {
+		t.Fatal(m.currentAction(task))
 	}
 	m.activityKey("v")
 	if len(m.visibleActivities()) != 1 || m.visibleActivities()[0].AttemptID != "new" {
@@ -32,7 +32,7 @@ func TestActivityFiltersAndCurrentAction(t *testing.T) {
 		t.Fatal("all filter")
 	}
 	task.Status = orchestrator.Completed
-	if currentAction(task) != "" {
+	if m.currentAction(task) != "" {
 		t.Fatal("finished task showed current action")
 	}
 }

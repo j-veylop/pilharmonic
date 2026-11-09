@@ -7,9 +7,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"orchestrator/internal/orchestrator"
 )
+
+const runningGlyphPlaceholder = "\uE000"
+
+var defaultRunningGlyph = spinner.MiniDot.Frames[0]
 
 type tickMsg time.Time
 
@@ -54,16 +59,24 @@ type model struct {
 	isolationBusy    bool
 	deleteTaskID     string
 	deleteTaskTitle  string
+	spinner          spinner.Model
 }
 
 // Run starts the terminal interface. The service owns task execution.
 func Run(service *orchestrator.Service, workspace string) error {
-	_, err := tea.NewProgram(model{service: service, workspace: workspace, tasks: service.ListTasks(), router: true}, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	initial := model{
+		service:   service,
+		workspace: workspace,
+		tasks:     service.ListTasks(),
+		router:    true,
+		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+	}
+	_, err := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
 func tick() tea.Cmd           { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
-func (m model) Init() tea.Cmd { return tick() }
+func (m model) Init() tea.Cmd { return tea.Batch(tick(), m.spinner.Tick) }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case isolationResultMsg:
@@ -97,6 +110,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clampScroll()
 		return m, tick()
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 	case tea.MouseMsg:
 		if m.help {
 			if msg.Button == tea.MouseButtonWheelUp {

@@ -100,7 +100,7 @@ func (m model) activityContent(width int) []string {
 			add("This activity is no longer retained. Esc returns to the list.")
 			return lines
 		}
-		statusStyle, glyph := toolStatusStyle(a.Status)
+		statusStyle, glyph := m.toolStatusStyle(a.Status)
 		add(titleStyle.Render(terminalText(a.Name)) + "  " + statusStyle.Bold(true).Render(glyph+" "+a.Status))
 		add(mutedStyle.Render("Attempt " + a.AttemptID + "  ·  " + a.StartedAt.Local().Format("15:04:05")))
 		if a.DurationMS != nil {
@@ -127,7 +127,7 @@ func (m model) activityContent(width int) []string {
 		if isSelected {
 			marker = "▸ "
 		}
-		style, glyph := toolStatusStyle(a.Status)
+		style, glyph := m.toolStatusStyle(a.Status)
 		stamp := a.StartedAt.Local().Format("15:04:05")
 		summary := terminalText(a.Summary())
 		duration := ""
@@ -208,7 +208,7 @@ func (m model) visibleActivities() []orchestrator.ToolActivity {
 	return result
 }
 
-func currentAction(t orchestrator.Task) string {
+func (m model) currentAction(t orchestrator.Task) string {
 	if t.Status != orchestrator.Running || len(t.Attempts) == 0 {
 		return ""
 	}
@@ -216,7 +216,7 @@ func currentAction(t orchestrator.Task) string {
 	for i := len(t.Activities) - 1; i >= 0; i-- {
 		a := t.Activities[i]
 		if a.AttemptID == attempt && a.Status == "running" {
-			return "▶ " + terminalText(a.Summary())
+			return m.runningGlyph() + " " + terminalText(a.Summary())
 		}
 	}
 	return ""

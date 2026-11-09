@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -52,10 +53,54 @@ func TestToolActivityIsDistinctFromAssistantText(t *testing.T) {
 
 func TestToolActivityRunningRowStaysVisible(t *testing.T) {
 	plain := ansi.Strip(strings.Join(renderedOutput("work\n[running] read: main.go\n", 60), "\n"))
-	for _, want := range []string{"⠿ running", "read", "main.go"} {
+	for _, want := range []string{"⠋ running", "read", "main.go"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing %q in %q", want, plain)
 		}
+	}
+}
+
+func TestToolActivityCompletionReplacesRowAcrossBlankLines(t *testing.T) {
+	plain := ansi.Strip(strings.Join(renderedOutput("work\n\n[running] read: main.go\n\n[finished] read: main.go\n", 60), "\n"))
+	if got := strings.Count(plain, "read"); got != 1 {
+		t.Fatalf("completion created another row (%d occurrences): %q", got, plain)
+	}
+	for _, want := range []string{"✓ finished", "main.go"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q in %q", want, plain)
+		}
+	}
+	if strings.Contains(plain, "⠋ running") || strings.Contains(plain, runningGlyphPlaceholder) {
+		t.Fatalf("running row was not completed: %q", plain)
+	}
+}
+
+func TestRunningToolGlyphAdvancesWithSpinner(t *testing.T) {
+	m := model{spinner: spinner.New(spinner.WithSpinner(spinner.MiniDot))}
+	m.spinner, _ = m.spinner.Update(m.spinner.Tick())
+	glyph := m.runningGlyph()
+	if glyph != spinner.MiniDot.Frames[1] {
+		t.Fatalf("spinner did not advance: %q", glyph)
+	}
+	plain := ansi.Strip(strings.Join(renderedOutputWithGlyph("[running] read: animated.go\n", 60, glyph), "\n"))
+	if !strings.Contains(plain, glyph+" running") {
+		t.Fatalf("transcript did not use current frame %q: %q", glyph, plain)
+	}
+}
+
+func TestToolActivityInterleavedCallsKeepOneRowPerCall(t *testing.T) {
+	input := "[running] read: a.go\n[running] bash: go test ./...\n[finished] read: a.go\n[failed] bash: go test ./...\n"
+	plain := ansi.Strip(strings.Join(renderedOutput(input, 80), "\n"))
+	for _, want := range []string{"✓ finished", "✗ failed", "read", "bash"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q in %q", want, plain)
+		}
+	}
+	if strings.Count(plain, "read") != 1 || strings.Count(plain, "bash") != 1 {
+		t.Fatalf("interleaved calls rendered more than once: %q", plain)
+	}
+	if strings.Contains(plain, "⠋ running") {
+		t.Fatalf("interleaved calls left running rows: %q", plain)
 	}
 }
 

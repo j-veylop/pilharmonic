@@ -77,11 +77,12 @@ func statusLabel(status orchestrator.Status) string {
 }
 
 // toolStatusStyle gives tool activity a consistent visual language in the
-// output transcript and the activity view.
+// output transcript and the activity view. Running rows use a placeholder that
+// the renderer replaces with the current Bubble Tea spinner frame.
 func toolStatusStyle(status string) (lipgloss.Style, string) {
 	switch status {
 	case "running":
-		return lipgloss.NewStyle().Foreground(cyan), "⠿"
+		return lipgloss.NewStyle().Foreground(cyan), runningGlyphPlaceholder
 	case "finished":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#98DAA6")), "✓"
 	case "failed":
@@ -91,6 +92,22 @@ func toolStatusStyle(status string) (lipgloss.Style, string) {
 	default:
 		return mutedStyle, "•"
 	}
+}
+
+// runningGlyph returns the current frame of the Bubble Tea spinner. Models
+// constructed without Run, such as in tests, fall back to the first frame.
+func (m model) runningGlyph() string {
+	if len(m.spinner.Spinner.Frames) == 0 {
+		return defaultRunningGlyph
+	}
+	return m.spinner.View()
+}
+
+func (m model) toolStatusStyle(status string) (lipgloss.Style, string) {
+	if status == "running" {
+		return lipgloss.NewStyle().Foreground(cyan), m.runningGlyph()
+	}
+	return toolStatusStyle(status)
 }
 
 // fit limits the rendered surface to the terminal's cells, including ANSI styles.
@@ -300,7 +317,7 @@ func (m model) detailContent(width int) []string {
 		if t.Output == "" {
 			add(mutedStyle.Render("Waiting for output…"))
 		} else {
-			lines = append(lines, renderedOutput(t.Output, width)...)
+			lines = append(lines, renderedOutputWithGlyph(t.Output, width, m.runningGlyph())...)
 		}
 	}
 	return lines
@@ -335,7 +352,7 @@ func (m model) detailPanel(width, height int) string {
 		activityTab = accentStyle.Render(" ACTIVITY [t] ")
 	}
 	lines := []string{outputTab + mutedStyle.Render("│") + historyTab + mutedStyle.Render("│") + activityTab + mutedStyle.Render("  ·  "+t.Agent), titleStyle.Render(strings.ReplaceAll(terminalText(t.Title), "\n", " ")) + "  " + taskLabel(t)}
-	if action := currentAction(t); action != "" {
+	if action := m.currentAction(t); action != "" {
 		lines[1] = lipgloss.NewStyle().Foreground(cyan).Render(action)
 	}
 	content := m.detailContent(inner)

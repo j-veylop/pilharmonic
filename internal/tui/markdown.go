@@ -37,17 +37,30 @@ func parseToolMarker(line string) (transcriptToolCall, bool) {
 }
 
 func renderedOutput(text string, width int) []string {
+	return renderedOutputWithGlyph(text, width, defaultRunningGlyph)
+}
+
+// renderedOutputWithGlyph reuses the Markdown render cache and substitutes the
+// current spinner frame for running tool rows. The cached lines keep a
+// placeholder so animation does not force a full Glamour re-render per frame.
+func renderedOutputWithGlyph(text string, width int, glyph string) []string {
 	if width < 1 {
 		return nil
 	}
 	markdownCache.Lock()
 	defer markdownCache.Unlock()
-	if markdownCache.lines != nil && markdownCache.text == text && markdownCache.width == width {
-		return append([]string(nil), markdownCache.lines...)
+	if markdownCache.lines == nil || markdownCache.text != text || markdownCache.width != width {
+		lines := renderTranscript(text, width)
+		markdownCache.text, markdownCache.width, markdownCache.lines = text, width, lines
 	}
-	lines := renderTranscript(text, width)
-	markdownCache.text, markdownCache.width, markdownCache.lines = text, width, lines
-	return append([]string(nil), lines...)
+	result := append([]string(nil), markdownCache.lines...)
+	if glyph == "" {
+		glyph = defaultRunningGlyph
+	}
+	for i := range result {
+		result[i] = strings.ReplaceAll(result[i], runningGlyphPlaceholder, glyph)
+	}
+	return result
 }
 
 // renderTranscript keeps assistant prose and tool activity as separate visual
@@ -73,11 +86,27 @@ func renderTranscript(text string, width int) []string {
 		var calls []transcriptToolCall
 		for i < len(raw) {
 			call, ok := parseToolMarker(raw[i])
-			if !ok {
-				break
+			if ok {
+				calls = append(calls, call)
+				i++
+				continue
 			}
-			calls = append(calls, call)
-			i++
+			// The Pi adapter writes a newline before each marker, which can
+			// leave an empty line between a start and its completion. Keep the
+			// markers in one block so the completion updates the running row.
+			if strings.TrimSpace(raw[i]) == "" {
+				j := i
+				for j < len(raw) && strings.TrimSpace(raw[j]) == "" {
+					j++
+				}
+				if j < len(raw) {
+					if _, next := parseToolMarker(raw[j]); next {
+						i = j
+						continue
+					}
+				}
+			}
+			break
 		}
 		out = appendToolCalls(out, collapseToolCalls(calls), width)
 	}
@@ -103,16 +132,25 @@ func renderMarkdown(safe string, width int) []string {
 	return strings.Split(ansi.Hardwrap(rendered, width, true), "\n")
 }
 
-// collapseToolCalls folds a directly paired start/finish of the same call into
-// one row, so the transcript shows each call once instead of twice.
+// collapseToolCalls folds each completion into the matching running row, even
+// when another tool started in between. A call is rendered once, with its
+// glyph changing from the running spinner to the final status icon.
 func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 	result := make([]transcriptToolCall, 0, len(calls))
 	for _, call := range calls {
-		if n := len(result) - 1; n >= 0 && result[n].status == "running" && call.status != "running" && call.summary == result[n].summary {
-			result[n] = call
-			continue
+		matched := false
+		if call.status != "running" {
+			for i := len(result) - 1; i >= 0; i-- {
+				if result[i].status == "running" && result[i].summary == call.summary {
+					result[i] = call
+					matched = true
+					break
+				}
+			}
 		}
-		result = append(result, call)
+		if !matched {
+			result = append(result, call)
+		}
 	}
 	return result
 }

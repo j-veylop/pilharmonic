@@ -139,6 +139,8 @@ type Service struct {
 	live       map[string]chan Trigger
 	pending    map[string]*pendingRequest
 
+	defaultIsolation bool
+
 	subagentMaxDepth    int
 	subagentMaxChildren int
 	controlPath         string
@@ -153,7 +155,7 @@ func Open(path string) (*Service, error) {
 	if path == "" {
 		return nil, errors.New("state path is required")
 	}
-	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}, subagentMaxDepth: DefaultMaxSubagentDepth, subagentMaxChildren: DefaultMaxSubagents, controlConns: map[net.Conn]struct{}{}}
+	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}, defaultIsolation: true, subagentMaxDepth: DefaultMaxSubagentDepth, subagentMaxChildren: DefaultMaxSubagents, controlConns: map[net.Conn]struct{}{}}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -288,15 +290,40 @@ func (s *Service) GetTask(id string) (Task, bool) {
 	return Task{}, false
 }
 
+// SetDefaultIsolation controls whether newly created tasks use a dedicated
+// worktree when their workspace supports isolation. It does not change tasks
+// that already exist or tasks whose workspace cannot be isolated.
+func (s *Service) SetDefaultIsolation(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return errors.New("service is shutting down")
+	}
+	s.defaultIsolation = enabled
+	return nil
+}
+
+func (s *Service) defaultTaskIsolation(workspace string) bool {
+	s.mu.Lock()
+	enabled := s.defaultIsolation
+	s.mu.Unlock()
+	return enabled && workspaceIsolatable(workspace)
+}
+
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.
 func (s *Service) CreateTask(title, prompt, workspace string) (Task, error) {
 	return s.createTask(title, prompt, workspace, "explicit local request", "")
 }
 
-// createTask persists an accepted request. Routing details are optional so the
-// deterministic router can record its policy version and assignment events in
-// the same write as the acceptance decision.
+// createTask persists an accepted request with the default workspace choice.
 func (s *Service) createTask(title, prompt, workspace, reason, policy string, routedMessages ...string) (Task, error) {
+	return s.createTaskWithIsolation(title, prompt, workspace, s.defaultTaskIsolation(workspace), reason, policy, routedMessages...)
+}
+
+// createTaskWithIsolation persists an accepted request. Routing details are
+// optional so the deterministic router can record its policy version and
+// assignment events in the same write as the acceptance decision.
+func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isolated bool, reason, policy string, routedMessages ...string) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if title == "" || prompt == "" {
@@ -330,7 +357,10 @@ func (s *Service) createTask(title, prompt, workspace, reason, policy string, ro
 	for _, message := range routedMessages {
 		events = append(events, Event{now, "routed", message})
 	}
-	t := Task{ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: "manual", Text: prompt, CreatedAt: now}, Decision: Decision{TriggerID: triggerID, Outcome: "accept", Reason: reason, PolicyVersion: policy, CreatedAt: now}, Events: events}
+	if isolated {
+		events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
+	}
+	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: "manual", Text: prompt, CreatedAt: now}, Decision: Decision{TriggerID: triggerID, Outcome: "accept", Reason: reason, PolicyVersion: policy, CreatedAt: now}, Events: events}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data.Tasks = append(s.data.Tasks, t)
@@ -558,6 +588,12 @@ func (s *Service) AddContext(taskID, triggerID, text string) error {
 	if s.closing {
 		return errors.New("service is shutting down")
 	}
+	return s.addContextLocked(taskID, triggerID, text)
+}
+
+// addContextLocked records one context input for a queued or running task.
+// Caller holds mu and has validated triggerID and text.
+func (s *Service) addContextLocked(taskID, triggerID, text string) error {
 	for ti := range s.data.Threads {
 		thread := &s.data.Threads[ti]
 		for _, existing := range thread.Triggers {

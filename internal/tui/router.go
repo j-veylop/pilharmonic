@@ -218,7 +218,7 @@ func (m model) routerAttentionRow(task orchestrator.Task, index, width int) stri
 	if m.routerFocus == 1 && index == m.routerSelected {
 		return selectionRow(plain, width)
 	}
-	return fit(taskLabel(task)+"  "+titleStyle.Render(title), width, 1)
+	return fit(taskLabel(task)+"  "+workspaceBadgeFor(task).glyphOnly()+"  "+titleStyle.Render(title), width, 1)
 }
 
 func (m model) routerRecentRow(task orchestrator.Task, width int) string {
@@ -229,7 +229,7 @@ func (m model) routerRecentRow(task orchestrator.Task, width int) string {
 		status = taskLabel(task)
 	}
 	row := mutedStyle.Render(stamp) + "  " + status + "  " +
-		titleStyle.Render(terminalText(task.Agent)) + mutedStyle.Render(" · "+routeWorkspace(task)) + "  " + title
+		titleStyle.Render(terminalText(task.Agent)) + mutedStyle.Render(" · ") + workspaceBadgeFor(task).render() + "  " + title
 	return fit(row, width, 1)
 }
 

@@ -13,14 +13,14 @@ scheduler launches at most a configured number of Pi (or configured command)
 subprocesses at a time. Requests, decisions, threads, tasks, execution attempts,
 events, reports, tool activity and captured output are stored in one JSON state
 file that is rewritten atomically. Related tasks, thread follow-ups, operator and
-adapter status reports, retries, deletion and opt-in Git-worktree isolation with
+adapter status reports, retries, deletion and default Git-worktree isolation with
 automatic merging of successful isolated work are supported locally. The UI opens on a deterministic router that accepts work,
 assigns Pi and starts it; the task board exposes a tool-activity view, a
 shortcut-help popup and an agent chooser. Assistant output is rendered as
 Markdown. There is no
 external input source, no authorization policy engine and no GitHub integration.
-Tasks can opt into a dedicated Git worktree; otherwise they share their source
-workspace.
+New tasks use a dedicated Git worktree when their source workspace is a Git
+repository with a committed `HEAD`; otherwise they share their source workspace.
 
 ## Repository status (2026-11-09)
 
@@ -35,13 +35,14 @@ workspace.
 
 ## Startup
 
-`go run .` parses eight flags:
+`go run .` parses nine flags:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `-state` | `<user config dir>/orchestrator/state.json` | durable state file |
 | `-workspace` | current directory | working directory for newly created tasks |
 | `-max-concurrent` | `2` | maximum simultaneously running agents |
+| `-isolation` | `true` | start new tasks in a Git worktree when the workspace supports it |
 | `-agents` | none | optional trusted command-executor configuration |
 | `-subagents` | `true` | allow running agents to delegate child tasks |
 | `-subagent-socket` | `subagent.sock` beside the state file | owner-only local control socket |
@@ -73,17 +74,18 @@ The primary path starts at the router. Pressing Enter on the router screen calls
 `SubmitRequest` (`router.go`), which trims the request, derives a display title
 from its first line, and persists it through the same path as a manual draft.
 The decision records the deterministic policy version `local-1`, and a `routed`
-event records the assignment (Pi, shared workspace, execution requested). The
-router then calls `Start` immediately. The same screen lists tasks whose stage
+event records the assignment (Pi, an isolated worktree or shared workspace as
+applicable, execution requested). The router then calls `Start` immediately. The same screen lists tasks whose stage
 needs a person and recent routes. One request becomes one task: the router does
 not decompose requests or evaluate them with a model.
 
 1. **Manual submission.** Pressing `n` creates a draft through `CreateTask`
    (`service.go`) instead of routing immediately. It validates title/prompt/
-   workspace, generates task, trigger and thread IDs, and records the explicit
-   request as an accepted trigger, decision and event. All of it is persisted
-   before the call returns; a save failure rolls the slices back. A manual
-   draft is `queued` but deliberately not started.
+   workspace, selects isolation by default when the workspace is a repository
+   with a committed `HEAD`, generates task, trigger and thread IDs, and records
+   the explicit request as an accepted trigger, decision and event. All of it is
+   persisted before the call returns; a save failure rolls the slices back. A
+   manual draft is `queued` but deliberately not started.
 2. **Explicit start.** `r` (or the router after routing) calls `Start`. If a
    slot is free and an executor is registered, the task starts immediately. Otherwise the start request is
    marked `ScheduleRequested` with a timestamp and a persisted `scheduled`
@@ -91,7 +93,7 @@ not decompose requests or evaluate them with a model.
 3. **Attempt creation.** `startLocked` (`scheduler.go`) persists a new attempt
    with its own ID, status `running`, start time and a `started` event *before*
    launching a goroutine. A save failure cancels and restores the task.
-4. **Workspace preparation (isolated tasks only).** The worker calls
+4. **Workspace preparation (isolated tasks).** The worker calls
    `prepareExecution` (`workspace.go`) before the runner starts. It creates a
    reservation at `workspaces/<task-id>/` beside the state file, writes
    `owner.json` (task, source repository, common Git directory and initial
@@ -117,8 +119,13 @@ not decompose requests or evaluate them with a model.
    characters), so agent text is rendered as data.
 7. **Thread work.** `a` creates a related task in the selected task's thread
    with its own mandate and decision (`thread.go`). `f` sends one follow-up
-   trigger to all subscribed queued and running tasks in that thread.
-   `s` toggles a per-task subscription; pausing affects only future follow-ups.
+   trigger to all subscribed queued and running tasks in that thread. `F`
+   follows up only the selected task: a queued or running task receives
+   context, while a completed, failed, canceled or interrupted task records
+   at-start context, clears its previous terminal error and merge result, and
+   is requeued without changing its mandate or attempts. The requeued task
+   needs an explicit `r`, like a retry. `s` toggles a per-task subscription;
+   pausing affects only future thread follow-ups.
    Delivery is recorded per recipient and per attempt:
    - queued tasks get `at_start` when the attempt starts;
    - running tasks get `pending`, then `accepted` or `rejected` after Pi
@@ -174,7 +181,10 @@ not decompose requests or evaluate them with a model.
     immediately or signals a running one. `d` then `y` deletes an inactive
     task; if no other task shares its thread, the thread history is deleted too.
     A task with child tasks must have them deleted first, so parent links never
-    dangle. The task's worktree is retained. Workspace files are never touched.
+    dangle. `D` then `y` deletes every completed task whose children would also
+    be removed, keeps completed parents that still have unfinished children,
+    and removes threads no remaining task uses. The task's worktree is
+    retained. Workspace files are never touched.
 
 ## Data model
 
@@ -255,15 +265,18 @@ attention.
 - The state file is intended for one running instance. Concurrent instances
   sharing a path would clobber each other. Whole-file rewrites happen on every
   output chunk, so large or chatty runs rewrite frequently.
-- Isolation is opt-in and starts from committed `HEAD`: uncommitted source files
-  are absent, a repository with no commit cannot be isolated, and the `git`
-  executable is required. Successful isolated tasks merge automatically, but
+- Isolation is the default for new tasks when the source workspace is a Git
+  repository with a committed `HEAD`, and can be disabled with
+  `-isolation=false` or per task before start. Isolation starts from that
+  commit: uncommitted source files are absent, a repository with no commit
+  cannot be isolated, and the `git` executable is required. Successful isolated tasks merge automatically, but
   that is integration, not review: there is no in-app diff, review, conflict
   resolution or discard action, and a conflicting merge must be resolved
   outside the application. Worktrees are never cleaned up automatically, so
   they accumulate beside the state file. A dirty source checkout can make an
-  otherwise clean worktree merge fail without changing the worktree. Tasks
-  without isolation still share their workspace.
+  otherwise clean worktree merge fail without changing the worktree. Tasks in
+  workspaces that cannot be isolated, or that are explicitly opted out, share
+  their workspace.
 - There is no Pi session continuity across restarts or retries; every attempt is
   a fresh process. Follow-up RPC messages accepted by Pi are queued inside Pi
   and are not replayed after a restart.
@@ -282,9 +295,10 @@ attention.
   run behind `Runner`/`LiveRunner`. Only Pi supports live follow-ups and
   structured tool activity.
 - The router is deterministic and creates one task per request. It does not
-  interpret or decompose requests with a model, choose among agents, or apply
-  isolation automatically: it assigns Pi and the shared workspace. Manual
-  drafts remain for other executors, isolation and pre-start changes.
+  interpret or decompose requests with a model or choose among agents; it
+  assigns Pi, applies the default workspace choice, and starts the task. Manual
+  drafts remain for other executors, per-task isolation changes and other
+  pre-start changes.
 - Subagent delegation is bounded but not sandboxed: a child has the same host
   permissions and shares the parent's workspace, so concurrent file edits are
   not coordinated. A child is not canceled when its parent ends, and the parent
@@ -302,8 +316,9 @@ Tests use fake runners and temporary state files; none needs model credentials.
   interruption on reopen, context idempotency and mandate isolation.
 - `scheduler_test.go`: concurrency bound under race, FIFO scheduling, persisted
   waiting requests and cancellation while waiting.
-- `thread_test.go`: related tasks, thread follow-up fan-out, subscription
-  pause/resume, idempotent retries, delivery outcomes.
+- `thread_test.go`: related tasks, thread follow-up fan-out, task-level
+  follow-up for running and terminal tasks, subscription pause/resume,
+  idempotent retries, delivery outcomes.
 - `delivery_test.go`: per-attempt delivery records for queued and live context,
   acknowledgement and unknown outcomes, retry scoping, attention stages and
   recovery of pending hand-offs.
@@ -317,11 +332,13 @@ Tests use fake runners and temporary state files; none needs model credentials.
   running-parent checks, depth and child limits, control credentials, the CLI
   round trip, process-local environment and non-persistence of tokens.
 - `delete_test.go`: deletion of tasks and orphaned thread history, refusal while
-  running and while a spawned subagent exists.
+  running and while a spawned subagent exists, bulk deletion of completed tasks
+  with child-link safety, and persistence rollback.
 - `router_test.go`: deterministic acceptance, title derivation, durable policy
-  version and routed event, automatic assignment/start, FIFO scheduling at
-  capacity and rejection of invalid requests.
+  version and routed event, automatic assignment/start, default isolated routing,
+  FIFO scheduling at capacity and rejection of invalid requests.
 - `workspace_test.go`: isolated worktree preparation from committed `HEAD`,
+  default isolation for new tasks, shared-workspace fallback and override,
   subdirectory workspaces, retry reuse, ownership and symlink rejection,
   non-repository failure, retention after deletion and toggle rules.
 - `merge_test.go`: automatic merge of worktree changes, no merge for failed

@@ -126,3 +126,37 @@ func TestRequestTitle(t *testing.T) {
 		t.Fatalf("long title %q (%d runes)", got, len([]rune(got)))
 	}
 }
+
+func TestSubmitRequestDefaultsToIsolatedWorktree(t *testing.T) {
+	repo := committedRepo(t)
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	seen := make(chan Task, 1)
+	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		seen <- task
+		return nil
+	}))
+	task, err := s.SubmitRequest("isolated request", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, task.ID, Completed)
+	if !task.Isolated || !done.Isolated {
+		t.Fatalf("routed request did not default to isolation: task=%+v done=%+v", task, done)
+	}
+	routed := false
+	for _, event := range done.Events {
+		if event.Kind == "routed" && strings.Contains(event.Message, "isolated committed-HEAD worktree") {
+			routed = true
+		}
+	}
+	if !routed {
+		t.Fatalf("routed assignment did not record isolation: %+v", done.Events)
+	}
+	if run := <-seen; run.Workspace == repo || !strings.Contains(run.Workspace, filepath.Join("workspaces", task.ID, "tree")) {
+		t.Fatalf("routed request ran in %q instead of a worktree", run.Workspace)
+	}
+}

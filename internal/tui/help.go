@@ -27,11 +27,13 @@ n              New task (manual draft)
 a              Related task in selected thread
 b              Spawn subagent from running task
 A              Choose executor before scheduling
-w              Toggle Git worktree isolation before scheduling
+w              Toggle Git worktree isolation (default on if possible)
 r / R          Start / requeue unsuccessful task
 c              Cancel task
 d              Delete inactive task (confirm y)
+D              Delete all completed tasks (confirm y)
 f              Send context to thread subscribers
+F              Follow up selected task
 s              Pause / resume thread subscription
 p              Report: kind followed by message
                progress, waiting, blocked, ready, failed

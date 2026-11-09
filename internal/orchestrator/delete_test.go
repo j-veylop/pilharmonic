@@ -137,3 +137,125 @@ func TestDeleteRefusesParentWithSubagents(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDeleteCompletedTasksKeepsIncompleteWorkAndWorkspace(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	workspace := t.TempDir()
+	file := filepath.Join(workspace, "keep.txt")
+	if err := os.WriteFile(file, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	done, err := s.CreateTask("done", "completed work", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := s.CreateTask("parent", "completed parent", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := s.CreateTask("child", "completed child", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedParent, err := s.CreateTask("blocked parent", "completed parent with failed child", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedChild, err := s.CreateTask("failed child", "failed child", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := s.CreateTask("queued", "still queued", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.mu.Lock()
+	for i := range s.data.Tasks {
+		task := &s.data.Tasks[i]
+		switch task.ID {
+		case done.ID, parent.ID, child.ID, blockedParent.ID:
+			task.Status = Completed
+		case blockedChild.ID:
+			task.Status = Failed
+			task.ParentID = blockedParent.ID
+		}
+		if task.ID == child.ID {
+			task.ParentID = parent.ID
+		}
+	}
+	s.mu.Unlock()
+
+	if count := s.DeletableCompletedTasks(); count != 3 {
+		t.Fatalf("deletable count = %d, want 3", count)
+	}
+	deleted, err := s.DeleteCompletedTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 3 {
+		t.Fatalf("deleted %d tasks, want 3", deleted)
+	}
+	for _, id := range []string{done.ID, parent.ID, child.ID} {
+		if _, ok := s.GetTask(id); ok {
+			t.Fatalf("completed task %s was not deleted", id)
+		}
+	}
+	for _, id := range []string{blockedParent.ID, blockedChild.ID, queued.ID} {
+		if _, ok := s.GetTask(id); !ok {
+			t.Fatalf("incomplete task %s was deleted", id)
+		}
+	}
+	if contents, err := os.ReadFile(file); err != nil || string(contents) != "keep" {
+		t.Fatalf("workspace changed: %q, %v", contents, err)
+	}
+	s.mu.Lock()
+	remainingThreads := len(s.data.Threads)
+	s.mu.Unlock()
+	if remainingThreads != 3 {
+		t.Fatalf("threads = %d, want 3 for remaining tasks", remainingThreads)
+	}
+
+	reloaded, err := Open(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.Shutdown()
+	if count := reloaded.DeletableCompletedTasks(); count != 0 {
+		t.Fatalf("deleted tasks restored: %d deletable", count)
+	}
+	if _, ok := reloaded.GetTask(blockedParent.ID); !ok {
+		t.Fatal("incomplete parent missing after reload")
+	}
+}
+
+func TestDeleteCompletedTasksRollsBackFailedSave(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	task, err := s.CreateTask("done", "completed work", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.data.Tasks[0].Status = Completed
+	s.mu.Unlock()
+	savedPath := s.path
+	s.path = t.TempDir()
+	if _, err = s.DeleteCompletedTasks(); err == nil {
+		t.Fatal("failed save succeeded")
+	}
+	s.path = savedPath
+	if _, ok := s.GetTask(task.ID); !ok {
+		t.Fatal("failed save did not restore tasks")
+	}
+	if count := s.DeletableCompletedTasks(); count != 1 {
+		t.Fatalf("failed save changed deletion eligibility: %d", count)
+	}
+}

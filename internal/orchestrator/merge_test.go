@@ -138,6 +138,9 @@ func TestIsolatedMergeConflictIsRecordedAndAborted(t *testing.T) {
 	if done.MergeStatus != MergeFailed || !strings.Contains(done.MergeError, "merge isolated worktree") || done.WorktreeCommit == "" {
 		t.Fatalf("merge failure not recorded: %+v", done)
 	}
+	if !done.MergeConflict() {
+		t.Fatalf("conflict was not classified: %q", done.MergeError)
+	}
 	if done.Stage() != "merge failed" {
 		t.Fatalf("merge failure does not need attention: %q", done.Stage())
 	}

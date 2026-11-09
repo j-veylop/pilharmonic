@@ -28,6 +28,7 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 	if !info.IsDir() {
 		return Task{}, errors.New("workspace must be a directory")
 	}
+	isolated := s.defaultTaskIsolation(abs)
 	id, err := newID()
 	if err != nil {
 		return Task{}, err
@@ -59,7 +60,11 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 		now := time.Now().UTC()
 		trigger := Trigger{ID: triggerID, Source: "manual", Text: prompt, CreatedAt: now}
 		decision := Decision{TriggerID: triggerID, Outcome: "accept", Reason: "explicit local request", CreatedAt: now}
-		task := Task{ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: trigger, Decision: decision, Events: []Event{{now, "accepted", "Manual request accepted in existing thread"}}}
+		events := []Event{{now, "accepted", "Manual request accepted in existing thread"}}
+		if isolated {
+			events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
+		}
+		task := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: trigger, Decision: decision, Events: events}
 		s.data.Tasks = append(s.data.Tasks, task)
 		thread.Triggers = append(thread.Triggers, trigger)
 		thread.Decisions = append(thread.Decisions, decision)
@@ -184,6 +189,77 @@ func (s *Service) AddManualThreadContext(taskID, text string) error {
 		return err
 	}
 	return s.SendThreadContext(taskID, id, text)
+}
+
+// FollowUp records one manual follow-up for a selected task. Queued and running
+// tasks receive it as context. An inactive task is requeued with the follow-up
+// as at-start context and requires a new start; its mandate and attempts are
+// not changed. The bool result reports whether the task was requeued.
+func (s *Service) FollowUp(taskID, text string) (bool, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false, errors.New("follow-up text is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return false, errors.New("service is shutting down")
+	}
+	for i := range s.data.Tasks {
+		t := &s.data.Tasks[i]
+		if t.ID != taskID {
+			continue
+		}
+		if t.Status == Queued || t.Status == Running {
+			id, err := newID()
+			if err != nil {
+				return false, err
+			}
+			return false, s.addContextLocked(taskID, id, text)
+		}
+		switch t.Status {
+		case Completed, Failed, Canceled, Interrupted:
+		default:
+			return false, fmt.Errorf("cannot follow up task in %s state", t.Status)
+		}
+		var thread *Thread
+		for j := range s.data.Threads {
+			if s.data.Threads[j].ID == t.ThreadID {
+				thread = &s.data.Threads[j]
+				break
+			}
+		}
+		if thread == nil {
+			return false, errors.New("task thread not found")
+		}
+		id, err := newID()
+		if err != nil {
+			return false, err
+		}
+		now := time.Now().UTC()
+		trigger := Trigger{ID: id, Source: "manual", Text: text, CreatedAt: now, Delivery: DeliveryAtStart}
+		decision := Decision{TriggerID: id, Outcome: "context", Reason: "manual follow-up; requeues the task without changing its mandate", CreatedAt: now}
+		old := clone(*t)
+		t.Context = append(t.Context, trigger)
+		t.Status = Queued
+		t.ScheduleRequested = false
+		t.ScheduledAt = time.Time{}
+		t.UpdatedAt = now
+		t.Error = ""
+		t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
+		t.MergedAt = time.Time{}
+		t.Events = append(t.Events, Event{now, "followup", "Follow-up context recorded"}, Event{now, "requeued", "Task requeued for follow-up"})
+		thread.Triggers = append(thread.Triggers, trigger)
+		thread.Decisions = append(thread.Decisions, decision)
+		if err := s.save(); err != nil {
+			*t = old
+			thread.Triggers = thread.Triggers[:len(thread.Triggers)-1]
+			thread.Decisions = thread.Decisions[:len(thread.Decisions)-1]
+			return false, err
+		}
+		return true, nil
+	}
+	return false, errors.New("task not found")
 }
 
 // SetContextSubscription controls future thread follow-ups. Already recorded

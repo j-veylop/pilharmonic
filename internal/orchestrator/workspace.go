@@ -12,8 +12,9 @@ import (
 	"time"
 )
 
-// SetTaskIsolation opts into a dedicated committed-HEAD worktree. Worktrees are
-// preserved for review, including when a task is deleted.
+// SetTaskIsolation changes the workspace choice for a queued task. New tasks
+// default to an isolated worktree when their workspace supports one. Worktrees
+// are preserved for review, including when a task is deleted.
 func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -59,6 +60,26 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(output)))
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// workspaceIsolatable reports whether a task created for workspace can start in
+// a dedicated worktree. Isolation is the default only when the workspace is in
+// a Git repository with a committed HEAD. A non-repository, an unborn
+// repository, or a missing git executable keeps the task in the shared
+// workspace because no worktree can be prepared from it.
+func workspaceIsolatable(workspace string) bool {
+	if _, err := exec.LookPath("git"); err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := gitOutput(ctx, workspace, "rev-parse", "--show-toplevel"); err != nil {
+		return false
+	}
+	if _, err := gitOutput(ctx, workspace, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+		return false
+	}
+	return true
 }
 
 type workspaceOwner struct{ TaskID, Source, CommonDir, Commit string }

@@ -230,7 +230,7 @@ func (m model) taskPanel(width, height int) string {
 			if i == m.selected {
 				row = selectionRow(prefix+mark+strings.ReplaceAll(terminalText(t.Title), "\n", " "), inner)
 			}
-			lines = append(lines, row, fit("  "+taskLabel(t)+mutedStyle.Render("  "+t.Agent), inner, 1))
+			lines = append(lines, row, fit("  "+workspaceBadgeFor(t).render()+"  "+taskLabel(t)+mutedStyle.Render("  "+t.Agent), inner, 1))
 		}
 	}
 	return focusedPanel(strings.Join(lines, "\n"), width, height, !m.detailFocus && !m.fullscreen)
@@ -277,26 +277,32 @@ func (m model) detailContent(width int) []string {
 		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
 	}
 	add(mutedStyle.Render("Source: " + terminalText(t.Workspace)))
+	worktreeGlyph := lipgloss.NewStyle().Foreground(cyan).Render(glyphWorktree)
 	if t.Isolated {
 		if t.ExecutionWorkspace == "" {
-			add(accentStyle.Render("Workspace: isolated Git worktree requested (w to change)"))
+			add(accentStyle.Render(worktreeGlyph + " Workspace: isolated Git worktree requested (w to change)"))
 			add(mutedStyle.Render("Starts from committed HEAD; uncommitted files are not copied."))
 		} else {
-			add(accentStyle.Render("Execution: " + terminalText(t.ExecutionWorkspace)))
+			add(accentStyle.Render(worktreeGlyph + " Execution: " + terminalText(t.ExecutionWorkspace)))
 			add(mutedStyle.Render("Isolated worktree · commit " + terminalText(t.IsolationCommit)))
 		}
 	} else if t.ParentID != "" {
-		add(mutedStyle.Render("Execution: inherited from parent task"))
+		add(mutedStyle.Render(glyphInherited + " Execution: inherited from parent task"))
 	} else {
-		add(mutedStyle.Render("Execution: shared source workspace (w to isolate before start)"))
+		add(mutedStyle.Render(glyphShared + " Execution: shared source workspace (w to isolate before start)"))
 	}
+	badge := workspaceBadgeFor(t)
 	switch t.MergeStatus {
 	case orchestrator.MergeMerged:
-		add(accentStyle.Render("Merge: merged into source") + mutedStyle.Render(" · "+terminalText(t.MergeCommit)))
+		add(lipgloss.NewStyle().Foreground(badge.color).Render(badge.glyph+" Merge: merged into source") + mutedStyle.Render(" · "+terminalText(t.MergeCommit)))
 	case orchestrator.MergeUpToDate:
-		add(mutedStyle.Render("Merge: no isolated changes to merge"))
+		add(mutedStyle.Render(badge.glyph + " Merge: no isolated changes to merge"))
 	case orchestrator.MergeFailed:
-		add(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8F9B")).Render("MERGE FAILED  " + terminalText(t.MergeError)))
+		detail := "MERGE FAILED  "
+		if t.MergeConflict() {
+			detail = "MERGE FAILED (conflict)  "
+		}
+		add(lipgloss.NewStyle().Foreground(badge.color).Render(badge.glyph + " " + detail + terminalText(t.MergeError)))
 	}
 	if children := m.childrenOf(t.ID); len(children) > 0 {
 		add(mutedStyle.Render(fmt.Sprintf("Subagents: %d", len(children))))
@@ -469,6 +475,9 @@ func (m model) footer(w int) string {
 	if m.deleteTaskID != "" {
 		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+strings.ReplaceAll(terminalText(m.deleteTaskTitle), "\n", " ")) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Workspace files are kept.")
 	}
+	if m.deleteCompleted {
+		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", m.deleteCount)) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept. Workspace files are kept.")
+	}
 	if m.input {
 		label := "NEW TASK"
 		if m.reportTask != "" {
@@ -478,6 +487,8 @@ func (m model) footer(w int) string {
 			label = "THREAD CONTEXT"
 		} else if m.subagentTask != "" {
 			label = "SUBAGENT TASK"
+		} else if m.followUpTask != "" {
+			label = "FOLLOW UP"
 		} else if m.relatedTask != "" {
 			label = "RELATED TASK"
 		}

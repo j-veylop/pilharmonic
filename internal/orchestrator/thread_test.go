@@ -211,3 +211,91 @@ func TestExplicitContextSubscription(t *testing.T) {
 		t.Fatal("failed change was not rolled back")
 	}
 }
+
+func TestFollowUpRunningTaskUsesLiveContext(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	task, err := s.CreateTask("work", "original mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	received := make(chan Trigger, 1)
+	s.RegisterRunner("pi", testThreadRunner{started: started, received: received})
+	if err := s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	requeued, err := s.FollowUp(task.ID, "adjust the implementation")
+	if err != nil || requeued {
+		t.Fatalf("follow-up: requeued=%v err=%v", requeued, err)
+	}
+	select {
+	case got := <-received:
+		if got.Text != "adjust the implementation" {
+			t.Fatalf("wrong live context: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("live follow-up timed out")
+	}
+	await(t, s, task.ID, Completed)
+	got, _ := s.GetTask(task.ID)
+	if got.Prompt != "original mandate" || len(got.Context) != 1 || got.Context[0].Delivery != DeliveryAccepted {
+		t.Fatalf("unexpected task after follow-up: %+v", got)
+	}
+}
+
+func TestFollowUpRequeuesTerminalTaskWithoutChangingMandate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	task, err := s.CreateTask("work", "original mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, task.ID, Completed)
+
+	requeued, err := s.FollowUp(task.ID, "please also update the documentation")
+	if err != nil || !requeued {
+		t.Fatalf("follow-up: requeued=%v err=%v", requeued, err)
+	}
+	got, _ := s.GetTask(task.ID)
+	if got.Status != Queued || got.ScheduleRequested {
+		t.Fatalf("task not queued for an explicit start: %+v", got)
+	}
+	if got.Prompt != "original mandate" || len(got.Context) != 1 || got.Context[0].Delivery != DeliveryAtStart {
+		t.Fatalf("follow-up changed mandate or context: %+v", got)
+	}
+	if len(got.Attempts) != 1 {
+		t.Fatalf("follow-up rewrote attempts: %+v", got.Attempts)
+	}
+
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, task.ID, Completed)
+	got, _ = s.GetTask(task.ID)
+	if len(got.Attempts) != 2 || got.Context[0].Text != "please also update the documentation" {
+		t.Fatalf("new attempt did not receive follow-up: %+v", got)
+	}
+
+	reloaded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.Shutdown()
+	got, _ = reloaded.GetTask(task.ID)
+	if len(got.Context) != 1 || got.Context[0].Text != "please also update the documentation" {
+		t.Fatalf("follow-up did not persist: %+v", got)
+	}
+}

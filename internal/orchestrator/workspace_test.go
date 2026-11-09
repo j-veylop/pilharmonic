@@ -418,3 +418,90 @@ func TestPreparedIsolatedWorkspaceCannotBeToggled(t *testing.T) {
 		t.Fatalf("prepared workspace toggle error: %v", err)
 	}
 }
+
+func TestNewTasksDefaultToIsolationInCommittedRepository(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	seen := make(chan Task, 1)
+	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		seen <- task
+		return nil
+	}))
+	task, err := s.CreateTask("default isolated", "do work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.Isolated {
+		t.Fatal("new task did not default to isolation")
+	}
+	foundEvent := false
+	for _, event := range task.Events {
+		if event.Kind == "workspace" && strings.Contains(event.Message, "by default") {
+			foundEvent = true
+		}
+	}
+	if !foundEvent {
+		t.Fatalf("default isolation was not recorded: %+v", task.Events)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, task.ID, Completed)
+	run := <-seen
+	wantCwd := filepath.Join(filepath.Dir(s.path), "workspaces", task.ID, "tree")
+	if run.Workspace != wantCwd || done.ExecutionWorkspace != wantCwd {
+		t.Fatalf("default isolation did not prepare the worktree: run=%q task=%q", run.Workspace, done.ExecutionWorkspace)
+	}
+}
+
+func TestNewTasksUseSharedWorkspaceWhenIsolationIsUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	seen := make(chan Task, 1)
+	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		seen <- task
+		return nil
+	}))
+	task, err := s.CreateTask("plain", "do work", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Isolated {
+		t.Fatal("task without an isolatable repository requested isolation")
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, task.ID, Completed)
+	run := <-seen
+	if run.Workspace != dir || done.ExecutionWorkspace != "" {
+		t.Fatalf("task did not use the shared workspace: run=%q execution=%q", run.Workspace, done.ExecutionWorkspace)
+	}
+}
+
+func TestDefaultIsolationCanBeDisabled(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	if err := s.SetDefaultIsolation(false); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(chan Task, 1)
+	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		seen <- task
+		return nil
+	}))
+	task, err := s.CreateTask("shared", "do work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Isolated {
+		t.Fatal("default isolation override was ignored")
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, task.ID, Completed)
+	if run := <-seen; run.Workspace != repo {
+		t.Fatalf("runner cwd %q, want shared source %q", run.Workspace, repo)
+	}
+}

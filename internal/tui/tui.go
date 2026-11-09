@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -49,6 +50,7 @@ type model struct {
 	relatedTask      string
 	subagentTask     string
 	reportTask       string
+	followUpTask     string
 	historyOffset    int
 	notice           string
 	history          bool
@@ -60,6 +62,8 @@ type model struct {
 	isolationBusy    bool
 	deleteTaskID     string
 	deleteTaskTitle  string
+	deleteCompleted  bool
+	deleteCount      int
 	spinner          spinner.Model
 }
 
@@ -125,7 +129,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if !m.input && !m.router && m.deleteTaskID == "" && m.agentTask == "" {
+		if !m.input && !m.router && m.deleteTaskID == "" && m.agentTask == "" && !m.deleteCompleted {
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
 				m.scrollDetail(3)
@@ -187,6 +191,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.deleteCompleted {
+			switch msg.String() {
+			case "y":
+				count, err := m.service.DeleteCompletedTasks()
+				if err != nil {
+					m.notice = err.Error()
+				} else {
+					m.notice = fmt.Sprintf("Deleted %d completed task(s) and their history.", count)
+				}
+				m.deleteCompleted, m.deleteCount = false, 0
+				m.tasks = m.service.ListTasks()
+				m.clamp()
+			case "n", "esc":
+				m.deleteCompleted, m.deleteCount = false, 0
+				m.notice = "Deletion canceled."
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		if m.agentTask != "" {
 			switch msg.String() {
 			case "esc":
@@ -226,6 +250,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.relatedTask = ""
 				m.subagentTask = ""
 				m.reportTask = ""
+				m.followUpTask = ""
 				m.draft = ""
 			case tea.KeyEnter:
 				prompt := strings.TrimSpace(m.draft)
@@ -250,6 +275,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.notice = "Thread context recorded; see history for delivery status."
 					}
 					m.contextTask = ""
+				} else if m.followUpTask != "" {
+					requeued, err := m.service.FollowUp(m.followUpTask, prompt)
+					if err != nil {
+						m.notice = err.Error()
+					} else if requeued {
+						m.notice = "Follow-up recorded; task requeued. Press r to start it."
+					} else {
+						m.notice = "Follow-up recorded; see history for delivery status."
+					}
+					m.followUpTask = ""
 				} else if m.subagentTask != "" {
 					task, err := m.service.SpawnSubagent(m.subagentTask, "", prompt, "")
 					if err != nil {
@@ -404,6 +439,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input = true
 				m.notice = ""
 			}
+		case "F":
+			if len(m.tasks) > 0 {
+				t := m.tasks[m.selected]
+				m.followUpTask = t.ID
+				m.input = true
+				m.notice = ""
+				if t.Status == orchestrator.Queued || t.Status == orchestrator.Running {
+					m.notice = "Follow up this task; context does not expand its mandate."
+				} else {
+					m.notice = "Follow up this task; it will be requeued and needs r to start."
+				}
+			}
 		case "up", "k":
 			if m.detailFocus || m.fullscreen {
 				m.scrollDetail(1)
@@ -475,6 +522,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.deleteTaskID, m.deleteTaskTitle = task.ID, task.Title
 					m.notice = ""
 				}
+			}
+		case "D":
+			count := m.service.DeletableCompletedTasks()
+			if count == 0 {
+				m.notice = "No completed tasks to delete."
+			} else {
+				m.deleteCompleted, m.deleteCount = true, count
+				m.notice = ""
 			}
 		case "c":
 			if len(m.tasks) > 0 {

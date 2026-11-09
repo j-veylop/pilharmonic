@@ -217,6 +217,16 @@ func validateMergeWorkspace(ctx context.Context, statePath string, t Task) (work
 	return owner, tree, nil
 }
 
+// MergeConflict reports whether a failed automatic merge was caused by a
+// conflict. The merge is always aborted, so this is an operator-facing
+// classification of the retained error, not a separate merge outcome.
+func (t Task) MergeConflict() bool {
+	if t.MergeStatus != MergeFailed {
+		return false
+	}
+	return strings.Contains(strings.ToLower(t.MergeError), "conflict")
+}
+
 func mergeSubject(t Task) string {
 	title := strings.Join(strings.Fields(t.Title), " ")
 	if title == "" {

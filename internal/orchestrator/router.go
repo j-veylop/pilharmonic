@@ -25,8 +25,13 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 	if text == "" {
 		return Task{}, errors.New("request text is required")
 	}
-	assignment := fmt.Sprintf("Router assignment: agent %s, shared workspace, execution requested (%s)", DefaultRouteAgent, LocalPolicyVersion)
-	task, err := s.createTask(requestTitle(text), text, workspace,
+	isolated := s.defaultTaskIsolation(workspace)
+	workspaceChoice := "shared workspace"
+	if isolated {
+		workspaceChoice = "isolated committed-HEAD worktree"
+	}
+	assignment := fmt.Sprintf("Router assignment: agent %s, %s, execution requested (%s)", DefaultRouteAgent, workspaceChoice, LocalPolicyVersion)
+	task, err := s.createTaskWithIsolation(requestTitle(text), text, workspace, isolated,
 		"trusted local request accepted by the deterministic router", LocalPolicyVersion, assignment)
 	if err != nil {
 		return Task{}, err

@@ -19,6 +19,7 @@ func main() {
 	workspace := flag.String("workspace", "", "working directory for new tasks (default: current directory)")
 	agents := flag.String("agents", "", "path to optional agent command configuration JSON")
 	maxConcurrent := flag.Int("max-concurrent", 2, "maximum simultaneous agent processes")
+	isolation := flag.Bool("isolation", true, "start new tasks in an isolated Git worktree when possible")
 	subagents := flag.Bool("subagents", true, "allow running agents to spawn child tasks")
 	subagentSocket := flag.String("subagent-socket", "", "path to the local subagent control socket (default: beside the state file)")
 	maxSubagentDepth := flag.Int("max-subagent-depth", orchestrator.DefaultMaxSubagentDepth, "maximum subagent delegation depth")
@@ -44,6 +45,9 @@ func main() {
 	}
 	service, err := orchestrator.Open(*state)
 	if err != nil {
+		fail(err)
+	}
+	if err := service.SetDefaultIsolation(*isolation); err != nil {
 		fail(err)
 	}
 	if *agents != "" {

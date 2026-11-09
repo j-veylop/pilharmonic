@@ -61,11 +61,17 @@ worker inputs must be independent copies wherever callers can mutate them.
 
 ## Workspaces and integration
 
-New tasks default to a dedicated Git worktree when the source repository has a
-committed HEAD. The worker prepares the worktree before execution, checks the
-reservation before reuse and merging, and preserves it across retries. Shared
-workspaces are available by startup or task choice and are the fallback when
-isolation is unavailable. Agents retain the host user's permissions.
+New change work defaults to a dedicated Git worktree when the source repository
+has a committed HEAD. Read-only inspection requests and tasks assigned to an
+inspection specialist that request no edit keep the shared source workspace.
+The classification combines the request opening and selected role with
+imperative edit actions in the mandate; requests matching neither inspection
+signal default to isolation, and an explicit task choice overrides it. The
+worker prepares the worktree before execution, checks the reservation before
+reuse and merging, and preserves it across retries. Shared workspaces are
+available by startup or task choice and are the fallback when isolation is
+unavailable. Delegated children inherit the parent's execution workspace instead
+of being classified separately. Agents retain the host user's permissions.
 
 After a successful isolated run, the service commits pending changes and
 attempts a serialized merge into the source checkout. A failed merge leaves

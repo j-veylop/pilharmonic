@@ -28,7 +28,8 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 	if !info.IsDir() {
 		return Task{}, errors.New("workspace must be a directory")
 	}
-	isolated := s.defaultTaskIsolation(abs)
+	agent := s.selectAgent(prompt)
+	plan := s.defaultWorkspacePlan(abs, prompt, agent)
 	triggerID := newID()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -70,8 +71,9 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 			threadID:        threadID,
 			title:           title,
 			workspace:       abs,
-			isolated:        isolated,
-			agent:           s.selectAgentLocked(prompt, DefaultRouteAgent),
+			isolated:        plan.isolated,
+			isolationAuto:   plan.automatic,
+			agent:           agent,
 			trigger:         trigger,
 			decision:        decision,
 			acceptedMessage: "Manual request accepted in existing thread",

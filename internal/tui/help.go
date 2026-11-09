@@ -28,7 +28,7 @@ a              Related task in selected thread
 b              Spawn subagent from running task
 A              Choose executor before scheduling
 P              Choose execution profile (model, tools) before scheduling
-w              Toggle worktree isolation (default on when possible)
+w              Toggle isolation (changes default to a worktree)
 r / R          Start / requeue task
 v / V          Approve / reject prepared worktree commit
 c              Cancel task

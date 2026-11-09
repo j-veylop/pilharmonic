@@ -32,18 +32,18 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 	if text == "" {
 		return Task{}, errors.New("request text is required")
 	}
-	isolated := s.defaultTaskIsolation(workspace)
+	agent := s.selectAgent(text)
+	plan := s.defaultWorkspacePlan(workspace, text, agent)
 	profile, err := s.routingProfile()
 	if err != nil {
 		return Task{}, err
 	}
 	workspaceChoice := "shared workspace"
-	if isolated {
+	if plan.isolated {
 		workspaceChoice = "isolated committed-HEAD worktree"
 	}
-	agent := s.selectAgent(text)
 	assignment := fmt.Sprintf("Router assignment: agent %s, profile %s, %s, execution requested (%s)", agent, profile, workspaceChoice, LocalPolicyVersion)
-	task, err := s.createTaskWithIsolation(requestTitle(text), text, workspace, isolated,
+	task, err := s.createTaskWithIsolation(requestTitle(text), text, workspace, plan,
 		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter}, agent, profile, assignment)
 	if err != nil {
 		return Task{}, err

@@ -19,7 +19,7 @@ in one JSON file. The terminal UI reads snapshots from the service.
 | `-state` | `<user config dir>/orchestrator/state.json` | durable state file |
 | `-workspace` | current directory | working directory for newly created tasks |
 | `-max-concurrent` | `2` | maximum simultaneously running agents |
-| `-isolation` | `true` | start new tasks in a Git worktree when the workspace supports it |
+| `-isolation` | `true` | default change tasks to a Git worktree when the workspace supports it |
 | `-agents` | none | optional trusted command-executor configuration |
 | `-profiles` | `./profiles.json` if present | profile and specialist configuration from the launch directory, or an explicit file |
 | `-profile` | `implementer` | default profile for routed work and tasks without an explicit choice |
@@ -62,12 +62,16 @@ not decompose requests or evaluate them with a model.
 
 1. **Manual submission.** Pressing `n` creates a draft through `CreateTask`
    (`service.go`) instead of routing immediately. It validates title/prompt/
-   workspace, selects isolation by default when the workspace is a repository
-   with a committed `HEAD`, generates task, trigger and thread IDs, runs the
-   local authorization policy, and records the explicit request as an accepted
-   trigger, decision and event. All of it is persisted before the call returns;
-   a save failure rolls the slices back. A manual draft is `queued` but
-   deliberately not started.
+   workspace, classifies the request as change or read-only inspection, and
+   selects automatic isolation for change work when the workspace is a
+   repository with a committed `HEAD`. Read-only inspection work stays in the
+   source workspace. It records whether the choice was automatic, then
+   generates task, trigger and thread IDs, runs the local authorization policy,
+   and records the explicit request as an accepted trigger, decision and event.
+   All of it is persisted before the call returns; a save failure rolls the
+   slices back. A manual draft is `queued` but deliberately not started. An
+   executor change before start reclassifies an automatic workspace choice;
+   an explicit `w` choice is preserved.
 2. **Explicit start.** `r` (or the router after routing) calls `Start`. An unavailable executor causes a start error. If a
    slot is free the task starts immediately. Otherwise the start request is
    marked `ScheduleRequested` with a timestamp and a persisted `scheduled`
@@ -202,7 +206,8 @@ not decompose requests or evaluate them with a model.
   `Deliveries` (per-attempt hand-off records), `Attempts`, `Reports` (operator
   or adapter observations with source and attempt),
   `Activities`, `Events`, scheduling flags, workspace, agent, status,
-  timestamps, the isolation choice, the prepared execution workspace and its
+  timestamps, the isolation choice and whether it was automatic, the prepared
+  execution workspace and its
   initial commit, merge status/error, worktree and merge commits, merge time,
   review status/commit/actor/time/note for a prepared worktree, latest output
   and error. Control credentials are not part of the stored task.
@@ -271,6 +276,12 @@ rejection neither undoes a merge nor removes the retained worktree.
   serialized, create a merge commit, and abort on conflict instead of leaving
   the source checkout in a partial merge. Merge failure is recorded separately
   from execution success and makes the task need attention.
+- Automatic isolation is selected only for change work. Read-only inspection
+  requests and inspection-role tasks with no imperative edit action share the
+  source workspace. This classification is a lexical heuristic, not a sandbox
+  or proof that an executor will not write. Requests matching neither an
+  inspection opening nor an inspection role default to isolation, and an
+  explicit per-task choice overrides the automatic one.
 - Review is a separate operator record, not a merge gate. A prepared worktree
   commit that was merged or whose merge failed is opened for review once, a
   decision is matched to that commit and persisted before it is acknowledged,
@@ -296,23 +307,27 @@ rejection neither undoes a merge nor removes the retained worktree.
 - The state file is intended for one running instance. Concurrent instances
   sharing a path would clobber each other. Whole-file rewrites happen on every
   output chunk, so large or chatty runs rewrite frequently.
-- Isolation is the default for new tasks when the source workspace is a Git
-  repository with a committed `HEAD`, and can be disabled with
-  `-isolation=false` or per task before start. Isolation starts from that
-  commit: uncommitted source files are absent, a repository with no commit
-  cannot be isolated, and the `git` executable is required. Successful isolated
-  tasks merge automatically, but that is integration, not review: review is a
-  recorded approve/reject decision on a prepared commit and does not gate
-  merging. There is no in-app diff or conflict resolution, and a conflicting
-  merge must be resolved outside the application. Worktrees for retained tasks
-  accumulate beside the state file; deleting a task cleans up its worktree, and
-  `x`/`X` discard merged worktrees while keeping the task, refusing dirty or
-  unmerged worktrees. A dirty source checkout can make an
-  otherwise clean worktree merge fail without changing the worktree; the
+- Isolation is the default for new change work when the source workspace is a
+  Git repository with a committed `HEAD`, and can be disabled with
+  `-isolation=false` or per task before start. Read-only inspection requests
+  and inspection-role tasks with no edit action share the source workspace.
+  Classification is a lexical role and request-opening heuristic: a custom
+  executor using an inspection role name, or a misleading mandate, can still
+  write to the shared workspace; an explicit `w` choice or `-isolation=false`
+  controls the default.
+  Isolation starts from that commit: uncommitted source files are absent, a
+  repository with no commit cannot be isolated, and the `git` executable is
+  required. Successful isolated tasks merge automatically, but that is
+  integration, not review: review is a recorded approve/reject decision on a
+  prepared commit and does not gate merging. There is no in-app diff or conflict
+  resolution, and a conflicting merge must be resolved outside the application.
+  Worktrees for retained tasks accumulate beside the state file; deleting a task
+  cleans up its worktree, and `x`/`X` discard merged worktrees while keeping the
+  task, refusing dirty or unmerged worktrees. A dirty source checkout can make
+  an otherwise clean worktree merge fail without changing the worktree; the
   failure names the overlapping files and the worktree is kept for retry after
-  the source is cleaned. Tasks in
-  workspaces that cannot be isolated, or that are explicitly opted out, share
-  their workspace.
+  the source is cleaned. Tasks in workspaces that cannot be isolated, or that
+  are explicitly opted out, share their workspace.
 - There is no Pi session continuity across restarts or retries; every attempt is
   a fresh process. Follow-up RPC messages accepted by Pi are queued inside Pi
   and are not replayed after a restart.

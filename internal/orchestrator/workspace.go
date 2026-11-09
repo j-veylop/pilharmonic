@@ -12,9 +12,11 @@ import (
 	"time"
 )
 
-// SetTaskIsolation changes the workspace choice for a queued task. New tasks
-// default to an isolated worktree when their workspace supports one. Worktrees
-// are preserved while the task exists, including across retries and review.
+// SetTaskIsolation changes the workspace choice for a queued task. New change
+// work defaults to an isolated worktree when its workspace supports one, while
+// read-only inspection work is classified before acceptance. An operator choice
+// is explicit and disables later automatic reclassification. Worktrees are
+// preserved while the task exists, including across retries and review.
 func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -30,6 +32,17 @@ func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 			return errors.New("isolation can only be changed on an unscheduled queued task")
 		}
 		if t.Isolated == enabled {
+			if !t.IsolationAuto {
+				return nil
+			}
+			old := clone(*t)
+			t.IsolationAuto = false
+			t.UpdatedAt = time.Now().UTC()
+			t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Workspace choice confirmed by operator"})
+			if err := s.save(); err != nil {
+				*t = old
+				return err
+			}
 			return nil
 		}
 		if t.ExecutionWorkspace != "" {
@@ -37,6 +50,7 @@ func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 		}
 		old := clone(*t)
 		t.Isolated = enabled
+		t.IsolationAuto = false
 		t.UpdatedAt = time.Now().UTC()
 		message := "Shared source workspace selected"
 		if enabled {

@@ -31,7 +31,7 @@ Quitting cancels active attempts and waits for their workers. After an unexpecte
 
 ## Workspaces and review
 
-In a Git repository with a committed `HEAD`, new tasks default to a detached worktree under `workspaces/` beside the state file. The worktree starts from committed files and is reused on retries. Other workspaces run in place. Use `-isolation=false` to default to the shared workspace.
+In a Git repository with a committed `HEAD`, new change work defaults to a detached worktree under `workspaces/` beside the state file. Read-only inspection requests (for example `review`, `explain`, `inspect`, `read` or `test`) and tasks assigned to an inspection specialist (`debugger`, `explorer`, `gitter`, `reviewer` or `tester`) stay in the source workspace when they contain no edit action. The choice is a lexical role and request-opening heuristic: an imperative edit action in a request phrase keeps isolation, and a request matching neither an inspection opening nor an inspection role defaults to isolation. Use `w` on a draft to override the automatic choice, or `-isolation=false` to disable automatic isolation. The worktree starts from committed files and is reused on retries. Other workspaces run in place.
 
 **Successful isolated runs automatically commit pending changes and merge into the source repository's current checkout.** Merges are serialized. If a merge fails, inspect the error and retained worktree. Overlapping local changes in the source may need to be committed or stashed before retrying. Execution status, merge outcome and operator review are separate records. Rejecting a commit in the UI records your decision after the merge attempt.
 

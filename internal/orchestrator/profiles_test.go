@@ -279,6 +279,10 @@ func TestNonIntegratingProfileRetainsWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	task, _ = s.GetTask(task.ID)
 	if !task.Isolated {
 		t.Fatal("expected an isolated worktree")
 	}

@@ -79,8 +79,12 @@ type Attempt struct {
 }
 
 type Task struct {
-	DiscardPending     bool           `json:"discard_pending,omitempty"`
+	DiscardPending bool `json:"discard_pending,omitempty"`
+	// Isolated is the effective workspace choice. IsolationAuto records that the
+	// default policy made it, so an executor change can reclassify an unprepared
+	// task without overriding an explicit per-task choice.
 	Isolated           bool           `json:"isolated,omitempty"`
+	IsolationAuto      bool           `json:"isolation_auto,omitempty"`
 	ExecutionWorkspace string         `json:"execution_workspace,omitempty"`
 	IsolationCommit    string         `json:"isolation_commit,omitempty"`
 	MergeStatus        string         `json:"merge_status,omitempty"`
@@ -303,9 +307,10 @@ func (s *Service) GetTask(id string) (Task, bool) {
 	return Task{}, false
 }
 
-// SetDefaultIsolation controls whether newly created tasks use a dedicated
-// worktree when their workspace supports isolation. It does not change tasks
-// that already exist or tasks whose workspace cannot be isolated.
+// SetDefaultIsolation controls whether newly accepted change work defaults to a
+// dedicated worktree when its workspace supports isolation. Read-only
+// inspection work keeps the shared workspace. It does not change tasks that
+// already exist or tasks whose workspace cannot be isolated.
 func (s *Service) SetDefaultIsolation(enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -316,11 +321,26 @@ func (s *Service) SetDefaultIsolation(enabled bool) error {
 	return nil
 }
 
-func (s *Service) defaultTaskIsolation(workspace string) bool {
+// workspacePlan records the automatic workspace choice at acceptance. A task
+// with automatic isolation is eligible to be reclassified if its executor
+// changes before a workspace is prepared. An operator choice is not automatic.
+type workspacePlan struct {
+	isolated  bool
+	automatic bool
+}
+
+// defaultWorkspacePlan applies the startup isolation default only when the
+// workspace can be isolated. Read-only inspection work then shares the source
+// workspace; change work retains isolation. Unknown roles and mandates default
+// to isolation so ambiguity fails toward containment.
+func (s *Service) defaultWorkspacePlan(workspace, prompt, agent string) workspacePlan {
 	s.mu.Lock()
 	enabled := s.defaultIsolation
 	s.mu.Unlock()
-	return enabled && workspaceIsolatable(workspace)
+	if !enabled || !workspaceIsolatable(workspace) {
+		return workspacePlan{}
+	}
+	return workspacePlan{isolated: taskMakesChanges(prompt, agent), automatic: true}
 }
 
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.
@@ -331,15 +351,17 @@ func (s *Service) CreateTask(title, prompt, workspace string) (Task, error) {
 // CreateTaskWithProfile creates a manual request assigned to a named profile. An
 // empty name uses the routing default. The resolved profile is snapshotted.
 func (s *Service) CreateTaskWithProfile(title, prompt, workspace, profile string) (Task, error) {
-	return s.createTaskWithIsolation(title, prompt, workspace, s.defaultTaskIsolation(workspace),
-		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual}, s.selectAgent(prompt), profile)
+	agent := s.selectAgent(prompt)
+	plan := s.defaultWorkspacePlan(workspace, prompt, agent)
+	return s.createTaskWithIsolation(title, prompt, workspace, plan,
+		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual}, agent, profile)
 }
 
 // createTaskWithIsolation persists an accepted request after the source's
 // authorization policy approves it. Routing details are optional so the
 // deterministic router can record its assignment events in the same write as
 // the decision.
-func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isolated bool, auth AuthorizationRequest, agent, profile string, routedMessages ...string) (Task, error) {
+func (s *Service) createTaskWithIsolation(title, prompt, workspace string, plan workspacePlan, auth AuthorizationRequest, agent, profile string, routedMessages ...string) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if title == "" || prompt == "" {
@@ -371,7 +393,8 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 		threadID:        threadID,
 		title:           title,
 		workspace:       abs,
-		isolated:        isolated,
+		isolated:        plan.isolated,
+		isolationAuto:   plan.automatic,
 		agent:           agent,
 		profile:         profile,
 		trigger:         Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now},
@@ -401,6 +424,7 @@ type acceptedTaskInput struct {
 	title           string
 	workspace       string
 	isolated        bool
+	isolationAuto   bool
 	agent           string
 	profile         string
 	trigger         Trigger
@@ -421,23 +445,26 @@ func (s *Service) newAcceptedTaskLocked(input acceptedTaskInput) (Task, error) {
 	}
 	if input.isolated {
 		events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
+	} else if input.isolationAuto {
+		events = append(events, Event{now, "workspace", "Read-only inspection request keeps the source workspace; no managed worktree requested"})
 	}
 	return Task{
-		ID:          newID(),
-		ThreadID:    input.threadID,
-		Title:       input.title,
-		Prompt:      input.trigger.Text,
-		Workspace:   input.workspace,
-		Isolated:    input.isolated,
-		Status:      Queued,
-		Agent:       input.agent,
-		ProfileName: profileName,
-		ProfileSpec: profileSpec,
-		Trigger:     input.trigger,
-		Decision:    input.decision,
-		Events:      events,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:            newID(),
+		ThreadID:      input.threadID,
+		Title:         input.title,
+		Prompt:        input.trigger.Text,
+		Workspace:     input.workspace,
+		Isolated:      input.isolated,
+		IsolationAuto: input.isolationAuto,
+		Status:        Queued,
+		Agent:         input.agent,
+		ProfileName:   profileName,
+		ProfileSpec:   profileSpec,
+		Trigger:       input.trigger,
+		Decision:      input.decision,
+		Events:        events,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}, nil
 }
 

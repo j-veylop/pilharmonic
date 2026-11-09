@@ -1,0 +1,213 @@
+package orchestrator
+
+import (
+	"context"
+	"io"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestThreadFanoutAndIdempotency(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	first, err := s.CreateTask("one", "first mandate", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateRelatedTask(first.ID, "two", "second mandate", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ThreadID != second.ThreadID {
+		t.Fatal("related task has different thread")
+	}
+	if err := s.SendThreadContext(first.ID, "id-1", "shared context"); err != nil {
+		t.Fatal(err)
+	}
+	third, err := s.CreateRelatedTask(first.ID, "three", "third mandate", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SendThreadContext(first.ID, "id-1", "shared context"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SendThreadContext(first.ID, "id-1", "conflict"); err == nil {
+		t.Fatal("accepted conflicting trigger")
+	}
+	a, _ := s.GetTask(first.ID)
+	b, _ := s.GetTask(second.ID)
+	c, _ := s.GetTask(third.ID)
+	if len(a.Context) != 1 || len(b.Context) != 1 || len(c.Context) != 0 || a.Prompt != "first mandate" || b.Prompt != "second mandate" {
+		t.Fatalf("wrong recipients or mandates: %+v %+v %+v", a, b, c)
+	}
+	reloaded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ = reloaded.GetTask(second.ID)
+	if len(b.Context) != 1 || b.Context[0].Delivery != "at_start" {
+		t.Fatalf("not persisted: %+v", b.Context)
+	}
+}
+
+func TestThreadFanoutUnavailableRunnerAndRollback(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	first, _ := s.CreateTask("one", "first", workspace)
+	second, _ := s.CreateRelatedTask(first.ID, "two", "second", workspace)
+	started := make(chan struct{})
+	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
+	if err := s.Start(context.Background(), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := s.SendThreadContext(first.ID, "id-2", "ctx"); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := s.GetTask(first.ID)
+	b, _ := s.GetTask(second.ID)
+	if a.Context[0].Delivery != "rejected" || b.Context[0].Delivery != "at_start" {
+		t.Fatalf("wrong outcomes: %+v %+v", a.Context, b.Context)
+	}
+	// A failed durable write must leave no partial records or sends.
+	s.mu.Lock()
+	oldPath := s.path
+	s.path = t.TempDir()
+	s.mu.Unlock()
+	if err := s.SendThreadContext(first.ID, "id-3", "not persisted"); err == nil {
+		t.Fatal("expected persistence failure")
+	}
+	s.mu.Lock()
+	s.path = oldPath
+	s.mu.Unlock()
+	a, _ = s.GetTask(first.ID)
+	b, _ = s.GetTask(second.ID)
+	if len(a.Context) != 1 || len(b.Context) != 1 {
+		t.Fatal("failed write changed context")
+	}
+	if err := s.Cancel(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, first.ID, Canceled)
+	if err := s.Cancel(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SendThreadContext(first.ID, "id-4", "no subscribers"); err == nil {
+		t.Fatal("accepted without recipients")
+	}
+	if err := s.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestThreadFanoutRunningDelivery(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := s.CreateTask("one", "first", t.TempDir())
+	started := make(chan struct{})
+	received := make(chan Trigger, 1)
+	s.RegisterRunner("pi", testThreadRunner{started: started, received: received})
+	if err := s.Start(context.Background(), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := s.SendThreadContext(first.ID, "live-1", "ctx"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-received:
+		if got.ID != "live-1" {
+			t.Fatal(got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("delivery timed out")
+	}
+	await(t, s, first.ID, Completed)
+	got, _ := s.GetTask(first.ID)
+	if got.Context[0].Delivery != "accepted" {
+		t.Fatalf("delivery: %+v", got.Context)
+	}
+}
+
+type testThreadRunner struct {
+	started  chan struct{}
+	received chan Trigger
+}
+
+func (r testThreadRunner) Run(context.Context, Task, io.Writer) error { return nil }
+func (r testThreadRunner) RunLive(ctx context.Context, _ Task, _ io.Writer, follow <-chan Trigger, ack func(string, bool, string)) error {
+	close(r.started)
+	select {
+	case trigger := <-follow:
+		ack(trigger.ID, true, "queued")
+		r.received <- trigger
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestExplicitContextSubscription(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.CreateTask("first", "first mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateRelatedTask(first.ID, "second", "second mandate", first.Workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetContextSubscription(second.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SendThreadContext(first.ID, "while-paused", "context"); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ = restored.GetTask(second.ID)
+	if !second.ContextPaused || len(second.Context) != 0 {
+		t.Fatalf("paused subscriber received input: %+v", second)
+	}
+	if err := restored.SetContextSubscription(second.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.SendThreadContext(first.ID, "while-paused", "context"); err != nil {
+		t.Fatal(err)
+	}
+	second, _ = restored.GetTask(second.ID)
+	if len(second.Context) != 0 {
+		t.Fatal("duplicate replayed to resumed subscriber")
+	}
+	if err := restored.SendThreadContext(first.ID, "after-resume", "new context"); err != nil {
+		t.Fatal(err)
+	}
+	second, _ = restored.GetTask(second.ID)
+	if len(second.Context) != 1 || second.Prompt != "second mandate" {
+		t.Fatalf("invalid resumed context: %+v", second)
+	}
+	restored.path = t.TempDir()
+	if err := restored.SetContextSubscription(second.ID, false); err == nil {
+		t.Fatal("expected persistence error")
+	}
+	second, _ = restored.GetTask(second.ID)
+	if second.ContextPaused {
+		t.Fatal("failed change was not rolled back")
+	}
+}

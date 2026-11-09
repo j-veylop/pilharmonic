@@ -108,3 +108,14 @@ For a walkthrough of startup, state migration, request routing, execution and
 cleanup, see the [implementation notes](status.md).
 
 The CLI registers the bundled specialists before resuming scheduled tasks. Each uses the Pi adapter with role-specific system instructions. Explicit command definitions take precedence over bundled names.
+
+An optional `-specialist-tools` JSON file can configure nonempty Pi tool
+allowlists for bundled specialists, for example
+`{"reviewer":["read","grep","find","ls"]}`. Entries for non-bundled
+specialists are invalid. The effective tools are the intersection of the
+specialist allowlist and the task profile's tool list when both are present.
+Delegated tasks retain the parent's effective tool limit, even when their
+specialist or profile would otherwise allow more. Omitting the option preserves
+existing tool access behavior. Tasks snapshot the specialist ceiling when assigned
+and attempts record the effective tools. A newly configured limit can further
+narrow a retry. Disjoint lists prevent the executor from starting.

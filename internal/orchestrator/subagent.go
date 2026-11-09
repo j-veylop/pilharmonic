@@ -141,7 +141,12 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token 
 	if profileErr != nil {
 		return Task{}, profileErr
 	}
-	if profileErr = validateProfileForRunner(runner, childProfile); profileErr != nil {
+	limits := Task{Agent: agent, InheritedTools: parentProfile.Tools, SpecialistTools: s.specialistTools[agent]}
+	effective, profileErr := s.limitTaskProfileLocked(limits, childProfile)
+	if profileErr != nil {
+		return Task{}, profileErr
+	}
+	if profileErr = validateProfileForRunner(runner, effective); profileErr != nil {
 		return Task{}, profileErr
 	}
 	workspace := parent.ExecutionWorkspace
@@ -179,21 +184,23 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token 
 	}
 	decision.CreatedAt = now
 	task := Task{
-		ID:          id,
-		ThreadID:    threadID,
-		ParentID:    parent.ID,
-		Depth:       depth,
-		Title:       title,
-		Prompt:      prompt,
-		Workspace:   workspace,
-		Status:      Queued,
-		Agent:       agent,
-		ProfileName: childProfile.Name,
-		ProfileSpec: &childProfile,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Trigger:     trigger,
-		Decision:    decision,
+		ID:              id,
+		ThreadID:        threadID,
+		ParentID:        parent.ID,
+		Depth:           depth,
+		Title:           title,
+		Prompt:          prompt,
+		Workspace:       workspace,
+		Status:          Queued,
+		Agent:           agent,
+		ProfileName:     childProfile.Name,
+		ProfileSpec:     &childProfile,
+		InheritedTools:  limits.InheritedTools,
+		SpecialistTools: limits.SpecialistTools,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		Trigger:         trigger,
+		Decision:        decision,
 		Events: []Event{
 			{now, "accepted", "Subagent mandate accepted from running task " + parent.ID},
 			{now, "delegated", "Policy " + SubagentPolicyVersion + " · depth " + fmt.Sprint(depth) + " · profile " + childProfile.Name + " · workspace inherited from parent"},

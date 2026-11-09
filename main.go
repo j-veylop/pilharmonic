@@ -25,6 +25,7 @@ func main() {
 func run() (err error) {
 	state := flag.String("state", "", "path to the state file (default: user config directory)")
 	workspace := flag.String("workspace", "", "working directory for new tasks (default: current directory)")
+	specialistTools := flag.String("specialist-tools", "", "path to bundled Pi specialist tool limits (JSON)")
 	agents := flag.String("agents", "", "path to optional agent command configuration JSON")
 	profiles := flag.String("profiles", "", "path to optional profile (role) configuration JSON")
 	profile := flag.String("profile", "", "default profile for routed and unchosen tasks (default: implementer)")
@@ -77,6 +78,11 @@ func run() (err error) {
 		}
 	}
 	service.LoadBuiltinSpecialists()
+	if *specialistTools != "" {
+		if err := service.LoadSpecialistTools(*specialistTools); err != nil {
+			return err
+		}
+	}
 	if !*subagents {
 		*maxSubagentDepth, *maxSubagents = 0, 0
 	}

@@ -72,6 +72,7 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 			events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
 		}
 		task := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: s.selectAgentLocked(prompt, DefaultRouteAgent), CreatedAt: now, UpdatedAt: now, Trigger: trigger, Decision: decision, Events: events}
+		task.SpecialistTools = s.specialistTools[task.Agent]
 		s.data.Tasks = append(s.data.Tasks, task)
 		thread.Triggers = append(thread.Triggers, trigger)
 		thread.Decisions = append(thread.Decisions, decision)

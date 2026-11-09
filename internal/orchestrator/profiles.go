@@ -293,13 +293,13 @@ func (s *Service) resolveProfileLocked(name string) (string, *Profile, error) {
 // snapshot wins, so editing the catalog cannot change an accepted task.
 func (s *Service) profileForTaskLocked(t Task) (Profile, error) {
 	if t.ProfileSpec != nil {
-		return cloneProfile(*t.ProfileSpec), nil
+		return s.limitTaskProfileLocked(t, cloneProfile(*t.ProfileSpec))
 	}
 	name, err := s.resolveProfileNameLocked(t.ProfileName)
 	if err != nil {
 		return Profile{}, err
 	}
-	return cloneProfile(s.profiles[name]), nil
+	return s.limitTaskProfileLocked(t, cloneProfile(s.profiles[name]))
 }
 
 // SetTaskProfile selects a profile for a queued task without an outstanding
@@ -326,7 +326,11 @@ func (s *Service) SetTaskProfile(id, name string) error {
 		if !ok {
 			return fmt.Errorf("agent %q unavailable", t.Agent)
 		}
-		if err = validateProfileForRunner(runner, *spec); err != nil {
+		effective, err := s.limitTaskProfileLocked(*t, *spec)
+		if err != nil {
+			return err
+		}
+		if err = validateProfileForRunner(runner, effective); err != nil {
 			return err
 		}
 		if t.ProfileName == resolved {

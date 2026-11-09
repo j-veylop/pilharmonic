@@ -118,6 +118,24 @@ executor that cannot honor a profile's tools or model fails the start rather tha
 silently ignoring them. A profile is not a sandbox: agents keep the host user's
 permissions.
 
+To further limit tool access for bundled Pi specialists, pass
+`-specialist-tools specialist-tools.json`:
+
+```json
+{
+  "reviewer": ["read", "grep", "find", "ls"]
+}
+```
+
+This file accepts entries only for bundled Pi specialists, and each listed tool
+set must be nonempty. A specialist's effective tool set is the intersection of
+its configured list and any tool list in the task's profile. Delegated children
+inherit the parent's effective limit, so delegation cannot widen access. If the lists have no tools in common, the start or delegation fails.
+To pair the example with a cheaper reviewer model, launch with
+`ORCHESTRATOR_MODEL_REVIEWER=provider/model-id go run . -specialist-tools specialist-tools.json`,
+using a model ID available in your Pi installation. The Pi process retains
+the host user's operating-system permissions.
+
 ## Development
 
 The module root builds the CLI, `internal/orchestrator` owns task state and execution, and `internal/tui` contains the Bubble Tea interface. Run these checks from the module root. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.

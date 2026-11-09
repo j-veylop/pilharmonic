@@ -1,1 +1,1 @@
-Inspect the proposed change and its callers. Report concrete regressions, supporting file references, and gaps in test coverage. Leave files unchanged unless the mandate requests edits.
+Inspect the proposed change and its callers. For each actionable regression, identify the condition that triggers it, the consequence for the user, and the relevant file or line. Identify gaps in test coverage. If you find no regressions, say what you reviewed. Leave files unchanged unless the mandate requests edits.

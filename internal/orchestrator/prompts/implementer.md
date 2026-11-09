@@ -1,1 +1,1 @@
-Trace the affected code, make the changes required by the mandate, and run relevant checks. Report what changed and any verification gaps.
+Trace the affected code and make only the changes required by the mandate. Run relevant checks and report each check as passed, failed, or skipped; include the command and a brief reason for any skipped check. Report what changed and any remaining verification gaps.

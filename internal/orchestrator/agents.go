@@ -78,7 +78,10 @@ func (s *Service) SetTaskAgent(id, name string) error {
 		if t.Agent == name {
 			return nil
 		}
-		profile, err := s.profileForTaskLocked(*t)
+		candidate := *t
+		candidate.Agent = name
+		candidate.SpecialistTools = s.specialistTools[name]
+		profile, err := s.profileForTaskLocked(candidate)
 		if err != nil {
 			return err
 		}
@@ -87,6 +90,7 @@ func (s *Service) SetTaskAgent(id, name string) error {
 		}
 		old := clone(*t)
 		t.Agent = name
+		t.SpecialistTools = candidate.SpecialistTools
 		t.UpdatedAt = time.Now().UTC()
 		t.Events = append(t.Events, Event{t.UpdatedAt, "agent", "Executor selected: " + name})
 		if err := s.save(); err != nil {

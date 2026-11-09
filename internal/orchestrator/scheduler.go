@@ -52,6 +52,10 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	if !ok {
 		return fmt.Errorf("agent %q unavailable", t.Agent)
 	}
+	ceiling, err := intersectTools(t.SpecialistTools, s.specialistTools[t.Agent])
+	if err != nil {
+		return profileError{err}
+	}
 	profile, err := s.profileForTaskLocked(*t)
 	if err != nil {
 		return profileError{err}
@@ -88,7 +92,8 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	} else {
 		t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
 	}
-	t.Attempts = append(t.Attempts, Attempt{ID: id, Agent: t.Agent, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt})
+	t.SpecialistTools = ceiling
+	t.Attempts = append(t.Attempts, Attempt{ID: id, Agent: t.Agent, Tools: profile.Tools, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt})
 	t.recordStartDeliveries(id, t.UpdatedAt)
 	t.Events = append(t.Events, Event{t.UpdatedAt, "started", "Agent started (attempt " + id + ")"})
 	if err := s.save(); err != nil {
@@ -102,6 +107,7 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 		s.live[t.ID] = make(chan Trigger, 64)
 	}
 	snapshot := clone(*t)
+	snapshot.ProfileSpec = cloneProfileRef(&profile)
 	s.wg.Add(1)
 	go s.run(runCtx, snapshot, runner)
 	return nil

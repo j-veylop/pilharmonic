@@ -68,6 +68,7 @@ type Thread struct {
 type Attempt struct {
 	ID         string    `json:"id"`
 	Agent      string    `json:"agent"`
+	Tools      []string  `json:"tools,omitempty"`
 	Profile    string    `json:"profile,omitempty"`
 	Status     Status    `json:"status"`
 	StartedAt  time.Time `json:"started_at"`
@@ -110,15 +111,19 @@ type Task struct {
 	Agent              string         `json:"agent"`
 	// ProfileName records the chosen profile and ProfileSpec freezes the
 	// definition accepted with the task, so later catalog edits cannot change it.
-	ProfileName string    `json:"profile,omitempty"`
-	ProfileSpec *Profile  `json:"profile_spec,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Output      string    `json:"output,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	Trigger     Trigger   `json:"trigger"`
-	Decision    Decision  `json:"decision"`
-	Events      []Event   `json:"events"`
+	// SpecialistTools freezes the selected executor's ceiling. InheritedTools
+	// keeps a delegated task within its parent's limits across operator edits.
+	SpecialistTools []string  `json:"specialist_tools,omitempty"`
+	InheritedTools  []string  `json:"inherited_tools,omitempty"`
+	ProfileName     string    `json:"profile,omitempty"`
+	ProfileSpec     *Profile  `json:"profile_spec,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	Output          string    `json:"output,omitempty"`
+	Error           string    `json:"error,omitempty"`
+	Trigger         Trigger   `json:"trigger"`
+	Decision        Decision  `json:"decision"`
+	Events          []Event   `json:"events"`
 
 	// Control credentials are process-local: they are never written to the state
 	// file and are cleared when the attempt ends.
@@ -144,12 +149,13 @@ type LiveRunner interface {
 }
 
 type Service struct {
-	mu       sync.Mutex
-	mergeMu  sync.Mutex
-	path     string
-	data     state
-	runners  map[string]Runner
-	profiles map[string]Profile
+	mu              sync.Mutex
+	mergeMu         sync.Mutex
+	path            string
+	data            state
+	runners         map[string]Runner
+	specialistTools map[string][]string
+	profiles        map[string]Profile
 	// routeProfile is the profile the local router assigns, and the fallback for
 	// tasks created without an explicit choice.
 	routeProfile      string
@@ -304,6 +310,8 @@ func (s *Service) save() error {
 	return os.Rename(name, s.path)
 }
 func clone(t Task) Task {
+	t.SpecialistTools = append([]string(nil), t.SpecialistTools...)
+	t.InheritedTools = append([]string(nil), t.InheritedTools...)
 	t.ProfileSpec = cloneProfileRef(t.ProfileSpec)
 	t.Activities = cloneActivities(t.Activities)
 	t.Events = append([]Event(nil), t.Events...)
@@ -311,6 +319,9 @@ func clone(t Task) Task {
 	t.Deliveries = append([]Delivery(nil), t.Deliveries...)
 	t.Context = append([]Trigger(nil), t.Context...)
 	t.Attempts = append([]Attempt(nil), t.Attempts...)
+	for i := range t.Attempts {
+		t.Attempts[i].Tools = append([]string(nil), t.Attempts[i].Tools...)
+	}
 	return t
 }
 func (s *Service) ListTasks() []Task {
@@ -413,6 +424,7 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: agent, ProfileName: profileName, ProfileSpec: profileSpec, CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now}, Decision: decision, Events: events}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	t.SpecialistTools = s.specialistTools[t.Agent]
 	s.data.Tasks = append(s.data.Tasks, t)
 	s.data.Threads = append(s.data.Threads, Thread{ID: threadID, Triggers: []Trigger{t.Trigger}, Decisions: []Decision{t.Decision}})
 	if err = s.save(); err != nil {

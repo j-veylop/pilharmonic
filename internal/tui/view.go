@@ -137,13 +137,18 @@ func (m model) View() string {
 	if m.input {
 		mode = " INSERT "
 	}
+	if m.router {
+		mode = " ROUTER "
+	}
 	mode = lipgloss.NewStyle().Foreground(accent).Background(surface).Bold(true).Render(mode)
 	gap := max(1, w-lipgloss.Width(header+summary)-lipgloss.Width(mode))
 	top := fit(header+summary+strings.Repeat(" ", gap)+mode, w, 1)
 	footer := m.footer(w)
 	bodyHeight := h - 1 - (strings.Count(footer, "\n") + 1)
 	var body string
-	if w >= 76 && !m.fullscreen {
+	if m.router {
+		body = m.routerPanel(w, bodyHeight)
+	} else if w >= 76 && !m.fullscreen {
 		left := min(34, max(24, w/4))
 		right := w - left - 1
 		body = lipgloss.JoinHorizontal(lipgloss.Top, m.taskPanel(left, bodyHeight), " ", m.detailPanel(right, bodyHeight))
@@ -360,15 +365,16 @@ func (m model) detailPanel(width, height int) string {
 }
 
 func (m model) footer(w int) string {
-	footerText := "n new · r run · h/l focus · z expand · tab history · t activity · ? help · q quit"
-	if w < 76 {
-		footerText = "j/k tasks · l details · z expand · ? help · q quit"
-	}
-	if m.detailFocus || m.fullscreen {
-		footerText = "j/k scroll · ^u/^d page · gg/G · h tasks · ? help · q quit"
-	}
-	if m.activity {
+	footerText := "n new · / route · r run · h/l focus · z expand · tab history · t activity · ? help · q quit"
+	switch {
+	case m.router:
+		footerText = routerFooterHint()
+	case m.activity:
 		footerText = "t output · j/k select · enter expand · esc collapse · wheel/^u/^d scroll · h tasks · ? help"
+	case m.detailFocus || m.fullscreen:
+		footerText = "j/k scroll · ^u/^d page · gg/G · h tasks · ? help · q quit"
+	case w < 76:
+		footerText = "j/k tasks · l details · / route · z expand · ? help · q quit"
 	}
 	var hints []string
 	for _, line := range strings.Split(footerText, "\n") {

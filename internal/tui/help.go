@@ -22,7 +22,8 @@ z              Expand details to full width
 Esc            Return / close expanded activity
 
 TASKS
-n              New task
+n              New task (manual draft)
+/              Open router: route new work
 a              Related task in selected thread
 A              Choose executor before scheduling
 w              Toggle Git worktree isolation before scheduling
@@ -43,6 +44,7 @@ v              All calls / latest attempt / errors
 Ctrl-u / d     Scroll expanded arguments and results
 
 GENERAL
+esc            Close router / return to tasks
 ?              Open / close this help
 q              Quit (closes help when open)
 Ctrl-c         Quit application

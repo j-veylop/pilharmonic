@@ -40,10 +40,11 @@ type Trigger struct {
 
 // Decision records the router's response. Currently only explicit local requests are accepted.
 type Decision struct {
-	TriggerID string    `json:"trigger_id"`
-	Outcome   string    `json:"outcome"`
-	Reason    string    `json:"reason"`
-	CreatedAt time.Time `json:"created_at"`
+	TriggerID     string    `json:"trigger_id"`
+	Outcome       string    `json:"outcome"`
+	Reason        string    `json:"reason"`
+	PolicyVersion string    `json:"policy_version,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 type Event struct {
 	Time    time.Time `json:"time"`
@@ -267,6 +268,13 @@ func (s *Service) GetTask(id string) (Task, bool) {
 
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.
 func (s *Service) CreateTask(title, prompt, workspace string) (Task, error) {
+	return s.createTask(title, prompt, workspace, "explicit local request", "")
+}
+
+// createTask persists an accepted request. Routing details are optional so the
+// deterministic router can record its policy version and assignment events in
+// the same write as the acceptance decision.
+func (s *Service) createTask(title, prompt, workspace, reason, policy string, routedMessages ...string) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if title == "" || prompt == "" {
@@ -296,7 +304,11 @@ func (s *Service) CreateTask(title, prompt, workspace string) (Task, error) {
 		return Task{}, err
 	}
 	now := time.Now().UTC()
-	t := Task{ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: "manual", Text: prompt, CreatedAt: now}, Decision: Decision{triggerID, "accept", "explicit local request", now}, Events: []Event{{now, "accepted", "Manual request accepted"}}}
+	events := []Event{{now, "accepted", "Manual request accepted"}}
+	for _, message := range routedMessages {
+		events = append(events, Event{now, "routed", message})
+	}
+	t := Task{ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: "manual", Text: prompt, CreatedAt: now}, Decision: Decision{TriggerID: triggerID, Outcome: "accept", Reason: reason, PolicyVersion: policy, CreatedAt: now}, Events: events}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data.Tasks = append(s.data.Tasks, t)

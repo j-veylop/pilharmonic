@@ -14,8 +14,10 @@ subprocesses at a time. Requests, decisions, threads, tasks, execution attempts,
 events, reports, tool activity and captured output are stored in one JSON state
 file that is rewritten atomically. Related tasks, thread follow-ups, manual
 status reports, retries, deletion and opt-in Git-worktree isolation are
-supported locally. Output is rendered as Markdown, and the UI exposes a
-tool-activity view, a shortcut-help popup and an agent chooser. There is no
+supported locally. The UI opens on a deterministic router that accepts work,
+assigns Pi and starts it; the task board exposes a tool-activity view, a
+shortcut-help popup and an agent chooser. Assistant output is rendered as
+Markdown. There is no
 external input source, no authorization policy engine and no GitHub integration.
 Tasks can opt into a dedicated Git worktree; otherwise they share their source
 workspace.
@@ -24,7 +26,7 @@ workspace.
 
 - The repository starts from a single baseline commit on `main`.
 - `go test ./...` and `go vet ./...` pass.
-- Roughly 3.5k lines of implementation and 2.3k lines of tests. Dependencies
+- Roughly 4.0k lines of implementation and 2.6k lines of tests. Dependencies
   are Bubble Tea, Lip Gloss, Glamour and `charmbracelet/x/ansi`; everything else
   is the Go standard library.
 - Packages: the module root (entry point), `internal/orchestrator` (state,
@@ -54,21 +56,30 @@ anything changed:
 
 The state file is opened, then configured command executors are loaded and the
 concurrency limit is configured, which also resumes persisted start requests.
-Then the TUI starts. `Shutdown` cancels running work, closes pending start
+Then the TUI starts on the router screen. `Shutdown` cancels running work, closes pending start
 requests and waits for workers to finish writing state. Quitting therefore ends
 active tasks as `canceled`, not `interrupted` — interrupted only comes from
 reopening state after a crash or kill.
 
 ## Lifecycle of a request
 
-1. **Submission.** Pressing `n` creates a local task through `CreateTask`
-   (`service.go`). It validates title/prompt/workspace, generates task, trigger
-   and thread IDs, and records the explicit request as an accepted trigger,
-   decision and event. All of it is persisted before the call returns; a save
-   failure rolls the slices back. A task is `queued` but deliberately not
-   started.
-2. **Explicit start.** `r` calls `Start`. If a slot is free and an executor is
-   registered, the task starts immediately. Otherwise the start request is
+The primary path starts at the router. Pressing Enter on the router screen calls
+`SubmitRequest` (`router.go`), which trims the request, derives a display title
+from its first line, and persists it through the same path as a manual draft.
+The decision records the deterministic policy version `local-1`, and a `routed`
+event records the assignment (Pi, shared workspace, execution requested). The
+router then calls `Start` immediately. The same screen lists tasks whose stage
+needs a person and recent routes. One request becomes one task: the router does
+not decompose requests or evaluate them with a model.
+
+1. **Manual submission.** Pressing `n` creates a draft through `CreateTask`
+   (`service.go`) instead of routing immediately. It validates title/prompt/
+   workspace, generates task, trigger and thread IDs, and records the explicit
+   request as an accepted trigger, decision and event. All of it is persisted
+   before the call returns; a save failure rolls the slices back. A manual
+   draft is `queued` but deliberately not started.
+2. **Explicit start.** `r` (or the router after routing) calls `Start`. If a
+   slot is free and an executor is registered, the task starts immediately. Otherwise the start request is
    marked `ScheduleRequested` with a timestamp and a persisted `scheduled`
    event, and the task waits in FIFO order by `ScheduledAt`.
 3. **Attempt creation.** `startLocked` (`scheduler.go`) persists a new attempt
@@ -131,7 +142,9 @@ reopening state after a crash or kill.
 `state.json` has two top-level slices: `tasks` and `threads`.
 
 - **Thread** holds the ordered triggers and routing decisions for a
-  conversation. A task's original trigger and decision are mirrored there.
+  conversation. A task's original trigger and decision are mirrored there; a
+  decision records its outcome, reason and, for routed requests, the policy
+  version.
 - **Task** holds the immutable `Prompt` (the mandate), the original
   `Trigger`/`Decision`, `Context` (follow-ups with delivery state), `Attempts`,
   `Reports`, `Activities`, `Events`, scheduling flags, workspace, agent, status,
@@ -200,6 +213,10 @@ correct or reviewed.
 - Pi is built in; configured command executors can be added with `-agents`. They
   run behind `Runner`/`LiveRunner`. Only Pi supports live follow-ups and
   structured tool activity.
+- The router is deterministic and creates one task per request. It does not
+  interpret or decompose requests with a model, choose among agents, or apply
+  isolation automatically: it assigns Pi and the shared workspace. Manual
+  drafts remain for other executors, isolation and pre-start changes.
 
 ## Tests
 
@@ -218,11 +235,14 @@ Tests use fake runners and temporary state files; none needs model credentials.
   reporting and command-runner stdin composition.
 - `delete_test.go`: deletion of tasks and orphaned thread history, refusal while
   running.
+- `router_test.go`: deterministic acceptance, title derivation, durable policy
+  version and routed event, automatic assignment/start, FIFO scheduling at
+  capacity and rejection of invalid requests.
 - `workspace_test.go`: isolated worktree preparation from committed `HEAD`,
   subdirectory workspaces, retry reuse, ownership and symlink rejection,
   non-repository failure, retention after deletion and toggle rules.
 - `pi_test.go`, `pi_rpc_test.go`: event-stream translation, prompt composition,
   acknowledgement, failure and shutdown paths using fake commands.
 - `internal/tui/*_test.go`: scrolling, layout, Markdown rendering, help
-  navigation, agent picker, activity filters, isolation controls, deletion flow
-  and thread controls.
+  navigation, agent picker, activity filters, isolation controls, deletion flow,
+  thread controls and the router composer/attention surface.

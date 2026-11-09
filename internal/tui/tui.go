@@ -33,6 +33,10 @@ type model struct {
 	workspace        string
 	tasks            []orchestrator.Task
 	selected         int
+	router           bool
+	routerDraft      string
+	routerFocus      int
+	routerSelected   int
 	width, height    int
 	input            bool
 	draft            string
@@ -54,7 +58,7 @@ type model struct {
 
 // Run starts the terminal interface. The service owns task execution.
 func Run(service *orchestrator.Service, workspace string) error {
-	_, err := tea.NewProgram(model{service: service, workspace: workspace, tasks: service.ListTasks()}, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	_, err := tea.NewProgram(model{service: service, workspace: workspace, tasks: service.ListTasks(), router: true}, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
@@ -83,6 +87,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		oldLines := m.detailLineCount()
 		m.tasks = m.service.ListTasks()
 		m.clamp()
+		m.clampRouter()
 		if oldID != m.selectedID() {
 			m.activityID = ""
 			m.activityExpanded = false
@@ -102,7 +107,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if !m.input && m.deleteTaskID == "" && m.agentTask == "" {
+		if !m.input && !m.router && m.deleteTaskID == "" && m.agentTask == "" {
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
 				m.scrollDetail(3)
@@ -138,6 +143,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scrollHelp(0)
 			}
 			return m, nil
+		}
+		if m.router {
+			var cmd tea.Cmd
+			m, cmd = m.routerKey(msg)
+			return m, cmd
 		}
 		if m.deleteTaskID != "" {
 			switch msg.String() {
@@ -323,6 +333,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice = ""
 				}
 			}
+		case "/":
+			m.router = true
+			m.routerFocus = 0
+			m.routerDraft = ""
+			m.notice = ""
+			m.clampRouter()
 		case "n":
 			m.input = true
 			m.notice = ""

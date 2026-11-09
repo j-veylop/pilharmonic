@@ -27,7 +27,7 @@ func run() (err error) {
 	workspace := flag.String("workspace", "", "working directory for new tasks (default: current directory)")
 	specialistTools := flag.String("specialist-tools", "", "path to bundled Pi specialist tool limits (JSON)")
 	agents := flag.String("agents", "", "path to optional agent command configuration JSON")
-	profiles := flag.String("profiles", "", "path to optional execution profile configuration JSON")
+	profiles := flag.String("profiles", "", "profile and specialist settings (default: profiles.json in the current directory, if present)")
 	profile := flag.String("profile", "", "default profile for routed and unchosen tasks (built-in profile uses executor defaults)")
 	maxConcurrent := flag.Int("max-concurrent", 2, "maximum simultaneous agent processes")
 	isolation := flag.Bool("isolation", true, "start new tasks in an isolated Git worktree when possible")
@@ -67,19 +67,17 @@ func run() (err error) {
 			return err
 		}
 	}
-	if *profiles != "" {
-		if err := service.LoadProfiles(*profiles); err != nil {
-			return err
-		}
-	}
-	if *profile != "" {
-		if err := service.SetRoutingProfile(*profile); err != nil {
-			return err
-		}
-	}
 	service.LoadBuiltinSpecialists()
 	if *specialistTools != "" {
 		if err := service.LoadSpecialistTools(*specialistTools); err != nil {
+			return err
+		}
+	}
+	if err := loadStartupProfiles(service, *profiles); err != nil {
+		return err
+	}
+	if *profile != "" {
+		if err := service.SetRoutingProfile(*profile); err != nil {
 			return err
 		}
 	}
@@ -102,4 +100,15 @@ func run() (err error) {
 		return err
 	}
 	return tui.Run(service, *workspace)
+}
+
+func loadStartupProfiles(service *orchestrator.Service, path string) error {
+	if path != "" {
+		return service.LoadProfiles(path)
+	}
+	err := service.LoadProfiles("profiles.json")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }

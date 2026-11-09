@@ -188,7 +188,13 @@ func (s *Service) LoadProfiles(path string) error {
 		return errors.New("profiles config exceeds 1 MiB")
 	}
 	var config struct {
-		Profiles []Profile `json:"profiles"`
+		Profiles       []Profile `json:"profiles"`
+		DefaultProfile string    `json:"default_profile"`
+		Specialists    []struct {
+			Name  string   `json:"name"`
+			Model string   `json:"model,omitempty"`
+			Tools []string `json:"tools,omitempty"`
+		} `json:"specialists"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(f, 1024*1024+1))
 	decoder.DisallowUnknownFields()
@@ -198,7 +204,7 @@ func (s *Service) LoadProfiles(path string) error {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return errors.New("profiles config must contain exactly one JSON object")
 	}
-	if len(config.Profiles) == 0 {
+	if len(config.Profiles) == 0 && len(config.Specialists) == 0 && config.DefaultProfile == "" {
 		return errors.New("profiles config defines no profiles")
 	}
 	loaded := make(map[string]Profile, len(config.Profiles))
@@ -215,6 +221,52 @@ func (s *Service) LoadProfiles(path string) error {
 	defer s.mu.Unlock()
 	if s.closing {
 		return errors.New("service is shutting down")
+	}
+	if name := config.DefaultProfile; name != "" {
+		if _, exists := loaded[name]; !exists {
+			if _, registered := s.profiles[name]; !registered {
+				return fmt.Errorf("default profile %q unavailable", name)
+			}
+		}
+	}
+	seen := make(map[string]bool)
+	for _, specialist := range config.Specialists {
+		name := specialist.Name
+		runner, ok := s.runners[name].(PiRunner)
+		if !ok || runner.instructions == "" {
+			return fmt.Errorf("%q is not a bundled Pi specialist", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate specialist %q", name)
+		}
+		seen[name] = true
+		if specialist.Model == "" && len(specialist.Tools) == 0 {
+			return fmt.Errorf("specialist %q needs a model or tools", name)
+		}
+		if err := (Profile{Name: name, Model: specialist.Model, Tools: specialist.Tools}).validate(); err != nil {
+			return err
+		}
+		if specialist.Tools != nil {
+			if err := validateSpecialistTools(name, specialist.Tools); err != nil {
+				return err
+			}
+		}
+	}
+	for _, specialist := range config.Specialists {
+		if specialist.Model != "" {
+			runner := s.runners[specialist.Name].(PiRunner)
+			runner.model = specialist.Model
+			s.runners[specialist.Name] = runner
+		}
+		if specialist.Tools != nil {
+			if s.specialistTools == nil {
+				s.specialistTools = make(map[string][]string)
+			}
+			s.specialistTools[specialist.Name] = specialist.Tools
+		}
+	}
+	if config.DefaultProfile != "" {
+		s.routeProfile = config.DefaultProfile
 	}
 	if s.profiles == nil {
 		s.profiles = builtinProfiles()

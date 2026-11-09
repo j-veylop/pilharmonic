@@ -120,3 +120,8 @@ specialist or profile would otherwise allow more. Omitting the option preserves
 existing tool access behavior. Tasks snapshot the specialist ceiling when assigned
 and attempts record the effective tools. A newly configured limit can further
 narrow a retry. Disjoint lists prevent the executor from starting.
+
+The profiles JSON can select the default profile and assign models and tools to
+bundled Pi specialists. Startup registers executors before validating these
+settings and resuming queued work. The Pi adapter passes the specialist model,
+or the task profile model when omitted, on each execution.

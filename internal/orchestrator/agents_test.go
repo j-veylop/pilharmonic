@@ -129,9 +129,11 @@ func TestBuiltinSpecialistCatalog(t *testing.T) {
 }
 
 func TestSpecialistSelectionAndModel(t *testing.T) {
-	t.Setenv("ORCHESTRATOR_MODEL_TESTER", "provider/example")
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	s.LoadBuiltinSpecialists()
+	if err := s.LoadProfiles(writeProfileConfig(t, `{"default_profile":"coordinator","profiles":[{"name":"coordinator","model":"provider/parent"}],"specialists":[{"name":"tester","model":"provider/example","tools":["read"]}]}`)); err != nil {
+		t.Fatal(err)
+	}
 	for request, want := range map[string]string{
 		"Please add tests for the parser": "tester", "add a parser": "implementer",
 		"Review the diff": "reviewer", "Trace the call": "explorer", "Diagnose the timeout": "debugger",
@@ -141,9 +143,15 @@ func TestSpecialistSelectionAndModel(t *testing.T) {
 		if err != nil || task.Agent != want {
 			t.Fatalf("%q: agent %q, err %v", request, task.Agent, err)
 		}
+		if task.ProfileSpec.Model != "provider/parent" {
+			t.Fatalf("default profile not applied: %+v", task.ProfileSpec)
+		}
+		if want == "tester" && (len(task.SpecialistTools) != 1 || task.SpecialistTools[0] != "read") {
+			t.Fatalf("tester tool limit: %v", task.SpecialistTools)
+		}
 	}
 	for _, mode := range []string{"rpc", "json"} {
-		args := s.runners["tester"].(PiRunner).piArgs(mode, nil)
+		args := s.runners["tester"].(PiRunner).piArgs(mode, &Profile{Model: "provider/parent"})
 		if args[len(args)-2] != "--model" || args[len(args)-1] != "provider/example" {
 			t.Fatalf("unexpected args %v", args)
 		}

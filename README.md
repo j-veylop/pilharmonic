@@ -62,12 +62,14 @@ selects `implementer`. Unmatched requests use `pi`. The executor appears on the
 task board and in task details. Drafts allow a manual override before starting.
 
 Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
-instructions. They are embedded at build time. To select a Pi model, set
-`ORCHESTRATOR_MODEL_<ROLE>` before launch, using the uppercase specialist name.
-For example, `ORCHESTRATOR_MODEL_REVIEWER=provider/model-id go run .` sets the
-reviewer's model. Use `pi --list-models` to find an available ID. An unset
-variable falls back to the task profile's model, then Pi's configured default. These settings apply to the bundled Pi
-roles; custom command executors take their model arguments from `agents.json`.
+instructions. They are embedded at build time. Run `./orchestrator` from this directory to load the
+[provided configuration](profiles.json). Startup reads `profiles.json` from
+the current directory if present. Use `-profiles PATH` to select another file. It selects Astra for the default
+profile and DeepSeek Flash for the explorer, implementer and tester. To
+coordinate a task with Astra, create a draft and select `pi` with **A**.
+The specialist model takes precedence over the task profile model for both
+direct and delegated work. Pi supplies its default model when both are omitted.
+Use `pi --list-models` to see the provider/model IDs available locally.
 
 Open the task board, create a draft with **n**, then press **A** to see their
 descriptions. A delegating parent can select one by name. They use the same
@@ -98,7 +100,7 @@ configures tools, model, extra instructions, automatic integration and delegatio
 A child inherits its parent's profile unless a narrower one is requested.
 The service snapshots the profile at acceptance and records it on each attempt.
 Press `P` on a
-queued task to choose one, or pass `-profiles profiles.json`:
+queued task to choose one, or define profiles in `profiles.json`:
 
 ```json
 {
@@ -122,23 +124,12 @@ executor that cannot honor a profile's tools or model fails the start rather tha
 silently ignoring them. A profile is not a sandbox: agents keep the host user's
 permissions.
 
-To further limit tool access for bundled Pi specialists, pass
-`-specialist-tools specialist-tools.json`:
-
-```json
-{
-  "reviewer": ["read", "grep", "find", "ls"]
-}
-```
-
-This file accepts entries only for bundled Pi specialists, and each listed tool
-set must be nonempty. A specialist's effective tool set is the intersection of
-its configured list and any tool list in the task's profile. Delegated children
-inherit the parent's effective limit, so delegation cannot widen access. If the lists have no tools in common, the start or delegation fails.
-To pair the example with a cheaper reviewer model, launch with
-`ORCHESTRATOR_MODEL_REVIEWER=provider/model-id go run . -specialist-tools specialist-tools.json`,
-using a model ID available in your Pi installation. The Pi process retains
-the host user's operating-system permissions.
+To limit a specialist's tools in the same file, add an entry such as
+`{"name":"reviewer","tools":["read","grep","find","ls"]}` to `specialists`.
+The service intersects these tools with the task profile and inherited limits.
+Disjoint lists prevent execution. The existing `-specialist-tools` option
+also accepts a standalone tool file. When both files configure the same
+specialist's tools, the list in `-profiles` takes precedence.
 
 ## Development
 

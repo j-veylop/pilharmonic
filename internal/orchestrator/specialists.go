@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	_ "embed"
-	"os"
 	"strings"
 	"unicode"
 )
@@ -38,7 +37,7 @@ func (s *Service) LoadBuiltinSpecialists() {
 		if _, exists := s.runners[role.name]; exists {
 			continue
 		}
-		s.runners[role.name] = PiRunner{instructions: strings.TrimSpace(role.instructions), model: strings.TrimSpace(os.Getenv("ORCHESTRATOR_MODEL_" + strings.ToUpper(role.name)))}
+		s.runners[role.name] = PiRunner{instructions: strings.TrimSpace(role.instructions)}
 		s.agentDescriptions[role.name] = role.description
 	}
 }

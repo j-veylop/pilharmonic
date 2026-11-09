@@ -21,7 +21,7 @@ in one JSON file. The terminal UI reads snapshots from the service.
 | `-max-concurrent` | `2` | maximum simultaneously running agents |
 | `-isolation` | `true` | start new tasks in a Git worktree when the workspace supports it |
 | `-agents` | none | optional trusted command-executor configuration |
-| `-profiles` | none | optional trusted profile (role) configuration |
+| `-profiles` | `./profiles.json` if present | profile and specialist configuration from the launch directory, or an explicit file |
 | `-profile` | `implementer` | default profile for routed work and tasks without an explicit choice |
 | `-subagents` | `true` | allow running agents to delegate child tasks |
 | `-subagent-socket` | `subagent.sock` beside the state file | owner-only local control socket |

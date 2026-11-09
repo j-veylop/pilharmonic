@@ -52,16 +52,8 @@ func (s *Service) LoadSpecialistTools(path string) error {
 		if err = decoder.Decode(&tools); err != nil {
 			return fmt.Errorf("specialist %q tools: %w", name, err)
 		}
-		if len(tools) == 0 {
-			return fmt.Errorf("specialist %q must have a nonempty tool list", name)
-		}
-		if err := (Profile{Name: name, Tools: tools}).validate(); err != nil {
+		if err := validateSpecialistTools(name, tools); err != nil {
 			return err
-		}
-		for _, tool := range tools {
-			if !isSupportedPiTool(tool) {
-				return fmt.Errorf("specialist %q uses unsupported Pi tool %q", name, tool)
-			}
 		}
 		loaded[name] = tools
 	}
@@ -97,4 +89,19 @@ func isSupportedPiTool(tool string) bool {
 		}
 	}
 	return false
+}
+
+func validateSpecialistTools(name string, tools []string) error {
+	if len(tools) == 0 {
+		return fmt.Errorf("specialist %q must have a nonempty tool list", name)
+	}
+	if err := (Profile{Name: name, Tools: tools}).validate(); err != nil {
+		return err
+	}
+	for _, tool := range tools {
+		if !isSupportedPiTool(tool) {
+			return fmt.Errorf("specialist %q uses unsupported Pi tool %q", name, tool)
+		}
+	}
+	return nil
 }

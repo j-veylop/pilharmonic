@@ -94,8 +94,8 @@ func taskStatusIcon(task orchestrator.Task) string {
 
 // taskMetaLine holds the secondary task details. Status is not repeated here:
 // taskTitleRow starts every row with it, so narrow sidebars keep it visible.
-// Child rows omit the redundant "subagent" suffix because the title marker
-// and inherited-workspace badge already communicate ownership.
+// Child rows omit the redundant "subagent" suffix because indentation and the
+// inherited-workspace badge already communicate ownership.
 func taskMetaLine(task orchestrator.Task, width int) string {
 	return fit("  "+mutedStyle.Render(taskRowExecutorLabel(task))+"  "+workspaceBadgeFor(task).render(), width, 1)
 }
@@ -144,7 +144,7 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 		rows = append(rows, taskListRow{
 			index:  index,
 			task:   task,
-			marker: taskOwnershipMarker(task, len(children[task.ID]) > 0),
+			marker: taskOwnershipMarker(len(children[task.ID]) > 0),
 		})
 		for _, child := range children[task.ID] {
 			walk(child)
@@ -161,32 +161,37 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 	return rows
 }
 
-func taskOwnershipMarker(task orchestrator.Task, ownsChildren bool) string {
-	marker := ""
-	if task.ParentID != "" {
-		marker = strings.Repeat("↳", min(max(1, task.Depth), 3))
-	}
+// taskOwnershipMarker marks a task that has subagents. Delegated children are
+// shown by indentation instead, so their rows carry no extra glyph.
+func taskOwnershipMarker(ownsChildren bool) string {
 	if ownsChildren {
-		marker += "▾"
+		return "▾ "
 	}
-	if marker != "" {
-		marker += " "
+	return ""
+}
+
+// taskChildIndent nests a delegated child's status glyph under its parent by
+// depth, capped so deep trees stay readable in a narrow sidebar.
+func taskChildIndent(task orchestrator.Task) string {
+	if task.ParentID == "" {
+		return ""
 	}
-	return marker
+	return strings.Repeat("  ", min(max(1, task.Depth), 3))
 }
 
 // taskTitleRow puts the coloured status glyph before the title. Selection uses
 // the same rail and body styles as other selectable rows while keeping the
 // status colour distinct.
 func taskTitleRow(task orchestrator.Task, width int, selected bool) string {
-	return taskTitleRowWithMarker(task, taskOwnershipMarker(task, false), width, selected)
+	return taskTitleRowWithMarker(task, taskOwnershipMarker(false), width, selected)
 }
 
 func taskTitleRowWithMarker(task orchestrator.Task, marker string, width int, selected bool) string {
 	text := marker + strings.ReplaceAll(terminalText(task.Title), "\n", " ")
 	icon := taskStatusIcon(task)
+	indent := taskChildIndent(task)
 	if !selected {
-		return fit("  "+icon+" "+titleStyle.Render(text), width, 1)
+		return fit("  "+indent+icon+" "+titleStyle.Render(text), width, 1)
 	}
 	if width < 1 {
 		return ""
@@ -197,7 +202,7 @@ func taskTitleRowWithMarker(task orchestrator.Task, marker string, width int, se
 	if width == 2 {
 		return selectionRailStyle.Render("▌ ")
 	}
-	body := fit(icon+" "+text, width-2, 1)
+	body := fit(indent+icon+" "+text, width-2, 1)
 	return selectionRailStyle.Render("▌ ") + selectionBodyStyle.Width(width-2).Render(body)
 }
 

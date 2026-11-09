@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"orchestrator/internal/orchestrator"
 )
 
@@ -51,8 +52,12 @@ func TestSubagentComposerSpawnsChild(t *testing.T) {
 	if child.ID == "" || child.Prompt != "child mandate" || m.notice == "" {
 		t.Fatalf("subagent not created: %+v notice=%q", child, m.notice)
 	}
-	if !strings.Contains(m.View(), "↳ child mandate") {
+	plain := ansi.Strip(m.View())
+	if !strings.Contains(plain, "● child mandate") {
 		t.Fatal("subagent not marked in task list")
+	}
+	if strings.Contains(plain, "↳") {
+		t.Fatalf("subagent row still shows an arrow marker: %q", plain)
 	}
 }
 

@@ -130,7 +130,7 @@ func TestTaskPanelGroupsChildrenUnderParentAndMarksOwnership(t *testing.T) {
 		{ID: "parent", Title: "parent work", Agent: "general", Status: orchestrator.Running, CreatedAt: now.Add(-4 * time.Minute)},
 		{ID: "other", Title: "other work", Agent: "general", Status: orchestrator.Running, CreatedAt: now.Add(-3 * time.Minute)},
 	}
-	m := model{width: 120, height: 40, tasks: tasks}
+	m := model{width: 120, height: 40, tasks: tasks, selected: 4}
 	plain := ansi.Strip(m.taskPanel(60, 30))
 	order := []string{"parent work", "second child", "first child", "grand child", "other work"}
 	last := -1
@@ -144,10 +144,40 @@ func TestTaskPanelGroupsChildrenUnderParentAndMarksOwnership(t *testing.T) {
 		}
 		last = position
 	}
-	for _, want := range []string{"▾ parent work", "↳ second child", "↳▾ first child", "↳↳ grand child"} {
+	for _, want := range []string{"● ▾ parent work", "    ● second child", "    ● ▾ first child", "      ● grand child"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("missing ownership marker %q in %q", want, plain)
+			t.Fatalf("missing ownership layout %q in %q", want, plain)
 		}
+	}
+	if strings.Contains(plain, "↳") {
+		t.Fatalf("child rows still use an arrow marker: %q", plain)
+	}
+}
+
+func TestTaskTitleRowIndentsChildStatusWithoutArrow(t *testing.T) {
+	parent := orchestrator.Task{ID: "parent", Title: "parent", Status: orchestrator.Running}
+	child := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Running}
+	grandchild := orchestrator.Task{ID: "grandchild", ParentID: "child", Depth: 2, Title: "grand child", Status: orchestrator.Running}
+	cases := []struct {
+		task       orchestrator.Task
+		wantPrefix string
+	}{
+		{parent, "  ● parent"},
+		{child, "    ● child"},
+		{grandchild, "      ● grand child"},
+	}
+	for _, tc := range cases {
+		plain := ansi.Strip(taskTitleRow(tc.task, 60, false))
+		if !strings.HasPrefix(plain, tc.wantPrefix) {
+			t.Fatalf("row %q does not start with %q", plain, tc.wantPrefix)
+		}
+		if strings.Contains(plain, "↳") {
+			t.Fatalf("row %q still shows an arrow marker", plain)
+		}
+	}
+	selected := ansi.Strip(taskTitleRow(child, 40, true))
+	if !strings.Contains(selected, "▌   ● child") {
+		t.Fatalf("selected child row lost its indented status: %q", selected)
 	}
 }
 

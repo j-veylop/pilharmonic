@@ -24,6 +24,11 @@ func (s *Service) DeleteTask(id string) error {
 		if _, active := s.cancel[id]; active {
 			return errors.New("task is still stopping; wait before deleting")
 		}
+		for _, other := range s.data.Tasks {
+			if other.ParentID == t.ID {
+				return errors.New("task has spawned subagents; delete them before deleting the parent")
+			}
+		}
 
 		tasks := make([]Task, 0, len(s.data.Tasks)-1)
 		tasks = append(tasks, s.data.Tasks[:i]...)

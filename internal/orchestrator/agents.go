@@ -15,10 +15,41 @@ import (
 	"unicode"
 )
 
+// AgentCapabilities describes behavior an adapter actually implements. The
+// service still checks concrete interfaces before using a capability; a
+// declaration cannot make an unsupported operation available.
+type AgentCapabilities struct {
+	LiveContext       bool `json:"live_context"`
+	ToolActivity      bool `json:"tool_activity"`
+	StructuredReports bool `json:"structured_reports"`
+}
+
+// CapabilityReporter is an optional adapter interface. Runners that do not
+// implement it are treated as one-shot executors with no optional capabilities.
+type CapabilityReporter interface {
+	Capabilities() AgentCapabilities
+}
+
 // AgentInfo exposes only capabilities supported by the registered adapter.
 type AgentInfo struct {
-	Name        string
-	LiveContext bool
+	Name         string
+	LiveContext  bool
+	Capabilities AgentCapabilities
+}
+
+func capabilitiesOf(runner Runner) AgentCapabilities {
+	capabilities := AgentCapabilities{}
+	if _, ok := runner.(LiveRunner); ok {
+		capabilities.LiveContext = true
+	}
+	if provider, ok := runner.(CapabilityReporter); ok {
+		declared := provider.Capabilities()
+		// Live context is determined by the interface the scheduler honors, not
+		// by an adapter's declaration.
+		declared.LiveContext = capabilities.LiveContext
+		capabilities = declared
+	}
+	return capabilities
 }
 
 func (s *Service) ListAgents() []AgentInfo {
@@ -26,8 +57,8 @@ func (s *Service) ListAgents() []AgentInfo {
 	defer s.mu.Unlock()
 	result := make([]AgentInfo, 0, len(s.runners))
 	for name, runner := range s.runners {
-		_, live := runner.(LiveRunner)
-		result = append(result, AgentInfo{name, live})
+		capabilities := capabilitiesOf(runner)
+		result = append(result, AgentInfo{Name: name, LiveContext: capabilities.LiveContext, Capabilities: capabilities})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
@@ -154,8 +185,10 @@ func (r CommandRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 			input.WriteString("\n--- context ---\n" + c.Text + "\n")
 		}
 	}
+	input.WriteString(t.controlGuidance)
 	cmd := exec.CommandContext(ctx, r.Command, r.Args...)
 	cmd.Dir = t.Workspace
+	cmd.Env = t.runnerEnvironment()
 	cmd.Stdin = strings.NewReader(input.String())
 	cmd.Stdout = out
 	cmd.Stderr = out

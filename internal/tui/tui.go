@@ -47,6 +47,7 @@ type model struct {
 	draft            string
 	contextTask      string
 	relatedTask      string
+	subagentTask     string
 	reportTask       string
 	historyOffset    int
 	notice           string
@@ -223,6 +224,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input = false
 				m.contextTask = ""
 				m.relatedTask = ""
+				m.subagentTask = ""
 				m.reportTask = ""
 				m.draft = ""
 			case tea.KeyEnter:
@@ -248,6 +250,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.notice = "Thread context recorded; see history for delivery status."
 					}
 					m.contextTask = ""
+				} else if m.subagentTask != "" {
+					task, err := m.service.SpawnSubagent(m.subagentTask, "", prompt, "")
+					if err != nil {
+						m.notice = err.Error()
+					} else {
+						m.notice = "Subagent started: " + task.ID
+					}
+					m.subagentTask = ""
 				} else {
 					title := prompt
 					if len([]rune(title)) > 60 {
@@ -364,6 +374,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.relatedTask = m.tasks[m.selected].ID
 				m.input = true
 				m.notice = ""
+			}
+		case "b":
+			if len(m.tasks) > 0 {
+				t := m.tasks[m.selected]
+				if t.Status != orchestrator.Running {
+					m.notice = "Subagents can only be spawned from a running task."
+				} else {
+					m.subagentTask = t.ID
+					m.input = true
+					m.notice = "Subagent: enter a self-contained mandate."
+				}
 			}
 		case "pgup":
 			m.scrollDetail(m.detailPage())

@@ -46,6 +46,24 @@ func TestHistoryShowsContextDelivery(t *testing.T) {
 	}
 }
 
+func TestHistoryShowsPerAttemptDeliveries(t *testing.T) {
+	task := orchestrator.Task{
+		ID: "1", Title: "test", Prompt: "do work", Status: orchestrator.Running,
+		Context: []orchestrator.Trigger{{ID: "trigger-1", Delivery: orchestrator.DeliveryAccepted}},
+		Deliveries: []orchestrator.Delivery{
+			{TriggerID: "trigger-1", AttemptID: "attempt-old", State: orchestrator.DeliveryRejected, Error: "queue full"},
+			{TriggerID: "trigger-1", AttemptID: "attempt-new", State: orchestrator.DeliveryAccepted},
+		},
+	}
+	m := model{width: 120, height: 35, history: true, tasks: []orchestrator.Task{task}}
+	view := m.View()
+	for _, text := range []string{"DELIVERIES", "attempt-old", "rejected", "queue full", "attempt-new", "accepted"} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("missing %q in %s", text, view)
+		}
+	}
+}
+
 func TestScheduledAndHistoryPagination(t *testing.T) {
 	task := orchestrator.Task{ID: "task", ThreadID: "thread", Title: "example", Prompt: "work", Status: orchestrator.Queued, ScheduleRequested: true}
 	for i := 0; i < 30; i++ {

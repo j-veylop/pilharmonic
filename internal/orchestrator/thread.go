@@ -135,18 +135,22 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 		oldTasks[i] = clone(*task)
 		trigger := base
 		if task.Status == Queued {
-			trigger.Delivery = "at_start"
+			trigger.Delivery = DeliveryAtStart
 		} else {
+			attemptID := task.currentAttemptID()
 			ch := s.live[task.ID]
 			switch {
 			case ch == nil:
-				trigger.Delivery = "rejected"
+				trigger.Delivery = DeliveryRejected
 				trigger.DeliveryError = "agent does not support live context"
+				task.appendDelivery(trigger.ID, attemptID, DeliveryRejected, trigger.DeliveryError, now)
 			case len(ch) == cap(ch):
-				trigger.Delivery = "rejected"
+				trigger.Delivery = DeliveryRejected
 				trigger.DeliveryError = "live context queue is full"
+				task.appendDelivery(trigger.ID, attemptID, DeliveryRejected, trigger.DeliveryError, now)
 			default:
-				trigger.Delivery = "pending"
+				trigger.Delivery = DeliveryPending
+				task.appendDelivery(trigger.ID, attemptID, DeliveryPending, "", now)
 				deliveries = append(deliveries, delivery{ch, trigger})
 			}
 		}

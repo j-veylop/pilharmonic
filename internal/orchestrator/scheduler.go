@@ -67,7 +67,22 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	t.UpdatedAt = time.Now().UTC()
 	t.Output = ""
 	t.Error = ""
+	t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
+	t.MergedAt = time.Time{}
+	if s.controlPath != "" && s.subagentMaxDepth > t.Depth && s.subagentMaxChildren > 0 {
+		token, tokenErr := newID()
+		if tokenErr != nil {
+			cancel()
+			return tokenErr
+		}
+		t.controlSocket = s.controlPath
+		t.controlToken = token
+		t.controlGuidance = subagentGuidance(s.subagentMaxDepth-t.Depth, s.subagentMaxChildren)
+	} else {
+		t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
+	}
 	t.Attempts = append(t.Attempts, Attempt{ID: id, Agent: t.Agent, Status: Running, StartedAt: t.UpdatedAt})
+	t.recordStartDeliveries(id, t.UpdatedAt)
 	t.Events = append(t.Events, Event{t.UpdatedAt, "started", "Agent started (attempt " + id + ")"})
 	if err := s.save(); err != nil {
 		*t = old

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -72,11 +73,19 @@ type Task struct {
 	Isolated           bool           `json:"isolated,omitempty"`
 	ExecutionWorkspace string         `json:"execution_workspace,omitempty"`
 	IsolationCommit    string         `json:"isolation_commit,omitempty"`
+	MergeStatus        string         `json:"merge_status,omitempty"`
+	MergeError         string         `json:"merge_error,omitempty"`
+	MergeCommit        string         `json:"merge_commit,omitempty"`
+	WorktreeCommit     string         `json:"worktree_commit,omitempty"`
+	MergedAt           time.Time      `json:"merged_at,omitempty"`
 	Activities         []ToolActivity `json:"activities,omitempty"`
 	Reports            []Report       `json:"reports,omitempty"`
+	Deliveries         []Delivery     `json:"deliveries,omitempty"`
 	ContextPaused      bool           `json:"context_paused,omitempty"`
 	ID                 string         `json:"id"`
 	ThreadID           string         `json:"thread_id,omitempty"`
+	ParentID           string         `json:"parent_id,omitempty"`
+	Depth              int            `json:"depth,omitempty"`
 	Context            []Trigger      `json:"context,omitempty"`
 	Attempts           []Attempt      `json:"attempts,omitempty"`
 	ScheduleRequested  bool           `json:"schedule_requested,omitempty"`
@@ -93,6 +102,12 @@ type Task struct {
 	Trigger            Trigger        `json:"trigger"`
 	Decision           Decision       `json:"decision"`
 	Events             []Event        `json:"events"`
+
+	// Control credentials are process-local: they are never written to the state
+	// file and are cleared when the attempt ends.
+	controlSocket   string
+	controlToken    string
+	controlGuidance string
 }
 type state struct {
 	Tasks   []Task   `json:"tasks"`
@@ -112,6 +127,7 @@ type LiveRunner interface {
 
 type Service struct {
 	mu         sync.Mutex
+	mergeMu    sync.Mutex
 	path       string
 	data       state
 	runners    map[string]Runner
@@ -122,13 +138,22 @@ type Service struct {
 	limit      int
 	live       map[string]chan Trigger
 	pending    map[string]*pendingRequest
+
+	subagentMaxDepth    int
+	subagentMaxChildren int
+	controlPath         string
+	controlListener     net.Listener
+	controlCtx          context.Context
+	controlCancel       context.CancelFunc
+	controlConns        map[net.Conn]struct{}
+	controlWG           sync.WaitGroup
 }
 
 func Open(path string) (*Service, error) {
 	if path == "" {
 		return nil, errors.New("state path is required")
 	}
-	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}}
+	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}, subagentMaxDepth: DefaultMaxSubagentDepth, subagentMaxChildren: DefaultMaxSubagents, controlConns: map[net.Conn]struct{}{}}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -141,12 +166,8 @@ func Open(path string) (*Service, error) {
 	changed := false
 	for i := range s.data.Tasks {
 		t := &s.data.Tasks[i]
-		for j := range t.Context {
-			if t.Context[j].Delivery == "pending" {
-				t.Context[j].Delivery = "unknown"
-				t.Context[j].DeliveryError = "orchestrator stopped before acknowledgement"
-				changed = true
-			}
+		if t.settleAllPendingDeliveries("orchestrator stopped before acknowledgement", time.Now().UTC()) {
+			changed = true
 		}
 		if t.ThreadID == "" {
 			id, idErr := newID()
@@ -241,6 +262,7 @@ func clone(t Task) Task {
 	t.Activities = cloneActivities(t.Activities)
 	t.Events = append([]Event(nil), t.Events...)
 	t.Reports = append([]Report(nil), t.Reports...)
+	t.Deliveries = append([]Delivery(nil), t.Deliveries...)
 	t.Context = append([]Trigger(nil), t.Context...)
 	t.Attempts = append([]Attempt(nil), t.Attempts...)
 	return t
@@ -411,6 +433,10 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 			err = r.Run(ctx, t, outputWriter{s, t.ID})
 		}
 	}
+	merge := mergeOutcome{}
+	if err == nil && ctx.Err() == nil && t.Isolated {
+		merge = s.autoMergeIsolated(t)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.cancel, t.ID)
@@ -421,13 +447,10 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 			continue
 		}
 		task.UpdatedAt = time.Now().UTC()
+		task.controlSocket, task.controlToken, task.controlGuidance = "", "", ""
 		interruptActivities(task)
-		for i := range task.Context {
-			if task.Context[i].Delivery == "pending" {
-				task.Context[i].Delivery = "unknown"
-				task.Context[i].DeliveryError = "execution ended before acknowledgement"
-			}
-		}
+		attemptID := task.currentAttemptID()
+		task.settlePendingDeliveries(attemptID, "execution ended before acknowledgement", task.UpdatedAt)
 		switch {
 		case ctx.Err() != nil:
 			task.Status = Canceled
@@ -445,6 +468,28 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 			a.Error = task.Error
 		}
 		task.Events = append(task.Events, Event{task.UpdatedAt, string(task.Status), task.Error})
+		if merge.Status != "" {
+			task.MergeStatus = merge.Status
+			task.MergeError = merge.Error
+			task.MergeCommit = merge.MergeCommit
+			task.WorktreeCommit = merge.WorktreeCommit
+			task.MergedAt = time.Time{}
+			eventKind, message := "merge_"+merge.Status, ""
+			switch merge.Status {
+			case MergeMerged:
+				eventKind = "merged"
+				task.MergedAt = task.UpdatedAt
+				message = "Merged worktree commit " + merge.WorktreeCommit + " into source (merge commit " + merge.MergeCommit + ")"
+			case MergeUpToDate:
+				eventKind = "merge_up_to_date"
+				task.MergedAt = task.UpdatedAt
+				message = "No unmerged isolated worktree changes"
+			case MergeFailed:
+				eventKind = "merge_failed"
+				message = "Automatic isolated workspace merge failed: " + merge.Error
+			}
+			task.Events = append(task.Events, Event{task.UpdatedAt, eventKind, message})
+		}
 		if err := s.save(); err != nil {
 			s.persistErr = err
 		} else if !s.closing {
@@ -494,6 +539,7 @@ func (s *Service) Shutdown() error {
 		cancel()
 	}
 	s.mu.Unlock()
+	s.closeSubagentControl()
 	s.wg.Wait()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -553,12 +599,13 @@ func (s *Service) AddContext(taskID, triggerID, text string) error {
 			now := time.Now().UTC()
 			trigger := Trigger{ID: triggerID, Source: "manual", Text: text, CreatedAt: now}
 			decision := Decision{TriggerID: triggerID, Outcome: "context", Reason: "manual follow-up; does not expand mandate", CreatedAt: now}
-			if live != nil {
-				trigger.Delivery = "pending"
-			} else {
-				trigger.Delivery = "at_start"
-			}
 			old := clone(*task)
+			if live != nil {
+				trigger.Delivery = DeliveryPending
+				task.appendDelivery(triggerID, task.currentAttemptID(), DeliveryPending, "", now)
+			} else {
+				trigger.Delivery = DeliveryAtStart
+			}
 			task.Context = append(task.Context, trigger)
 			task.UpdatedAt = now
 			task.Events = append(task.Events, Event{now, "context", "Manual context added"})
@@ -601,14 +648,21 @@ func (s *Service) Retry(id string) error {
 		if t.ID != id {
 			continue
 		}
-		if t.Status != Failed && t.Status != Interrupted && t.Status != Canceled {
+		mergeFailed := t.Status == Completed && t.MergeStatus == MergeFailed
+		if t.Status != Failed && t.Status != Interrupted && t.Status != Canceled && !mergeFailed {
 			return fmt.Errorf("cannot retry task in %s state", t.Status)
 		}
 		old := clone(*t)
 		t.Status = Queued
 		t.UpdatedAt = time.Now().UTC()
 		t.Error = ""
-		t.Events = append(t.Events, Event{t.UpdatedAt, "requeued", "Manual retry requested"})
+		t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
+		t.MergedAt = time.Time{}
+		message := "Manual retry requested"
+		if mergeFailed {
+			message = "Manual retry requested after automatic merge failure"
+		}
+		t.Events = append(t.Events, Event{t.UpdatedAt, "requeued", message})
 		if err := s.save(); err != nil {
 			*t = old
 			return err
@@ -626,19 +680,23 @@ func (s *Service) contextAck(taskID, triggerID string, accepted bool, reason str
 		if task.ID != taskID {
 			continue
 		}
-		for j := range task.Context {
-			trigger := &task.Context[j]
-			if trigger.ID != triggerID || trigger.Delivery != "pending" {
+		for _, trigger := range task.Context {
+			if trigger.ID != triggerID || trigger.Delivery != DeliveryPending {
 				continue
 			}
-			old := clone(*task)
+			state, deliveryError := DeliveryRejected, reason
 			if accepted {
-				trigger.Delivery = "accepted"
-			} else {
-				trigger.Delivery = "rejected"
-				trigger.DeliveryError = reason
+				state, deliveryError = DeliveryAccepted, ""
 			}
-			task.Events = append(task.Events, Event{time.Now().UTC(), "context_" + trigger.Delivery, "Context " + trigger.ID + ": " + reason})
+			old := clone(*task)
+			now := time.Now().UTC()
+			task.setContextDelivery(triggerID, state, deliveryError)
+			if !task.updatePendingDelivery(triggerID, task.currentAttemptID(), state, deliveryError, now) {
+				// State written before delivery records existed still gets a
+				// truthful record for the current attempt.
+				task.appendDelivery(triggerID, task.currentAttemptID(), state, deliveryError, now)
+			}
+			task.Events = append(task.Events, Event{now, "context_" + state, "Context " + triggerID + ": " + reason})
 			if err := s.save(); err != nil {
 				*task = old
 				s.persistErr = err

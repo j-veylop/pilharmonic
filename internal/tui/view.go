@@ -55,7 +55,7 @@ func taskLabel(task orchestrator.Task) string {
 	if task.Status == orchestrator.Queued && task.ScheduleRequested {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#F2C879")).Bold(true).Render("● WAITING")
 	}
-	if stage := task.Stage(); stage == "blocked" || stage == "awaiting review" || stage == "waiting" {
+	if stage := task.Stage(); stage == "blocked" || stage == "awaiting review" || stage == "waiting" || stage == "merge failed" {
 		return accentStyle.Render("● " + strings.ToUpper(stage))
 	}
 	return statusLabel(task.Status)
@@ -222,9 +222,13 @@ func (m model) taskPanel(width, height int) string {
 				prefix = "▸ "
 				style = accentStyle
 			}
-			row := fit(style.Render(prefix+strings.ReplaceAll(terminalText(t.Title), "\n", " ")), inner, 1)
+			mark := ""
+			if t.ParentID != "" {
+				mark = "↳ "
+			}
+			row := fit(style.Render(prefix+mark+strings.ReplaceAll(terminalText(t.Title), "\n", " ")), inner, 1)
 			if i == m.selected {
-				row = selectionRow(prefix+strings.ReplaceAll(terminalText(t.Title), "\n", " "), inner)
+				row = selectionRow(prefix+mark+strings.ReplaceAll(terminalText(t.Title), "\n", " "), inner)
 			}
 			lines = append(lines, row, fit("  "+taskLabel(t)+mutedStyle.Render("  "+t.Agent), inner, 1))
 		}
@@ -269,6 +273,9 @@ func (m model) detailContent(width int) []string {
 	add(accentStyle.Render("MANDATE"))
 	add(terminalText(t.Prompt))
 	add(mutedStyle.Render("Agent: " + terminalText(t.Agent) + " (A to change before start)"))
+	if t.ParentID != "" {
+		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
+	}
 	add(mutedStyle.Render("Source: " + terminalText(t.Workspace)))
 	if t.Isolated {
 		if t.ExecutionWorkspace == "" {
@@ -278,11 +285,28 @@ func (m model) detailContent(width int) []string {
 			add(accentStyle.Render("Execution: " + terminalText(t.ExecutionWorkspace)))
 			add(mutedStyle.Render("Isolated worktree · commit " + terminalText(t.IsolationCommit)))
 		}
+	} else if t.ParentID != "" {
+		add(mutedStyle.Render("Execution: inherited from parent task"))
 	} else {
 		add(mutedStyle.Render("Execution: shared source workspace (w to isolate before start)"))
 	}
+	switch t.MergeStatus {
+	case orchestrator.MergeMerged:
+		add(accentStyle.Render("Merge: merged into source") + mutedStyle.Render(" · "+terminalText(t.MergeCommit)))
+	case orchestrator.MergeUpToDate:
+		add(mutedStyle.Render("Merge: no isolated changes to merge"))
+	case orchestrator.MergeFailed:
+		add(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8F9B")).Render("MERGE FAILED  " + terminalText(t.MergeError)))
+	}
+	if children := m.childrenOf(t.ID); len(children) > 0 {
+		add(mutedStyle.Render(fmt.Sprintf("Subagents: %d", len(children))))
+	}
 	if report, ok := t.CurrentReport(); ok {
-		add(accentStyle.Render(strings.ToUpper(report.Kind)) + "  " + terminalText(report.Message))
+		source := ""
+		if report.Source != "" && report.Source != "operator" {
+			source = "  " + mutedStyle.Render("["+terminalText(report.Source)+"]")
+		}
+		add(accentStyle.Render(strings.ToUpper(report.Kind)) + source + "  " + terminalText(report.Message))
 	}
 	if t.ContextPaused {
 		add(mutedStyle.Render("Thread context subscription paused (s to resume)"))
@@ -294,6 +318,9 @@ func (m model) detailContent(width int) []string {
 	if m.history {
 		add("")
 		add(accentStyle.Render("HISTORY"))
+		if len(t.Context) > 0 {
+			add(accentStyle.Render("CONTEXT") + mutedStyle.Render("  current summary per input"))
+		}
 		for _, c := range t.Context {
 			delivery := c.Delivery
 			if delivery == "" {
@@ -305,8 +332,31 @@ func (m model) detailContent(width int) []string {
 			}
 			add(description)
 		}
+		if len(t.Deliveries) > 0 {
+			add(accentStyle.Render("DELIVERIES") + mutedStyle.Render("  per attempt"))
+		}
+		for _, d := range t.Deliveries {
+			attempt := d.AttemptID
+			if attempt == "" {
+				attempt = "unstarted"
+			}
+			description := fmt.Sprintf("%s  attempt %s  %s  %s", d.UpdatedAt.Local().Format("15:04:05"), attempt, d.TriggerID, d.State)
+			if d.Error != "" {
+				description += "  " + terminalText(d.Error)
+			}
+			add(mutedStyle.Render(description))
+		}
+		if children := m.childrenOf(t.ID); len(children) > 0 {
+			add(accentStyle.Render("SUBAGENTS"))
+			for _, child := range children {
+				add(fmt.Sprintf("%s  %s  %s", child.CreatedAt.Local().Format("Jan 02 15:04"), statusLabel(child.Status), terminalText(child.Title)))
+			}
+		}
+		if len(t.Attempts) > 0 {
+			add(accentStyle.Render("ATTEMPTS"))
+		}
 		for _, a := range t.Attempts {
-			add(fmt.Sprintf("%s  %s", a.StartedAt.Local().Format("Jan 02 15:04"), statusLabel(a.Status)))
+			add(fmt.Sprintf("%s  %s  %s", a.StartedAt.Local().Format("Jan 02 15:04"), statusLabel(a.Status), terminalText(a.ID)))
 		}
 		for _, e := range t.Events {
 			add(mutedStyle.Render(e.Time.Local().Format("15:04:05")) + "  " + terminalText(e.Kind) + "  " + terminalText(e.Message))
@@ -322,6 +372,16 @@ func (m model) detailContent(width int) []string {
 	}
 	return lines
 }
+func (m model) childrenOf(id string) []orchestrator.Task {
+	var children []orchestrator.Task
+	for _, task := range m.tasks {
+		if task.ParentID == id {
+			children = append(children, task)
+		}
+	}
+	return children
+}
+
 func (m model) detailLineCount() int { w, _ := m.detailGeometry(); return len(m.detailContent(w - 4)) }
 func (m model) detailPage() int {
 	_, h := m.detailGeometry()
@@ -416,6 +476,8 @@ func (m model) footer(w int) string {
 		}
 		if m.contextTask != "" {
 			label = "THREAD CONTEXT"
+		} else if m.subagentTask != "" {
+			label = "SUBAGENT TASK"
 		} else if m.relatedTask != "" {
 			label = "RELATED TASK"
 		}
@@ -447,6 +509,12 @@ func (m model) agentPanel(width, height int) string {
 		capability := "One-shot execution · no live context"
 		if agent.LiveContext {
 			capability = "Execution + live follow-up context"
+		}
+		if agent.Capabilities.ToolActivity {
+			capability += " · tool activity"
+		}
+		if agent.Capabilities.StructuredReports {
+			capability += " · structured reports"
 		}
 		row := style.Render(prefix + terminalText(agent.Name))
 		if i == m.agentIndex {

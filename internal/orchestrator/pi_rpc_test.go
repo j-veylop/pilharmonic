@@ -207,3 +207,33 @@ while read line; do :; done
 		t.Fatal(got.Output)
 	}
 }
+
+func TestPiRPCEmitsStructuredProgressReport(t *testing.T) {
+	script := `read initial
+printf '%s\n' '{"type":"response","id":"initial","success":true,"data":{"disposition":"started"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}' '{"type":"agent_settled"}'
+while read line; do :; done
+`
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.RegisterRunner("pi", PiRunner{Command: fakePi(t, script)})
+	task, err := s.CreateTask("work", "mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, task.ID, Completed)
+	if len(done.Reports) != 1 {
+		t.Fatalf("expected one adapter report: %+v", done.Reports)
+	}
+	report := done.Reports[0]
+	if report.Kind != "progress" || report.Source != "adapter" || report.AttemptID != done.Attempts[0].ID {
+		t.Fatalf("unexpected Pi report: %+v", report)
+	}
+	if done.Stage() != "finished" {
+		t.Fatalf("adapter progress report changed the stage: %s", done.Stage())
+	}
+}

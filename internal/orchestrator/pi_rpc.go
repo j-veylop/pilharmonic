@@ -54,6 +54,7 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 	}
 	cmd := exec.CommandContext(ctx, name, "--mode", "rpc", "--no-session")
 	cmd.Dir = t.Workspace
+	cmd.Env = t.runnerEnvironment()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -97,6 +98,7 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 			fmt.Fprintf(&prompt, "\n--- context ---\n%s\n", item.Text)
 		}
 	}
+	prompt.WriteString(t.controlGuidance)
 	commands <- command{"initial", "prompt", prompt.String()}
 	events := make(chan rpcRead)
 	done := make(chan struct{})
@@ -165,10 +167,17 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 				return err
 			}
 			if agentErr != "" {
+				if reportErr := adapterReport(out, "failed", agentErr); reportErr != nil {
+					return reportErr
+				}
 				return errors.New(agentErr)
 			}
 			if !sawAssistant {
-				return errors.New("Pi settled without an assistant response")
+				message := "Pi settled without an assistant response"
+				if reportErr := adapterReport(out, "failed", message); reportErr != nil {
+					return reportErr
+				}
+				return errors.New(message)
 			}
 			return nil
 		}
@@ -205,6 +214,9 @@ func (p PiRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-c
 						return fmt.Errorf("Pi rejected prompt: %s", e.Error)
 					}
 					initialOK = true
+					if reportErr := adapterReport(out, "progress", "Pi accepted the initial prompt"); reportErr != nil {
+						return reportErr
+					}
 					if e.Data.Disposition == "handled" {
 						settled = true
 						sawAssistant = true

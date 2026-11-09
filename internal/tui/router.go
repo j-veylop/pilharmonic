@@ -18,6 +18,7 @@ var attentionStages = map[string]bool{
 	"waiting":           true,
 	"awaiting review":   true,
 	"input undelivered": true,
+	"merge failed":      true,
 	"failed":            true,
 	"interrupted":       true,
 }
@@ -60,6 +61,9 @@ func routeState(task orchestrator.Task) string {
 func routeWorkspace(task orchestrator.Task) string {
 	if task.Isolated {
 		return "isolated worktree"
+	}
+	if task.ParentID != "" {
+		return "inherited workspace"
 	}
 	return "shared workspace"
 }

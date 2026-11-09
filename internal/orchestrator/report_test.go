@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"context"
+	"io"
 	"path/filepath"
 	"testing"
 	"time"
@@ -62,5 +64,69 @@ func TestStagesRespectAttemptsAndContext(t *testing.T) {
 	task.Context = append(task.Context, Trigger{CreatedAt: now.Add(4 * time.Second), Delivery: "unknown"})
 	if task.Stage() != "input undelivered" {
 		t.Fatal(task.Stage())
+	}
+}
+
+func TestAdapterReportIsAttemptScoped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	release := make(chan struct{})
+	started := make(chan struct{})
+	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
+		close(started)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}))
+	task, err := s.CreateTask("work", "mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	writer := outputWriter{s, task.ID}
+	if err = writer.RecordReport("progress", "halfway"); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := s.GetTask(task.ID)
+	if len(current.Reports) != 1 {
+		t.Fatalf("adapter report missing: %+v", current.Reports)
+	}
+	report := current.Reports[0]
+	if report.Source != "adapter" || report.Kind != "progress" || report.AttemptID == "" || report.AttemptID != current.currentAttemptID() {
+		t.Fatalf("bad adapter report: %+v", report)
+	}
+	if current.Stage() != "working" {
+		t.Fatalf("progress report changed attention stage: %s", current.Stage())
+	}
+	close(release)
+	await(t, s, task.ID, Completed)
+	if err = writer.RecordReport("progress", "too late"); err == nil {
+		t.Fatal("adapter reported after the attempt ended")
+	}
+}
+
+func TestCurrentReportIgnoresAnotherAttempt(t *testing.T) {
+	now := time.Now().UTC()
+	task := Task{
+		Status:   Running,
+		Attempts: []Attempt{{ID: "old", StartedAt: now}, {ID: "new", StartedAt: now.Add(time.Minute)}},
+		Reports:  []Report{{Kind: "ready", Source: "adapter", AttemptID: "old", CreatedAt: now.Add(2 * time.Minute)}},
+	}
+	if _, ok := task.CurrentReport(); ok {
+		t.Fatal("report from an earlier attempt governed the current attempt")
+	}
+	task.Reports = append(task.Reports, Report{Kind: "blocked", Source: "adapter", AttemptID: "new", CreatedAt: now.Add(3 * time.Minute)})
+	if report, ok := task.CurrentReport(); !ok || report.Kind != "blocked" {
+		t.Fatalf("current adapter report not selected: %+v", report)
 	}
 }

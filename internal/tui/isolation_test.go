@@ -55,6 +55,26 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	}
 }
 
+func TestDetailShowsAutomaticMergeResult(t *testing.T) {
+	m := model{width: 120, height: 35, tasks: []orchestrator.Task{{
+		ID: "task", Title: "merged", Prompt: "work", Status: orchestrator.Completed,
+		Isolated: true, ExecutionWorkspace: "/state/workspaces/task/tree", IsolationCommit: "abc123",
+		MergeStatus: orchestrator.MergeMerged, MergeCommit: "def456",
+	}}}
+	view := m.View()
+	for _, text := range []string{"merged into source", "def456"} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("missing %q in view", text)
+		}
+	}
+	m.tasks[0].MergeStatus = orchestrator.MergeFailed
+	m.tasks[0].MergeError = "conflict in tracked.txt"
+	view = m.View()
+	if !strings.Contains(view, "MERGE FAILED") || !strings.Contains(view, "conflict in tracked.txt") {
+		t.Fatalf("merge failure not surfaced: %s", view)
+	}
+}
+
 func TestDetailShowsPreparedIsolatedWorkspace(t *testing.T) {
 	m := model{width: 120, height: 35, tasks: []orchestrator.Task{{
 		ID:                 "task",

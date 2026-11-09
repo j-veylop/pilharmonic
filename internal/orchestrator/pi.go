@@ -15,6 +15,20 @@ import (
 // PiRunner translates Pi's JSON event stream into readable live output.
 type PiRunner struct{ Command string }
 
+func (PiRunner) Capabilities() AgentCapabilities {
+	return AgentCapabilities{LiveContext: true, ToolActivity: true, StructuredReports: true}
+}
+
+// adapterReport records an explicit structured observation when the output sink
+// supports it. It never derives reports from assistant prose.
+func adapterReport(out io.Writer, kind, message string) error {
+	recorder, ok := out.(ReportRecorder)
+	if !ok {
+		return nil
+	}
+	return recorder.RecordReport(kind, message)
+}
+
 func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 	name := p.Command
 	if name == "" {
@@ -28,8 +42,10 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 			fmt.Fprintf(&prompt, "\n--- context ---\n%s\n", item.Text)
 		}
 	}
+	prompt.WriteString(t.controlGuidance)
 	cmd := exec.CommandContext(ctx, name, "--mode", "json", "--", prompt.String())
 	cmd.Dir = t.Workspace
+	cmd.Env = t.runnerEnvironment()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -113,10 +129,20 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 		return waitErr
 	}
 	if agentErr != "" {
+		if reportErr := adapterReport(out, "failed", agentErr); reportErr != nil {
+			return reportErr
+		}
 		return errors.New(agentErr)
 	}
 	if !sawAssistant {
-		return errors.New("Pi exited without an assistant response")
+		message := "Pi exited without an assistant response"
+		if reportErr := adapterReport(out, "failed", message); reportErr != nil {
+			return reportErr
+		}
+		return errors.New(message)
+	}
+	if reportErr := adapterReport(out, "progress", "Pi finished its turn"); reportErr != nil {
+		return reportErr
 	}
 	return nil
 }

@@ -25,6 +25,7 @@ TASKS
 n              New task (manual draft)
 /              Open router: route new work
 a              Related task in selected thread
+b              Spawn subagent from running task
 A              Choose executor before scheduling
 w              Toggle Git worktree isolation before scheduling
 r / R          Start / requeue unsuccessful task

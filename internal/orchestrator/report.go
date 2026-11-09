@@ -12,20 +12,31 @@ import (
 type Report struct {
 	Kind      string    `json:"kind"`
 	Message   string    `json:"message"`
+	Source    string    `json:"source,omitempty"`
+	AttemptID string    `json:"attempt_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// RecordReport records a local operator or adapter observation. Agent prose is
-// never interpreted as a report automatically.
-func (s *Service) RecordReport(taskID, kind, message string) error {
+// reportKinds bounds the vocabulary so every observation has a known meaning.
+func normalizeReport(kind, message string) (string, string, error) {
 	switch kind {
 	case "progress", "waiting", "blocked", "ready", "failed":
 	default:
-		return fmt.Errorf("unknown report kind %q", kind)
+		return "", "", fmt.Errorf("unknown report kind %q", kind)
 	}
 	message = strings.TrimSpace(message)
 	if message == "" {
-		return errors.New("report message is required")
+		return "", "", errors.New("report message is required")
+	}
+	return kind, message, nil
+}
+
+// RecordReport records a local operator observation. Agent prose is never
+// interpreted as a report automatically.
+func (s *Service) RecordReport(taskID, kind, message string) error {
+	kind, message, err := normalizeReport(kind, message)
+	if err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,16 +51,56 @@ func (s *Service) RecordReport(taskID, kind, message string) error {
 		if t.Status == Canceled {
 			return errors.New("cannot report on canceled task")
 		}
-		old := clone(*t)
-		now := time.Now().UTC()
-		t.Reports = append(t.Reports, Report{kind, message, now})
-		t.UpdatedAt = now
-		t.Events = append(t.Events, Event{now, "report_" + kind, message})
-		if err := s.save(); err != nil {
-			*t = old
-			return err
+		return s.appendReportLocked(t, kind, message, "operator", "")
+	}
+	return errors.New("task not found")
+}
+
+// appendReportLocked persists one report and its history event. The caller
+// holds s.mu.
+func (s *Service) appendReportLocked(t *Task, kind, message, source, attemptID string) error {
+	old := clone(*t)
+	now := time.Now().UTC()
+	t.Reports = append(t.Reports, Report{Kind: kind, Message: message, Source: source, AttemptID: attemptID, CreatedAt: now})
+	t.UpdatedAt = now
+	eventMessage := message
+	if source != "" && source != "operator" {
+		eventMessage = source + ": " + message
+	}
+	t.Events = append(t.Events, Event{now, "report_" + kind, eventMessage})
+	if err := s.save(); err != nil {
+		*t = old
+		return err
+	}
+	return nil
+}
+
+// ReportRecorder is an optional capability of a runner's output sink. It lets an
+// adapter record an explicit structured observation without parsing prose.
+type ReportRecorder interface {
+	RecordReport(kind, message string) error
+}
+
+// RecordReport records an adapter observation for the task's running attempt.
+func (w outputWriter) RecordReport(kind, message string) error {
+	kind, message, err := normalizeReport(kind, message)
+	if err != nil {
+		return err
+	}
+	w.s.mu.Lock()
+	defer w.s.mu.Unlock()
+	if w.s.closing {
+		return errors.New("service is shutting down")
+	}
+	for i := range w.s.data.Tasks {
+		t := &w.s.data.Tasks[i]
+		if t.ID != w.id {
+			continue
 		}
-		return nil
+		if t.Status != Running || len(t.Attempts) == 0 || t.Attempts[len(t.Attempts)-1].Status != Running {
+			return errors.New("adapter reports require a running attempt")
+		}
+		return w.s.appendReportLocked(t, kind, message, "adapter", t.currentAttemptID())
 	}
 	return errors.New("task not found")
 }
@@ -60,6 +111,9 @@ func (t Task) CurrentReport() (Report, bool) {
 		return Report{}, false
 	}
 	r := t.Reports[len(t.Reports)-1]
+	if r.AttemptID != "" && r.AttemptID != t.currentAttemptID() {
+		return Report{}, false
+	}
 	for _, event := range t.Events {
 		if event.Kind == "requeued" && event.Time.After(r.CreatedAt) {
 			return Report{}, false
@@ -76,14 +130,11 @@ func (t Task) Stage() string {
 	if t.Status == Canceled {
 		return "canceled"
 	}
-	var started time.Time
-	if len(t.Attempts) > 0 {
-		started = t.Attempts[len(t.Attempts)-1].StartedAt
+	if t.MergeStatus == MergeFailed {
+		return "merge failed"
 	}
-	for _, c := range t.Context {
-		if !c.CreatedAt.Before(started) && (c.Delivery == "rejected" || c.Delivery == "unknown") {
-			return "input undelivered"
-		}
+	if t.undeliveredForAttempt(t.currentAttemptID()) {
+		return "input undelivered"
 	}
 	if r, ok := t.CurrentReport(); ok {
 		released := false

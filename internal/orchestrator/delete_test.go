@@ -94,3 +94,46 @@ func TestDeleteRefusesRunningAndRollsBackFailedSave(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDeleteRefusesParentWithSubagents(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	started := make(chan struct{}, 2)
+	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+		started <- struct{}{}
+		if task.ParentID == "" {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	}))
+	parent, err := s.CreateTask("parent", "parent mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	child, err := s.SpawnSubagent(parent.ID, "child", "child mandate", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, child.ID, Completed)
+	if err = s.Cancel(parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, parent.ID, Canceled)
+	if err = s.DeleteTask(parent.ID); err == nil || !strings.Contains(err.Error(), "subagents") {
+		t.Fatalf("parent with subagent deleted: %v", err)
+	}
+	if err = s.DeleteTask(child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DeleteTask(parent.ID); err != nil {
+		t.Fatal(err)
+	}
+}

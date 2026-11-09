@@ -79,3 +79,25 @@ func TestCommandRunnerPassesContextOnStdin(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+func TestAgentCapabilityRegistry(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pi := s.ListAgents()
+	if len(pi) != 1 || pi[0].Name != "pi" || !pi[0].LiveContext || !pi[0].Capabilities.LiveContext || !pi[0].Capabilities.ToolActivity || !pi[0].Capabilities.StructuredReports {
+		t.Fatalf("bad Pi capabilities: %+v", pi)
+	}
+	s.RegisterRunner("echo", CommandRunner{Command: "cat"})
+	for _, agent := range s.ListAgents() {
+		if agent.Name != "echo" {
+			continue
+		}
+		if agent.LiveContext || agent.Capabilities.LiveContext || agent.Capabilities.ToolActivity || agent.Capabilities.StructuredReports {
+			t.Fatalf("command runner overclaimed capabilities: %+v", agent)
+		}
+		return
+	}
+	t.Fatal("echo runner not listed")
+}

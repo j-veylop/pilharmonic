@@ -70,8 +70,8 @@ func statusLabel(status orchestrator.Status) string {
 }
 
 // toolStatusStyle gives tool activity a consistent visual language in the
-// output transcript and the activity view. Running rows use a placeholder that
-// the renderer replaces with the current Bubble Tea spinner frame.
+// output transcript. Running rows use a placeholder that the renderer replaces
+// with the current Bubble Tea spinner frame.
 func toolStatusStyle(status string) (lipgloss.Style, string) {
 	switch status {
 	case "running":
@@ -192,8 +192,7 @@ func focusedPanel(content string, width, height int, focused bool) string {
 
 func modeBadge(label string, color lipgloss.Color) string {
 	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color(colorHeaderInk)).
-		Background(color).
+		Foreground(color).
 		Bold(true).
 		Render(label)
 }
@@ -422,8 +421,7 @@ func transcriptTab(label string, active bool) string {
 
 func (m model) detailTabRow(t orchestrator.Task, width int) string {
 	row := transcriptTab("OUTPUT", !m.history && !m.activity) + faintStyle.Render("│") +
-		transcriptTab("HISTORY", m.history && !m.activity) + faintStyle.Render("│") +
-		transcriptTab("ACTIVITY [t]", m.activity) + faintStyle.Render("  ·  ") +
+		transcriptTab("HISTORY", m.history && !m.activity) + faintStyle.Render("  ·  ") +
 		mutedStyle.Render(terminalText(t.Agent))
 	return fit(row, width, 1)
 }

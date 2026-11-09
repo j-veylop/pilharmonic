@@ -10,34 +10,28 @@ import (
 // The interface uses one small, dark palette. Keep colour decisions here so
 // status, selection and transcript styling stay in the same visual language.
 const (
-	colorInk         = "#E8EDF9"
-	colorMuted       = "#8D9AB5"
-	colorFaint       = "#5F6D88"
-	colorAccent      = "#B7A6FF"
-	colorAccentDeep  = "#7C6AE8"
-	colorCyan        = "#7BE0CF"
-	colorGreen       = "#8FE3B0"
-	colorAmber       = "#F4C97A"
-	colorRed         = "#FF96A5"
-	colorBorder      = "#35425D"
-	colorSurface     = "#222C42"
-	colorSurfaceHigh = "#2B3753"
-	colorSelection   = "#34415F"
-	colorCode        = "#1B2437"
-	colorHeaderInk   = "#131A2A"
+	colorInk        = "#E8EDF9"
+	colorMuted      = "#8D9AB5"
+	colorFaint      = "#5F6D88"
+	colorAccent     = "#B7A6FF"
+	colorAccentDeep = "#7C6AE8"
+	colorCyan       = "#7BE0CF"
+	colorGreen      = "#8FE3B0"
+	colorAmber      = "#F4C97A"
+	colorRed        = "#FF96A5"
+	colorBorder     = "#35425D"
 )
 
 var (
-	ink     = lipgloss.Color(colorInk)
-	muted   = lipgloss.Color(colorMuted)
-	accent  = lipgloss.Color(colorAccent)
-	border  = lipgloss.Color(colorBorder)
-	surface = lipgloss.Color(colorSurface)
-	cyan    = lipgloss.Color(colorCyan)
-	green   = lipgloss.Color(colorGreen)
-	amber   = lipgloss.Color(colorAmber)
-	red     = lipgloss.Color(colorRed)
-	faint   = lipgloss.Color(colorFaint)
+	ink    = lipgloss.Color(colorInk)
+	muted  = lipgloss.Color(colorMuted)
+	accent = lipgloss.Color(colorAccent)
+	border = lipgloss.Color(colorBorder)
+	cyan   = lipgloss.Color(colorCyan)
+	green  = lipgloss.Color(colorGreen)
+	amber  = lipgloss.Color(colorAmber)
+	red    = lipgloss.Color(colorRed)
+	faint  = lipgloss.Color(colorFaint)
 )
 
 // Semantic status colours keep process state, merge state and tool activity
@@ -57,23 +51,19 @@ var (
 	panelStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1)
 
 	activeTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorHeaderInk)).
-			Background(accent).
-			Bold(true)
+			Foreground(accent).
+			Bold(true).
+			Underline(true)
 	inactiveTabStyle = lipgloss.NewStyle().
-				Foreground(muted).
-				Background(lipgloss.Color(colorSurface))
+				Foreground(muted)
 	selectionRailStyle = lipgloss.NewStyle().
 				Foreground(accent).
-				Background(lipgloss.Color(colorSelection)).
 				Bold(true)
 	selectionBodyStyle = lipgloss.NewStyle().
 				Foreground(ink).
-				Background(lipgloss.Color(colorSelection)).
 				Bold(true)
 	keyStyle = lipgloss.NewStyle().
 			Foreground(accent).
-			Background(lipgloss.Color(colorSurface)).
 			Bold(true)
 )
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"orchestrator/internal/orchestrator"
 )
 
@@ -115,6 +116,36 @@ func TestPanelDoesNotRewrapViewportRows(t *testing.T) {
 		}
 		if strings.Count(rendered, strings.Repeat("x", width-4)) != height-2 {
 			t.Fatal("viewport rows wrapped or disappeared")
+		}
+	}
+}
+
+func TestDetailTabsOmitActivityTab(t *testing.T) {
+	task := orchestrator.Task{ID: "task", Title: "work", Prompt: "do work", Agent: "pi"}
+	m := model{width: 120, height: 30, tasks: []orchestrator.Task{task}}
+	for _, activity := range []bool{false, true} {
+		m.activity = activity
+		tabs := ansi.Strip(m.detailTabRow(task, 100))
+		if strings.Contains(tabs, "ACTIVITY") {
+			t.Fatalf("activity tab still present: %q", tabs)
+		}
+		if !strings.Contains(tabs, "OUTPUT") || !strings.Contains(tabs, "HISTORY") {
+			t.Fatalf("missing output/history tabs: %q", tabs)
+		}
+	}
+}
+
+func TestTextUsesNoBackgroundColour(t *testing.T) {
+	m := model{width: 120, height: 30, tasks: []orchestrator.Task{{
+		ID: "task", Title: "work", Prompt: "do work", Agent: "pi",
+		Output: "`inline code`\n\n```\ncode block\n```\n",
+	}}}
+	views := []string{m.View()}
+	m.help = true
+	views = append(views, m.View())
+	for _, view := range views {
+		if strings.Contains(view, "\x1b[48;") {
+			t.Fatal("text is rendered with a background colour")
 		}
 	}
 }

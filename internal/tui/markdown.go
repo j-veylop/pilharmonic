@@ -22,7 +22,8 @@ var markdownCache struct {
 
 // toolMarkerPattern matches the inline tool markers written by the Pi adapter.
 // It is a display hint only: agent text that happens to look like a marker is
-// still untrusted data, and the structured activity view remains authoritative.
+// still untrusted data, and the structured activity retained on the task
+// remains authoritative.
 var toolMarkerPattern = regexp.MustCompile(`^\[(running|finished|failed|interrupted)\] ?(.*)$`)
 
 type transcriptToolCall struct {
@@ -122,8 +123,8 @@ func renderTranscript(text string, width int) []string {
 }
 
 // transcriptStyle keeps assistant Markdown in the same palette as the task
-// board. Headings use a slim coloured rail and code gets a quiet inset surface
-// instead of the brighter default Glamour theme.
+// board. Headings use a slim coloured rail; text stays on the terminal's own
+// background instead of the brighter default Glamour theme.
 func transcriptStyle() glamouransi.StyleConfig {
 	stringPtr := func(value string) *string { return &value }
 	boolPtr := func(value bool) *bool { return &value }
@@ -158,11 +159,9 @@ func transcriptStyle() glamouransi.StyleConfig {
 	style.LinkText.Color = stringPtr(colorAccentDeep)
 	style.LinkText.Bold = boolPtr(true)
 	style.Code.Color = stringPtr(colorAmber)
-	style.Code.BackgroundColor = stringPtr(colorCode)
 	style.Code.Prefix = " "
 	style.Code.Suffix = " "
 	style.CodeBlock.Color = stringPtr(colorInk)
-	style.CodeBlock.BackgroundColor = stringPtr(colorSurfaceHigh)
 	style.CodeBlock.Margin = uintPtr(0)
 	style.Table.StylePrimitive.Color = stringPtr(colorMuted)
 	style.Table.ColumnSeparator = stringPtr(" │ ")

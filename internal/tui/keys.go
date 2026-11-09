@@ -39,8 +39,7 @@ func (m *model) vimNavigation(key string) bool {
 		if m.detailFocus || m.fullscreen {
 			m.scrollDetail(-delta)
 		} else {
-			m.selected = max(0, min(max(0, len(m.tasks)-1), m.selected+delta))
-			m.historyOffset = 0
+			m.moveTaskSelection(delta)
 		}
 	case "G":
 		m.jumpVim(true, count)
@@ -70,13 +69,50 @@ func (m *model) jumpVim(bottom bool, count int) {
 			m.historyOffset = m.maxScroll()
 		}
 	} else {
-		m.selected = 0
-		if bottom {
-			m.selected = max(0, len(m.tasks)-1)
-		}
-		if count > 1 {
-			m.selected = min(max(0, len(m.tasks)-1), count-1)
+		rows := taskListRows(m.tasks)
+		position := 0
+		if len(rows) > 0 {
+			if bottom {
+				position = len(rows) - 1
+			}
+			if count > 1 {
+				position = min(len(rows)-1, count-1)
+			}
+			m.selected = rows[position].index
+		} else {
+			m.selected = 0
 		}
 		m.historyOffset = 0
 	}
+}
+
+// moveTaskSelection follows the grouped sidebar order rather than the service
+// snapshot order, so a child stays next to its parent while navigating.
+func (m *model) moveTaskSelection(delta int) {
+	rows := taskListRows(m.tasks)
+	if len(rows) == 0 {
+		m.selected = 0
+		m.historyOffset = 0
+		return
+	}
+	position := 0
+	found := false
+	for i, row := range rows {
+		if row.index == m.selected {
+			position = i
+			found = true
+			break
+		}
+	}
+	if !found {
+		if m.selected > 0 {
+			position = len(rows) - 1
+		}
+		m.selected = rows[position].index
+		m.historyOffset = 0
+		return
+	}
+	position = max(0, min(len(rows)-1, position+delta))
+	m.selected = rows[position].index
+	m.historyOffset = 0
 }

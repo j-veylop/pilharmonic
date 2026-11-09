@@ -28,6 +28,7 @@ func TestTaskSidebarStatusIconsAndColors(t *testing.T) {
 		{name: "scheduled", task: orchestrator.Task{Status: orchestrator.Queued, ScheduleRequested: true}, glyph: "◷", label: "WAITING", color: statusWaiting},
 		{name: "blocked report", task: orchestrator.Task{Status: orchestrator.Running, Reports: []orchestrator.Report{{Kind: "blocked", Message: "need input", CreatedAt: now}}}, glyph: "✗", label: "BLOCKED", color: statusFailed},
 		{name: "waiting report", task: orchestrator.Task{Status: orchestrator.Running, Reports: []orchestrator.Report{{Kind: "waiting", Message: "waiting", CreatedAt: now}}}, glyph: "◷", label: "WAITING", color: statusWaiting},
+		{name: "waiting for subagents", task: orchestrator.Task{Status: orchestrator.Completed, MergeStatus: orchestrator.MergeWaiting}, glyph: "◷", label: "WAITING FOR SUBAGENTS", color: statusWaiting},
 		{name: "merge failed", task: orchestrator.Task{Status: orchestrator.Completed, MergeStatus: orchestrator.MergeFailed}, glyph: "✗", label: "MERGE FAILED", color: statusFailed},
 		{name: "awaiting review", task: orchestrator.Task{Status: orchestrator.Completed, ReviewStatus: orchestrator.ReviewPending}, glyph: "◆", label: "AWAITING REVIEW", color: cyan},
 	}
@@ -106,6 +107,75 @@ func TestTaskTitleRowSelectionFitsAndKeepsStatus(t *testing.T) {
 	}
 	if row := taskTitleRow(task, 20, true); !strings.Contains(row, taskStatusIcon(task)) {
 		t.Fatalf("selection lost the coloured status icon: %q", row)
+	}
+}
+
+func TestTaskMetaLineOmitsRedundantChildSuffix(t *testing.T) {
+	task := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 1, Title: "work", Agent: "explorer"}
+	plain := ansi.Strip(taskMetaLine(task, 80))
+	if strings.Contains(plain, "subagent") {
+		t.Fatalf("child meta line repeats ownership: %q", plain)
+	}
+	if !strings.Contains(plain, "explorer") || !strings.Contains(plain, "inherited") {
+		t.Fatalf("child meta line lost executor or workspace: %q", plain)
+	}
+}
+
+func TestTaskPanelGroupsChildrenUnderParentAndMarksOwnership(t *testing.T) {
+	now := time.Now()
+	tasks := []orchestrator.Task{
+		{ID: "grandchild", ParentID: "child-a", Depth: 2, Title: "grand child", Agent: "tester", Status: orchestrator.Running, CreatedAt: now.Add(-30 * time.Second)},
+		{ID: "child-b", ParentID: "parent", Depth: 1, Title: "second child", Agent: "tester", Status: orchestrator.Running, CreatedAt: now.Add(-time.Minute)},
+		{ID: "child-a", ParentID: "parent", Depth: 1, Title: "first child", Agent: "explorer", Status: orchestrator.Running, CreatedAt: now.Add(-2 * time.Minute)},
+		{ID: "parent", Title: "parent work", Agent: "general", Status: orchestrator.Running, CreatedAt: now.Add(-4 * time.Minute)},
+		{ID: "other", Title: "other work", Agent: "general", Status: orchestrator.Running, CreatedAt: now.Add(-3 * time.Minute)},
+	}
+	m := model{width: 120, height: 40, tasks: tasks}
+	plain := ansi.Strip(m.taskPanel(60, 30))
+	order := []string{"parent work", "second child", "first child", "grand child", "other work"}
+	last := -1
+	for _, title := range order {
+		position := strings.Index(plain, title)
+		if position < 0 {
+			t.Fatalf("missing %q in grouped panel: %q", title, plain)
+		}
+		if position < last {
+			t.Fatalf("task %q is out of grouped order: %q", title, plain)
+		}
+		last = position
+	}
+	for _, want := range []string{"▾ parent work", "↳ second child", "↳▾ first child", "↳↳ grand child"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing ownership marker %q in %q", want, plain)
+		}
+	}
+}
+
+func TestTaskSelectionFollowsGroupedRows(t *testing.T) {
+	now := time.Now()
+	tasks := []orchestrator.Task{
+		{ID: "grandchild", ParentID: "child-a", Depth: 2, Title: "grand child", CreatedAt: now.Add(-30 * time.Second)},
+		{ID: "child-b", ParentID: "parent", Depth: 1, Title: "second child", CreatedAt: now.Add(-time.Minute)},
+		{ID: "child-a", ParentID: "parent", Depth: 1, Title: "first child", CreatedAt: now.Add(-2 * time.Minute)},
+		{ID: "parent", Title: "parent work", CreatedAt: now.Add(-4 * time.Minute)},
+	}
+	m := model{tasks: tasks, selected: 3}
+	for _, want := range []int{1, 2, 0, 0} {
+		if !m.vimNavigation("j") {
+			t.Fatal("j was not handled")
+		}
+		if m.selected != want {
+			t.Fatalf("j selected index %d, want %d", m.selected, want)
+		}
+	}
+	m.vimNavigation("g")
+	m.vimNavigation("g")
+	if m.selected != 3 {
+		t.Fatalf("gg selected index %d, want parent at 3", m.selected)
+	}
+	m.vimNavigation("G")
+	if m.selected != 0 {
+		t.Fatalf("G selected index %d, want last grouped row at 0", m.selected)
 	}
 }
 

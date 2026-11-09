@@ -27,7 +27,7 @@ Use `go run . -help` for all startup flags. Common options are `-workspace` for 
 | Cancel or retry | `c` cancels. `R` requeues a failed, interrupted or canceled task, or a completed task whose merge failed. Then `r` starts it. |
 | Clean up | `x` discards a clean, integrated worktree and keeps task history. `d` deletes an inactive task and its worktree. `X` and `D` apply the corresponding bulk actions. Confirm with `y`. |
 
-Task-list rows show status first as a coloured glyph: `●` running, `✓` completed, `✗` failed, blocked or merge failed, `⊘` interrupted or canceled, `◷` queued, scheduled or waiting, and `◆` awaiting review. The executor and workspace badge follow, so the status stays visible when a narrow sidebar truncates the row. Task details and the router still show the status word.
+Task-list rows show status first as a coloured glyph: `●` running, `✓` completed, `✗` failed, blocked or merge failed, `⊘` interrupted or canceled, `◷` queued, scheduled, waiting or waiting for subagents, and `◆` awaiting review. Child tasks are grouped directly beneath their parent: `▾` marks a task with subagents and `↳` (repeated at deeper levels) marks a delegated child. The executor and workspace badge follow, so the status stays visible when a narrow sidebar truncates the row. Task details and the router still show the status word.
 
 Quitting cancels active attempts and waits for their workers. After an unexpected stop, reopening the state file marks running attempts interrupted. Persisted start requests resume after startup configuration loads. Manual drafts stay idle.
 

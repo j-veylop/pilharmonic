@@ -48,7 +48,7 @@ func taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Colo
 	switch stage := task.Stage(); stage {
 	case "blocked", "merge failed":
 		return "✗", strings.ToUpper(stage), statusFailed
-	case "waiting", "input undelivered":
+	case "waiting", "waiting for subagents", "input undelivered":
 		return "◷", strings.ToUpper(stage), statusWaiting
 	case "awaiting review":
 		return "◆", strings.ToUpper(stage), cyan
@@ -94,18 +94,96 @@ func taskStatusIcon(task orchestrator.Task) string {
 
 // taskMetaLine holds the secondary task details. Status is not repeated here:
 // taskTitleRow starts every row with it, so narrow sidebars keep it visible.
+// Child rows omit the redundant "subagent" suffix because the title marker
+// and inherited-workspace badge already communicate ownership.
 func taskMetaLine(task orchestrator.Task, width int) string {
-	return fit("  "+mutedStyle.Render(executorLabel(task))+"  "+workspaceBadgeFor(task).render(), width, 1)
+	return fit("  "+mutedStyle.Render(taskRowExecutorLabel(task))+"  "+workspaceBadgeFor(task).render(), width, 1)
+}
+
+func taskRowExecutorLabel(task orchestrator.Task) string {
+	if task.ParentID != "" {
+		return task.Agent
+	}
+	return executorLabel(task)
+}
+
+// taskListRow pairs a task with its snapshot index and sidebar ownership
+// marker. Grouping and indentation are display concerns; the service keeps its
+// own ordering.
+type taskListRow struct {
+	index  int
+	task   orchestrator.Task
+	marker string
+}
+
+// taskListRows groups delegated children directly beneath their parent while
+// preserving newest-first order for top-level tasks and within each sibling
+// group. An orphaned child stays at the top level.
+func taskListRows(tasks []orchestrator.Task) []taskListRow {
+	known := make(map[string]bool, len(tasks))
+	for _, task := range tasks {
+		if task.ID != "" {
+			known[task.ID] = true
+		}
+	}
+	children := make(map[string][]int)
+	for i, task := range tasks {
+		if task.ParentID != "" && known[task.ParentID] {
+			children[task.ParentID] = append(children[task.ParentID], i)
+		}
+	}
+	rows := make([]taskListRow, 0, len(tasks))
+	visited := make([]bool, len(tasks))
+	var walk func(int)
+	walk = func(index int) {
+		if index < 0 || index >= len(tasks) || visited[index] {
+			return
+		}
+		visited[index] = true
+		task := tasks[index]
+		rows = append(rows, taskListRow{
+			index:  index,
+			task:   task,
+			marker: taskOwnershipMarker(task, len(children[task.ID]) > 0),
+		})
+		for _, child := range children[task.ID] {
+			walk(child)
+		}
+	}
+	for i, task := range tasks {
+		if task.ParentID == "" || !known[task.ParentID] {
+			walk(i)
+		}
+	}
+	for i := range tasks {
+		walk(i)
+	}
+	return rows
+}
+
+func taskOwnershipMarker(task orchestrator.Task, ownsChildren bool) string {
+	marker := ""
+	if task.ParentID != "" {
+		marker = strings.Repeat("↳", min(max(1, task.Depth), 3))
+	}
+	if ownsChildren {
+		marker += "▾"
+	}
+	if marker != "" {
+		marker += " "
+	}
+	return marker
 }
 
 // taskTitleRow puts the coloured status glyph before the title. Selection uses
 // the same rail and body styles as other selectable rows while keeping the
 // status colour distinct.
 func taskTitleRow(task orchestrator.Task, width int, selected bool) string {
-	text := strings.ReplaceAll(terminalText(task.Title), "\n", " ")
-	if task.ParentID != "" {
-		text = "↳ " + text
-	}
+	return taskTitleRowWithMarker(task, taskOwnershipMarker(task, false), width, selected)
+}
+
+func taskTitleRowWithMarker(task orchestrator.Task, marker string, width int, selected bool) string {
+	text := marker + strings.ReplaceAll(terminalText(task.Title), "\n", " ")
 	icon := taskStatusIcon(task)
 	if !selected {
 		return fit("  "+icon+" "+titleStyle.Render(text), width, 1)
@@ -277,13 +355,23 @@ func (m model) taskPanel(width, height int) string {
 		if slots < 1 {
 			slots = 1
 		}
-		start := 0
-		if m.selected >= slots {
-			start = m.selected - slots + 1
+		rows := taskListRows(m.tasks)
+		selected := 0
+		for i, row := range rows {
+			if row.index == m.selected {
+				selected = i
+				break
+			}
 		}
-		for i := start; i < len(m.tasks) && i < start+slots; i++ {
-			t := m.tasks[i]
-			lines = append(lines, taskTitleRow(t, inner, i == m.selected), taskMetaLine(t, inner))
+		start := 0
+		if selected >= slots {
+			start = selected - slots + 1
+		}
+		for i := start; i < len(rows) && i < start+slots; i++ {
+			row := rows[i]
+			lines = append(lines,
+				taskTitleRowWithMarker(row.task, row.marker, inner, row.index == m.selected),
+				taskMetaLine(row.task, inner))
 		}
 	}
 	return focusedPanel(strings.Join(lines, "\n"), width, height, !m.detailFocus && !m.fullscreen)

@@ -38,35 +38,89 @@ func terminalText(s string) string {
 	return b.String()
 }
 
-func taskLabel(task orchestrator.Task) string {
+// taskState gives each task one status word, glyph and semantic colour. The
+// task sidebar renders only the glyph, while other surfaces pair it with the
+// label so status stays readable without relying on colour alone.
+func taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
 	if task.Status == orchestrator.Queued && task.ScheduleRequested {
-		return lipgloss.NewStyle().Foreground(statusWaiting).Bold(true).Render("● WAITING")
+		return "◷", "WAITING", statusWaiting
 	}
 	switch stage := task.Stage(); stage {
 	case "blocked", "merge failed":
-		return lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("● " + strings.ToUpper(stage))
+		return "✗", strings.ToUpper(stage), statusFailed
 	case "waiting", "input undelivered":
-		return lipgloss.NewStyle().Foreground(statusWaiting).Bold(true).Render("● " + strings.ToUpper(stage))
+		return "◷", strings.ToUpper(stage), statusWaiting
 	case "awaiting review":
-		return lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("● " + strings.ToUpper(stage))
+		return "◆", strings.ToUpper(stage), cyan
+	}
+	return statusState(task.Status)
+}
+
+func statusState(status orchestrator.Status) (glyph, label string, color lipgloss.Color) {
+	switch status {
+	case orchestrator.Running:
+		return "●", "RUNNING", statusRunning
+	case orchestrator.Completed:
+		return "✓", "COMPLETED", statusCompleted
+	case orchestrator.Failed:
+		return "✗", "FAILED", statusFailed
+	case orchestrator.Interrupted:
+		return "⊘", "INTERRUPTED", statusFailed
+	case orchestrator.Canceled:
+		return "⊘", "CANCELED", muted
+	case orchestrator.Queued:
+		return "◷", "QUEUED", statusWaiting
 	default:
-		return statusLabel(task.Status)
+		return "•", strings.ToUpper(string(status)), muted
 	}
 }
 
+func taskLabel(task orchestrator.Task) string {
+	_, label, color := taskState(task)
+	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + label)
+}
+
 func statusLabel(status orchestrator.Status) string {
-	color := muted
-	switch status {
-	case orchestrator.Running:
-		color = statusRunning
-	case orchestrator.Completed:
-		color = statusCompleted
-	case orchestrator.Failed, orchestrator.Interrupted:
-		color = statusFailed
-	case orchestrator.Queued:
-		color = statusWaiting
+	_, label, color := statusState(status)
+	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + label)
+}
+
+// taskStatusIcon is the compact task-list status: a coloured glyph, with no
+// status text. Distinct glyphs per state keep meaning visible without colour.
+func taskStatusIcon(task orchestrator.Task) string {
+	glyph, _, color := taskState(task)
+	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(glyph)
+}
+
+// taskMetaLine holds the secondary task details. Status is not repeated here:
+// taskTitleRow starts every row with it, so narrow sidebars keep it visible.
+func taskMetaLine(task orchestrator.Task, width int) string {
+	return fit("  "+mutedStyle.Render(executorLabel(task))+"  "+workspaceBadgeFor(task).render(), width, 1)
+}
+
+// taskTitleRow puts the coloured status glyph before the title. Selection uses
+// the same rail and body styles as other selectable rows while keeping the
+// status colour distinct.
+func taskTitleRow(task orchestrator.Task, width int, selected bool) string {
+	text := strings.ReplaceAll(terminalText(task.Title), "\n", " ")
+	if task.ParentID != "" {
+		text = "↳ " + text
 	}
-	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + strings.ToUpper(string(status)))
+	icon := taskStatusIcon(task)
+	if !selected {
+		return fit("  "+icon+" "+titleStyle.Render(text), width, 1)
+	}
+	if width < 1 {
+		return ""
+	}
+	if width == 1 {
+		return selectionRailStyle.Render("▌")
+	}
+	if width == 2 {
+		return selectionRailStyle.Render("▌ ")
+	}
+	body := fit(icon+" "+text, width-2, 1)
+	return selectionRailStyle.Render("▌ ") + selectionBodyStyle.Width(width-2).Render(body)
 }
 
 // toolStatusStyle gives tool activity a consistent visual language in the
@@ -229,22 +283,7 @@ func (m model) taskPanel(width, height int) string {
 		}
 		for i := start; i < len(m.tasks) && i < start+slots; i++ {
 			t := m.tasks[i]
-			prefix := "  "
-			style := titleStyle
-			if i == m.selected {
-				prefix = ""
-				style = accentStyle
-			}
-			mark := ""
-			if t.ParentID != "" {
-				mark = "↳ "
-			}
-			rowText := prefix + mark + strings.ReplaceAll(terminalText(t.Title), "\n", " ")
-			row := fit(style.Render(rowText), inner, 1)
-			if i == m.selected {
-				row = selectionRow(rowText, inner)
-			}
-			lines = append(lines, row, fit("  "+mutedStyle.Render(executorLabel(t))+"  "+workspaceBadgeFor(t).render()+"  "+taskLabel(t), inner, 1))
+			lines = append(lines, taskTitleRow(t, inner, i == m.selected), taskMetaLine(t, inner))
 		}
 	}
 	return focusedPanel(strings.Join(lines, "\n"), width, height, !m.detailFocus && !m.fullscreen)

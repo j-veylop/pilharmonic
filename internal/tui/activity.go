@@ -140,7 +140,7 @@ func (m model) activityContent(width int) []string {
 		}
 		plain += duration
 		if isSelected {
-			add(accentStyle.Render(fit(plain, width, 1)))
+			add(selectionRow(plain, width))
 			continue
 		}
 		row := marker + mutedStyle.Render(stamp) + " " + style.Bold(true).Render(glyph+" "+a.Status)

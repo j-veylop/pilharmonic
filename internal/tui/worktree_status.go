@@ -31,15 +31,15 @@ type workspaceBadge struct {
 func workspaceBadgeFor(task orchestrator.Task) workspaceBadge {
 	switch {
 	case task.MergeStatus == orchestrator.MergeFailed && task.MergeConflict():
-		return workspaceBadge{glyphConflict, "conflict", lipgloss.Color("#FF8F9B")}
+		return workspaceBadge{glyphConflict, "conflict", statusFailed}
 	case task.MergeStatus == orchestrator.MergeFailed:
-		return workspaceBadge{glyphMergeError, "merge error", lipgloss.Color("#FF8F9B")}
+		return workspaceBadge{glyphMergeError, "merge error", statusFailed}
 	case task.MergeStatus == orchestrator.MergeMerged:
-		return workspaceBadge{glyphMerged, "merged", lipgloss.Color("#98DAA6")}
+		return workspaceBadge{glyphMerged, "merged", statusCompleted}
 	case task.MergeStatus == orchestrator.MergeUpToDate:
-		return workspaceBadge{glyphCheck, "up to date", lipgloss.Color("#98DAA6")}
+		return workspaceBadge{glyphCheck, "up to date", statusCompleted}
 	case task.Isolated:
-		return workspaceBadge{glyphWorktree, "isolated", lipgloss.Color("#79D8C3")}
+		return workspaceBadge{glyphWorktree, "isolated", cyan}
 	case task.ParentID != "":
 		return workspaceBadge{glyphInherited, "inherited", muted}
 	default:

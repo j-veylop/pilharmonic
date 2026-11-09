@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"orchestrator/internal/orchestrator"
 )
 
@@ -161,7 +162,8 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 func (m model) routerPanel(width, height int) string {
 	inner := max(1, width-4)
 	var lines []string
-	lines = append(lines, accentStyle.Render("ROUTE WORK")+mutedStyle.Render("  ·  deterministic local policy "+orchestrator.LocalPolicyVersion))
+	policy := lipgloss.NewStyle().Foreground(cyan).Background(surface).Bold(true).Render(" " + orchestrator.LocalPolicyVersion + " ")
+	lines = append(lines, accentStyle.Render("ROUTE WORK")+mutedStyle.Render("  ·  deterministic local policy ")+policy)
 	lines = append(lines, mutedStyle.Render("Describe the work once. The router assigns the executor, starts it, and surfaces what needs you."))
 	lines = append(lines, "")
 	lines = append(lines, fit(m.routerComposer(), inner, 1))

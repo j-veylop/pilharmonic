@@ -89,9 +89,9 @@ func (m model) helpTabs(width int) string {
 	var tabs []string
 	page := max(0, min(len(helpTopics)-1, m.helpPage))
 	for i, title := range helpTopics {
-		style := mutedStyle.Padding(0, 1)
+		style := inactiveTabStyle.Padding(0, 1)
 		if i == page {
-			style = lipgloss.NewStyle().Foreground(ink).Background(surface).Bold(true).Padding(0, 1).Underline(true)
+			style = activeTabStyle.Padding(0, 1)
 		}
 		tabs = append(tabs, style.Render(title))
 	}

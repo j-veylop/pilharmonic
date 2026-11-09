@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/glamour"
+	glamouransi "github.com/charmbracelet/glamour/ansi"
+	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -119,9 +121,62 @@ func renderTranscript(text string, width int) []string {
 	return out
 }
 
+// transcriptStyle keeps assistant Markdown in the same palette as the task
+// board. Headings use a slim coloured rail and code gets a quiet inset surface
+// instead of the brighter default Glamour theme.
+func transcriptStyle() glamouransi.StyleConfig {
+	stringPtr := func(value string) *string { return &value }
+	boolPtr := func(value bool) *bool { return &value }
+	uintPtr := func(value uint) *uint { return &value }
+
+	style := glamourstyles.DarkStyleConfig
+	style.Document.Color = stringPtr(colorInk)
+	style.Document.Margin = uintPtr(0)
+	style.BlockQuote.Color = stringPtr(colorMuted)
+	style.BlockQuote.Indent = uintPtr(1)
+	style.BlockQuote.IndentToken = stringPtr("▌ ")
+	style.Heading.Color = stringPtr(colorAccent)
+	style.Heading.Bold = boolPtr(true)
+	style.H1 = glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{
+		BlockSuffix: "\n", Prefix: "▌ ", Color: stringPtr(colorAccent), Bold: boolPtr(true),
+	}}
+	style.H2 = glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{
+		BlockSuffix: "\n", Prefix: "▍ ", Color: stringPtr(colorCyan), Bold: boolPtr(true),
+	}}
+	style.H3 = glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{
+		BlockSuffix: "\n", Prefix: "› ", Color: stringPtr(colorAmber), Bold: boolPtr(true),
+	}}
+	style.Text.Color = stringPtr(colorInk)
+	style.Strong.Color = stringPtr(colorInk)
+	style.Strong.Bold = boolPtr(true)
+	style.Emph.Color = stringPtr(colorCyan)
+	style.Emph.Italic = boolPtr(true)
+	style.HorizontalRule.Color = stringPtr(colorFaint)
+	style.HorizontalRule.Format = "\n  ┄┄┄\n"
+	style.Link.Color = stringPtr(colorCyan)
+	style.Link.Underline = boolPtr(true)
+	style.LinkText.Color = stringPtr(colorAccentDeep)
+	style.LinkText.Bold = boolPtr(true)
+	style.Code.Color = stringPtr(colorAmber)
+	style.Code.BackgroundColor = stringPtr(colorCode)
+	style.Code.Prefix = " "
+	style.Code.Suffix = " "
+	style.CodeBlock.Color = stringPtr(colorInk)
+	style.CodeBlock.BackgroundColor = stringPtr(colorSurfaceHigh)
+	style.CodeBlock.Margin = uintPtr(0)
+	style.Table.StylePrimitive.Color = stringPtr(colorMuted)
+	style.Table.ColumnSeparator = stringPtr(" │ ")
+	style.Table.CenterSeparator = stringPtr("─┼─")
+	style.Table.RowSeparator = stringPtr("─")
+	style.Item.Color = stringPtr(colorAccent)
+	style.Task.Ticked = "[✓] "
+	style.Task.Unticked = "[ ] "
+	return style
+}
+
 func renderMarkdown(safe string, width int) []string {
 	rendered := safe
-	renderer, err := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(width), glamour.WithTableWrap(true), glamour.WithPreservedNewLines())
+	renderer, err := glamour.NewTermRenderer(glamour.WithStyles(transcriptStyle()), glamour.WithWordWrap(width), glamour.WithTableWrap(true), glamour.WithPreservedNewLines())
 	if err == nil {
 		if result, renderErr := renderer.Render(safe); renderErr == nil {
 			rendered = strings.Trim(result, "\n")

@@ -10,19 +10,6 @@ import (
 	"orchestrator/internal/orchestrator"
 )
 
-var (
-	ink         = lipgloss.Color("#E7EAF3")
-	muted       = lipgloss.Color("#8B96AC")
-	accent      = lipgloss.Color("#A99BFF")
-	border      = lipgloss.Color("#303B50")
-	surface     = lipgloss.Color("#222B40")
-	cyan        = lipgloss.Color("#79D8C3")
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(ink)
-	mutedStyle  = lipgloss.NewStyle().Foreground(muted)
-	accentStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
-	panelStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1)
-)
-
 // terminalText makes untrusted task data safe to lay out in a terminal. Tabs
 // expand to spaces and cursor-control sequences cannot escape the panel.
 func terminalText(s string) string {
@@ -53,25 +40,31 @@ func terminalText(s string) string {
 
 func taskLabel(task orchestrator.Task) string {
 	if task.Status == orchestrator.Queued && task.ScheduleRequested {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#F2C879")).Bold(true).Render("● WAITING")
+		return lipgloss.NewStyle().Foreground(statusWaiting).Bold(true).Render("● WAITING")
 	}
-	if stage := task.Stage(); stage == "blocked" || stage == "awaiting review" || stage == "waiting" || stage == "merge failed" {
-		return accentStyle.Render("● " + strings.ToUpper(stage))
+	switch stage := task.Stage(); stage {
+	case "blocked", "merge failed":
+		return lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("● " + strings.ToUpper(stage))
+	case "waiting", "input undelivered":
+		return lipgloss.NewStyle().Foreground(statusWaiting).Bold(true).Render("● " + strings.ToUpper(stage))
+	case "awaiting review":
+		return lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("● " + strings.ToUpper(stage))
+	default:
+		return statusLabel(task.Status)
 	}
-	return statusLabel(task.Status)
 }
 
 func statusLabel(status orchestrator.Status) string {
 	color := muted
 	switch status {
 	case orchestrator.Running:
-		color = lipgloss.Color("#79D8C3")
+		color = statusRunning
 	case orchestrator.Completed:
-		color = lipgloss.Color("#98DAA6")
+		color = statusCompleted
 	case orchestrator.Failed, orchestrator.Interrupted:
-		color = lipgloss.Color("#FF8F9B")
+		color = statusFailed
 	case orchestrator.Queued:
-		color = lipgloss.Color("#F2C879")
+		color = statusWaiting
 	}
 	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + strings.ToUpper(string(status)))
 }
@@ -82,13 +75,13 @@ func statusLabel(status orchestrator.Status) string {
 func toolStatusStyle(status string) (lipgloss.Style, string) {
 	switch status {
 	case "running":
-		return lipgloss.NewStyle().Foreground(cyan), runningGlyphPlaceholder
+		return lipgloss.NewStyle().Foreground(statusRunning), runningGlyphPlaceholder
 	case "finished":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#98DAA6")), "✓"
+		return lipgloss.NewStyle().Foreground(statusCompleted), "✓"
 	case "failed":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8F9B")), "✗"
+		return lipgloss.NewStyle().Foreground(statusFailed), "✗"
 	case "interrupted":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8F9B")), "⊘"
+		return lipgloss.NewStyle().Foreground(statusFailed), "⊘"
 	default:
 		return mutedStyle, "•"
 	}
@@ -145,19 +138,21 @@ func (m model) View() string {
 			queued++
 		}
 	}
-	header := lipgloss.NewStyle().Background(accent).Foreground(lipgloss.Color("#151827")).Bold(true).Padding(0, 1).Render("◈ ORCHESTRATOR")
-	summary := mutedStyle.Render(fmt.Sprintf("  %d tasks", len(m.tasks))) + lipgloss.NewStyle().Foreground(cyan).Render(fmt.Sprintf("  ● %d active", running)) + mutedStyle.Render(fmt.Sprintf("  ◷ %d queued", queued))
-	mode := " TASKS "
+	header := gradientText("◈ ORCHESTRATOR")
+	summary := mutedStyle.Render(fmt.Sprintf("  %d tasks", len(m.tasks))) +
+		lipgloss.NewStyle().Foreground(statusRunning).Render(fmt.Sprintf("  ● %d active", running)) +
+		lipgloss.NewStyle().Foreground(statusWaiting).Render(fmt.Sprintf("  ◷ %d queued", queued))
+	mode, modeColor := " TASKS ", accent
 	if m.detailFocus || m.fullscreen {
-		mode = " DETAILS "
+		mode, modeColor = " DETAILS ", cyan
 	}
 	if m.input {
-		mode = " INSERT "
+		mode, modeColor = " INSERT ", amber
 	}
 	if m.router {
-		mode = " ROUTER "
+		mode, modeColor = " ROUTER ", accent
 	}
-	mode = lipgloss.NewStyle().Foreground(accent).Background(surface).Bold(true).Render(mode)
+	mode = modeBadge(mode, modeColor)
 	gap := max(1, w-lipgloss.Width(header+summary)-lipgloss.Width(mode))
 	top := fit(header+summary+strings.Repeat(" ", gap)+mode, w, 1)
 	footer := m.footer(w)
@@ -194,8 +189,27 @@ func focusedPanel(content string, width, height int, focused bool) string {
 	}
 	return panelStyle.BorderForeground(accent).Width(width - 2).Height(height - 2).MaxWidth(width).MaxHeight(height).Render(fit(content, width-4, height-2))
 }
+
+func modeBadge(label string, color lipgloss.Color) string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorHeaderInk)).
+		Background(color).
+		Bold(true).
+		Render(label)
+}
+
 func selectionRow(text string, width int) string {
-	return lipgloss.NewStyle().Foreground(ink).Background(surface).Bold(true).Width(max(0, width)).Render(fit(text, width, 1))
+	if width < 1 {
+		return ""
+	}
+	if width == 1 {
+		return selectionRailStyle.Render("▌")
+	}
+	if width == 2 {
+		return selectionRailStyle.Render("▌ ")
+	}
+	body := selectionBodyStyle.Width(width - 2).Render(fit(text, width-2, 1))
+	return selectionRailStyle.Render("▌ ") + body
 }
 
 func (m model) taskPanel(width, height int) string {
@@ -219,16 +233,17 @@ func (m model) taskPanel(width, height int) string {
 			prefix := "  "
 			style := titleStyle
 			if i == m.selected {
-				prefix = "▸ "
+				prefix = ""
 				style = accentStyle
 			}
 			mark := ""
 			if t.ParentID != "" {
 				mark = "↳ "
 			}
-			row := fit(style.Render(prefix+mark+strings.ReplaceAll(terminalText(t.Title), "\n", " ")), inner, 1)
+			rowText := prefix + mark + strings.ReplaceAll(terminalText(t.Title), "\n", " ")
+			row := fit(style.Render(rowText), inner, 1)
 			if i == m.selected {
-				row = selectionRow(prefix+mark+strings.ReplaceAll(terminalText(t.Title), "\n", " "), inner)
+				row = selectionRow(rowText, inner)
 			}
 			lines = append(lines, row, fit("  "+workspaceBadgeFor(t).render()+"  "+taskLabel(t)+mutedStyle.Render("  "+t.Agent), inner, 1))
 		}
@@ -319,7 +334,7 @@ func (m model) detailContent(width int) []string {
 	}
 	if t.Error != "" {
 		add("")
-		add(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8F9B")).Render("ERROR  " + terminalText(t.Error)))
+		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("ERROR  " + terminalText(t.Error)))
 	}
 	if m.history {
 		add("")
@@ -398,6 +413,21 @@ func (m model) detailPage() int {
 }
 func (m model) maxScroll() int { return max(0, m.detailLineCount()-m.detailPage()) }
 
+func transcriptTab(label string, active bool) string {
+	if active {
+		return activeTabStyle.Render(" " + label + " ")
+	}
+	return inactiveTabStyle.Render(" " + label + " ")
+}
+
+func (m model) detailTabRow(t orchestrator.Task, width int) string {
+	row := transcriptTab("OUTPUT", !m.history && !m.activity) + faintStyle.Render("│") +
+		transcriptTab("HISTORY", m.history && !m.activity) + faintStyle.Render("│") +
+		transcriptTab("ACTIVITY [t]", m.activity) + faintStyle.Render("  ·  ") +
+		mutedStyle.Render(terminalText(t.Agent))
+	return fit(row, width, 1)
+}
+
 func (m model) detailPanel(width, height int) string {
 	if m.agentTask != "" {
 		return m.agentPanel(width, height)
@@ -407,17 +437,8 @@ func (m model) detailPanel(width, height int) string {
 		return panel(titleStyle.Render("TASK DETAILS")+"\n\n"+mutedStyle.Render("Select a task to inspect its progress."), width, height)
 	}
 	t := m.tasks[m.selected]
-	outputTab, historyTab := accentStyle.Render(" OUTPUT "), mutedStyle.Render(" HISTORY ")
-	if m.history {
-		outputTab, historyTab = mutedStyle.Render(" OUTPUT "), accentStyle.Render(" HISTORY ")
-	}
-	activityTab := mutedStyle.Render(" ACTIVITY [t] ")
-	if m.activity {
-		outputTab = mutedStyle.Render(" OUTPUT ")
-		historyTab = mutedStyle.Render(" HISTORY ")
-		activityTab = accentStyle.Render(" ACTIVITY [t] ")
-	}
-	lines := []string{outputTab + mutedStyle.Render("│") + historyTab + mutedStyle.Render("│") + activityTab + mutedStyle.Render("  ·  "+t.Agent), titleStyle.Render(strings.ReplaceAll(terminalText(t.Title), "\n", " ")) + "  " + taskLabel(t)}
+	titleLine := titleStyle.Render(strings.ReplaceAll(terminalText(t.Title), "\n", " ")) + "  " + taskLabel(t)
+	lines := []string{m.detailTabRow(t, inner), fit(titleLine, inner, 1)}
 	if action := m.currentAction(t); action != "" {
 		lines[1] = lipgloss.NewStyle().Foreground(cyan).Render(action)
 	}
@@ -464,9 +485,9 @@ func (m model) footer(w int) string {
 		var parts []string
 		for _, hint := range strings.Split(line, " · ") {
 			key, desc, _ := strings.Cut(hint, " ")
-			parts = append(parts, lipgloss.NewStyle().Foreground(accent).Bold(true).Render(key)+mutedStyle.Render(" "+desc))
+			parts = append(parts, keyStyle.Render(key)+mutedStyle.Render(" "+desc))
 		}
-		hints = append(hints, strings.Join(parts, mutedStyle.Render("  ·  ")))
+		hints = append(hints, strings.Join(parts, faintStyle.Render("  ·  ")))
 	}
 	footer := strings.Join(hints, "\n")
 	if m.notice != "" {
@@ -514,7 +535,7 @@ func (m model) agentPanel(width, height int) string {
 		prefix := "  "
 		style := titleStyle
 		if i == m.agentIndex {
-			prefix = "▸ "
+			prefix = ""
 			style = accentStyle
 		}
 		capability := "One-shot execution · no live context"
@@ -529,7 +550,7 @@ func (m model) agentPanel(width, height int) string {
 		}
 		row := style.Render(prefix + terminalText(agent.Name))
 		if i == m.agentIndex {
-			row = selectionRow(prefix+terminalText(agent.Name), width-4)
+			row = selectionRow(terminalText(agent.Name), width-4)
 		}
 		lines = append(lines, row, mutedStyle.Render("  "+capability))
 	}

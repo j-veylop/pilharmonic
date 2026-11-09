@@ -17,7 +17,7 @@ func TestInheritedWorktreeWaitsForGrandchildAndSurvivesRestart(t *testing.T) {
 	}
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		if task.Depth < 2 {
 			_, err := s.SpawnSubagent(task.ID, "child", "use inherited tree", "")
 			return err

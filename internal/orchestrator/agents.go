@@ -150,8 +150,8 @@ func (s *Service) LoadAgents(path string) error {
 		if a.Name == "" || a.Name != strings.TrimSpace(a.Name) || strings.IndexFunc(a.Name, unicode.IsControl) >= 0 {
 			return errors.New("agent name must be nonempty and contain no surrounding whitespace or control characters")
 		}
-		if a.Name == "pi" {
-			return errors.New("agent name pi is reserved")
+		if a.Name == DefaultRouteAgent {
+			return fmt.Errorf("agent name %s is reserved", DefaultRouteAgent)
 		}
 		if _, exists := runners[a.Name]; exists {
 			return fmt.Errorf("duplicate agent %q", a.Name)

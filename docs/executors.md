@@ -25,6 +25,6 @@ A live attempt may receive process-scoped subagent credentials (`ORCHESTRATOR_CO
 
 Configured commands are trusted executable configuration. Invoke commands directly with explicit arguments; never interpolate prompts into shell command text. Treat output as untrusted display data. A process exiting successfully is execution success, not verification of its changes. Process startup, cancellation, output-write failure and nonzero exit must produce observable attempt outcomes.
 
-Agent selection applies only to a queued task without an outstanding start request. It must be persisted and recorded in task history. Each attempt retains the agent that actually executed it. Configure the registry before resuming persisted start requests. Missing agents must not be silently replaced by Pi.
+Agent selection applies only to a queued task without an outstanding start request. It must be persisted and recorded in task history. Each attempt retains the agent that actually executed it. Configure the registry before resuming persisted start requests. Missing agents must not be silently replaced by the general executor.
 
 Future adapters should declare their capabilities through the registry and translate their native protocol in adapter-specific code. Tests should exercise protocol and lifecycle failures with fake processes, without requiring credentials.

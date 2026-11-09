@@ -22,7 +22,7 @@ func TestQueuedContextGetsDeliveryRecordAtStart(t *testing.T) {
 	if err := s.AddContext(task.ID, "context-1", "existing style"); err != nil {
 		t.Fatal(err)
 	}
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	if err := s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestLiveDeliveryRecordTracksAcknowledgement(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := liveTestRunner{make(chan struct{}), make(chan Trigger, 1), make(chan struct{})}
-	s.RegisterRunner("pi", runner)
+	s.RegisterRunner("general", runner)
 	task, err := s.CreateTask("work", "mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestUnacknowledgedDeliveryRecordBecomesUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := unackedRunner{make(chan struct{}), make(chan struct{})}
-	s.RegisterRunner("pi", r)
+	s.RegisterRunner("general", r)
 	task, err := s.CreateTask("work", "mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestRetryCreatesNewDeliveryRecordPerAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs := 0
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		runs++
 		if runs == 1 {
 			return errors.New("first attempt failed")
@@ -182,7 +182,7 @@ func TestOpeningStateSettlesPendingDeliveryRecords(t *testing.T) {
 	}
 	s.mu.Lock()
 	current := &s.data.Tasks[0]
-	current.Attempts = []Attempt{{ID: "attempt-1", Agent: "pi", Status: Running, StartedAt: time.Now().UTC()}}
+	current.Attempts = []Attempt{{ID: "attempt-1", Agent: "general", Status: Running, StartedAt: time.Now().UTC()}}
 	current.Context = []Trigger{{ID: "input", Text: "context", CreatedAt: time.Now().UTC(), Delivery: DeliveryPending}}
 	current.Deliveries = []Delivery{{TriggerID: "input", AttemptID: "attempt-1", State: DeliveryPending, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}}
 	if err := s.save(); err != nil {

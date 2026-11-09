@@ -67,7 +67,7 @@ func TestIsolatedExecutionRunsInCommittedWorktree(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, statePath)
 	seen := make(chan Task, 1)
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
@@ -123,7 +123,7 @@ func TestIsolatedRetryReusesPreparedWorktree(t *testing.T) {
 	var mu sync.Mutex
 	var calls int
 	var workspaces []string
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		mu.Lock()
 		calls++
 		n := calls
@@ -172,7 +172,7 @@ func TestIsolatedExecutionRequiresRepository(t *testing.T) {
 	requireGit(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	called := make(chan struct{}, 1)
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		called <- struct{}{}
 		return nil
 	}))
@@ -214,7 +214,7 @@ func TestIsolatedSubdirectoryWorkspace(t *testing.T) {
 	testGit(t, repo, "commit", "-q", "-m", "subdirectory")
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	seen := make(chan Task, 1)
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
@@ -242,7 +242,7 @@ func TestIsolatedWorkspaceOwnershipMismatch(t *testing.T) {
 	repo := committedRepo(t)
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, statePath)
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		return errors.New("attempt failed")
 	}))
 	task, err := s.CreateTask("owner", "do work", repo)
@@ -276,7 +276,7 @@ func TestIsolatedWorkspaceRejectsSymlinkReservation(t *testing.T) {
 	repo := committedRepo(t)
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, statePath)
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		return errors.New("attempt failed")
 	}))
 	task, err := s.CreateTask("symlink", "do work", repo)
@@ -312,7 +312,7 @@ func TestIsolatedWorkspaceRejectsSymlinkReservation(t *testing.T) {
 func TestIsolatedWorkspaceIsCleanedUpWithTaskDeletion(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	task, err := s.CreateTask("delete", "do work", repo)
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +352,7 @@ func TestCanceledIsolatedWorkspaceIsRetainedUntilDeletion(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	started := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "canceled.txt"), []byte("partial work"), 0600); err != nil {
 			return err
 		}
@@ -390,7 +390,7 @@ func TestCanceledIsolatedWorkspaceIsRetainedUntilDeletion(t *testing.T) {
 func TestDeleteCompletedTasksCleansUpWorktrees(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	var tasks []Task
 	for _, title := range []string{"first", "second"} {
 		task, err := s.CreateTask(title, "do work", repo)
@@ -433,7 +433,7 @@ func TestIsolationToggleRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := make(chan struct{}, 1)
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
 		started <- struct{}{}
 		<-ctx.Done()
 		return ctx.Err()
@@ -485,7 +485,7 @@ func TestIsolationToggleRules(t *testing.T) {
 func TestPreparedIsolatedWorkspaceCannotBeToggled(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		return errors.New("attempt failed")
 	}))
 	task, err := s.CreateTask("prepared", "do work", repo)
@@ -514,7 +514,7 @@ func TestNewTasksDefaultToIsolationInCommittedRepository(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	seen := make(chan Task, 1)
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
@@ -549,7 +549,7 @@ func TestNewTasksUseSharedWorkspaceWhenIsolationIsUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	seen := make(chan Task, 1)
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
@@ -577,7 +577,7 @@ func TestDefaultIsolationCanBeDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := make(chan Task, 1)
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))

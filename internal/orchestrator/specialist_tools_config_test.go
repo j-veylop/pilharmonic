@@ -46,7 +46,7 @@ func TestLoadSpecialistToolsRejectsInvalidConfigsWithoutMutation(t *testing.T) {
 		`{"reviewer":["read","read"]}`,
 		`{"reviewer":[]}`,
 		`{"reviewer":["unknown"]}`,
-		`{"pi":["read"]}`,
+		`{"general":["read"]}`,
 		`{"reviewer":["read"]} {}`,
 		`[]`,
 	} {

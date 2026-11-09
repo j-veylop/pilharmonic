@@ -58,7 +58,7 @@ Every launch registers six Pi specialists from `internal/orchestrator/specialist
 
 The router matches the opening action of the mandate. For example, “review the diff”
 selects `reviewer`, “add tests for parsing” selects `tester`, and “add a parser”
-selects `implementer`. Unmatched requests use `pi`. The executor appears on the
+selects `implementer`. Unmatched requests use `general`. The executor appears on the
 task board and in task details. Drafts allow a manual override before starting.
 
 Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
@@ -66,9 +66,9 @@ instructions. They are embedded at build time. Run `./orchestrator` from this di
 [provided configuration](profiles.json). Startup reads `profiles.json` from
 the current directory if present. Use `-profiles PATH` to select another file. It selects Astra for the default
 profile and DeepSeek Flash for the explorer, implementer and tester. To
-coordinate a task with Astra, create a draft and select `pi` with **A**.
+coordinate a task with Astra, create a draft and select `general` with **A**.
 The bundled profile includes `coordinator_instructions` asking a top-level
-`pi` task to delegate repository work and summarize the results. These
+`general` task to delegate repository work and summarize the results. These
 instructions apply when delegation is enabled and the task can use bash.
 Child tasks appear beneath their parent on the board, labeled by specialist.
 Task details show the execution profile and the model requested for the latest

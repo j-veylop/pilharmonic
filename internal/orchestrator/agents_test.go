@@ -46,7 +46,7 @@ func TestAgentConfigurationAndSelection(t *testing.T) {
 	if !strings.Contains(got.Output, "literal $(touch forbidden)") || got.Attempts[0].Agent != "echo" {
 		t.Fatalf("bad run: %+v", got)
 	}
-	if err := s.SetTaskAgent(task.ID, "pi"); err == nil {
+	if err := s.SetTaskAgent(task.ID, "general"); err == nil {
 		t.Fatal("changed terminal task")
 	}
 	restored, err := Open(path)
@@ -59,7 +59,7 @@ func TestAgentConfigurationAndSelection(t *testing.T) {
 	}
 }
 func TestAgentConfigAtomicValidation(t *testing.T) {
-	for _, text := range []string{`{"agents":[{"name":"pi","command":"cat"}]}`, `{"agents":[{"name":"x","command":"cat"},{"name":"x","command":"cat"}]}`, `{"agents":[{"name":"x","command":"cat"},{"name":"y","command":"/missing-agent-command"}]}`, `{"agents":[{"name":"x","command":"cat","unknown":true}]}`, `{"agents":[]} {}`} {
+	for _, text := range []string{`{"agents":[{"name":"general","command":"cat"}]}`, `{"agents":[{"name":"x","command":"cat"},{"name":"x","command":"cat"}]}`, `{"agents":[{"name":"x","command":"cat"},{"name":"y","command":"/missing-agent-command"}]}`, `{"agents":[{"name":"x","command":"cat","unknown":true}]}`, `{"agents":[]} {}`} {
 		s, _ := Open(filepath.Join(t.TempDir(), "state.json"))
 		if err := s.LoadAgents(writeAgentConfig(t, text)); err == nil {
 			t.Fatalf("accepted %s", text)
@@ -85,9 +85,9 @@ func TestAgentCapabilityRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pi := s.ListAgents()
-	if len(pi) != 1 || pi[0].Name != "pi" || !pi[0].Capabilities.LiveContext || !pi[0].Capabilities.ToolActivity || !pi[0].Capabilities.StructuredReports {
-		t.Fatalf("bad Pi capabilities: %+v", pi)
+	agents := s.ListAgents()
+	if len(agents) != 1 || agents[0].Name != "general" || !agents[0].Capabilities.LiveContext || !agents[0].Capabilities.ToolActivity || !agents[0].Capabilities.StructuredReports {
+		t.Fatalf("bad general capabilities: %+v", agents)
 	}
 	s.RegisterRunner("echo", CommandRunner{Command: "cat"})
 	for _, agent := range s.ListAgents() {
@@ -137,7 +137,7 @@ func TestSpecialistSelectionAndModel(t *testing.T) {
 	for request, want := range map[string]string{
 		"Please add tests for the parser": "tester", "add a parser": "implementer",
 		"Review the diff": "reviewer", "Trace the call": "explorer", "Diagnose the timeout": "debugger",
-		"Rebase the branch": "gitter", "Something unexpected happened": "pi",
+		"Rebase the branch": "gitter", "Something unexpected happened": "general",
 	} {
 		task, err := s.CreateTask("draft", request, t.TempDir())
 		if err != nil || task.Agent != want {

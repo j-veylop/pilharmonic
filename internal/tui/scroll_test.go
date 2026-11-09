@@ -93,7 +93,7 @@ func TestScrollPositionSurvivesNewOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := streamingRunner{make(chan struct{}), make(chan struct{}), make(chan struct{})}
-	s.RegisterRunner("pi", r)
+	s.RegisterRunner("general", r)
 	task, err := s.CreateTask("task", "mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)

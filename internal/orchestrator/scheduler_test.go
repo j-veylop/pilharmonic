@@ -22,7 +22,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	}
 	entered := make(chan struct{}, 2)
 	unblock := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
 		entered <- struct{}{}
 		select {
 		case <-unblock:
@@ -80,7 +80,7 @@ func TestScheduledRequestSurvivesShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	entered := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(entered); <-ctx.Done(); return ctx.Err() }))
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(entered); <-ctx.Done(); return ctx.Err() }))
 	first, _ := s.CreateTask("first", "one", t.TempDir())
 	second, _ := s.CreateTask("second", "two", t.TempDir())
 	if err := s.Start(context.Background(), first.ID); err != nil {
@@ -101,7 +101,7 @@ func TestScheduledRequestSurvivesShutdown(t *testing.T) {
 	if waiting.Status != Queued || !waiting.ScheduleRequested {
 		t.Fatalf("lost request: %+v", waiting)
 	}
-	reopened.RegisterRunner("pi", runnerFunc(func(_ context.Context, _ Task, _ io.Writer) error { return nil }))
+	reopened.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, _ io.Writer) error { return nil }))
 	if err := reopened.SetConcurrencyLimit(1); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestCancelScheduledRequest(t *testing.T) {
 			workspace := t.TempDir()
 			path := filepath.Join(workspace, "state.json")
 			s := openTestService(t, path)
-			s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
+			s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
 				<-ctx.Done()
 				return ctx.Err()
 			}))

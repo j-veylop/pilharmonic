@@ -6,7 +6,7 @@ intent and the forward-looking invariants are in `design.md` and
 `routing-spec.md`; where those documents describe future work, this one says so.
 
 The CLI opens on a deterministic router that accepts a local request, assigns
-a specialist or the fallback Pi executor and requests execution. The task board also supports manual drafts that
+a specialist or the fallback general executor and requests execution. The task board also supports manual drafts that
 wait for an explicit start. The service persists threads, tasks and attempts
 in one JSON file. The terminal UI reads snapshots from the service.
 
@@ -89,7 +89,7 @@ not decompose requests or evaluate them with a model.
    worktree before the attempt runs. The runner's working directory is the
    matching subdirectory of the worktree. Preparation failures fail the attempt
    and the source workspace is not modified.
-5. **Execution.** The runner is looked up by agent name (`pi` by default).
+5. **Execution.** The runner is looked up by agent name (`general` by default).
    `PiRunner` implements `LiveRunner`, so `RunLive` (`pi_rpc.go`) starts
    `pi --mode rpc --no-session` in the execution workspace. It sends one initial
    prompt containing the mandate plus any context under an explicit
@@ -347,7 +347,7 @@ rejection neither undoes a merge nor removes the retained worktree.
   structured tool activity.
 - The router is deterministic and creates one task per request. It does not
   interpret or decompose requests with a model. It
-  selects a registered specialist or falls back to Pi, applies the default workspace choice, and starts the task. Manual
+  selects a registered specialist or falls back to general, applies the default workspace choice, and starts the task. Manual
   drafts remain for other executors, per-task isolation changes and other
   pre-start changes.
 - Subagent delegation is bounded but not sandboxed: a child has the same host

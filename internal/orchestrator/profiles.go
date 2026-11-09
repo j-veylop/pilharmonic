@@ -38,7 +38,7 @@ type Profile struct {
 	Tools        []string `json:"tools,omitempty"`
 	Model        string   `json:"model,omitempty"`
 	Instructions string   `json:"instructions,omitempty"`
-	// CoordinatorInstructions guide top-level pi runs when shell delegation is available.
+	// CoordinatorInstructions guide top-level general runs when shell delegation is available.
 	CoordinatorInstructions string `json:"coordinator_instructions,omitempty"`
 	// NoIntegrate keeps a successful isolated attempt's changes out of the
 	// source checkout. The worktree is retained for the operator.

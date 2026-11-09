@@ -18,7 +18,7 @@ func TestDiscardWorktreeConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", reviewChangeRunner{})
+	s.RegisterRunner("general", reviewChangeRunner{})
 	done := startIsolatedReviewTask(t, s, repo, "discard")
 
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
@@ -52,7 +52,7 @@ func TestDiscardAllMergedWorktreesConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", reviewChangeRunner{})
+	s.RegisterRunner("general", reviewChangeRunner{})
 	first := startIsolatedReviewTask(t, s, repo, "first")
 	second := startIsolatedReviewTask(t, s, repo, "second")
 

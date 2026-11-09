@@ -17,7 +17,7 @@ func TestIsolatedCompletionAutoMergesChanges(t *testing.T) {
 	repo := committedRepo(t)
 	head := testGit(t, repo, "rev-parse", "HEAD")
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "artifact.txt"), []byte("from worktree\n"), 0600); err != nil {
 			return err
 		}
@@ -62,7 +62,7 @@ func TestIsolatedCompletionAutoMergesChanges(t *testing.T) {
 func TestFailedIsolatedAttemptIsNotMerged(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "failed.txt"), []byte("do not merge"), 0600); err != nil {
 			return err
 		}
@@ -91,7 +91,7 @@ func TestIsolatedCompletionWithoutChangesIsUpToDate(t *testing.T) {
 	repo := committedRepo(t)
 	head := testGit(t, repo, "rev-parse", "HEAD")
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	task, err := s.CreateTask("noop", "do nothing", repo)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestIsolatedCompletionWithoutChangesIsUpToDate(t *testing.T) {
 func TestIsolatedMergeConflictIsRecordedAndAborted(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("worktree change\n"), 0600); err != nil {
 			return err
 		}
@@ -172,7 +172,7 @@ func TestConcurrentIsolatedCompletionsMergeSerially(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	var mu sync.Mutex
 	seen := map[string]bool{}
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		mu.Lock()
 		seen[task.ID] = true
 		mu.Unlock()
@@ -212,7 +212,7 @@ func TestCanceledIsolatedAttemptIsNotMerged(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	started := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "canceled.txt"), []byte("do not merge"), 0600); err != nil {
 			return err
 		}
@@ -252,7 +252,7 @@ func TestMergeBlockedByDirtySourceExplainsAndRetries(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		started <- struct{}{}
 		<-release
 		return os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("worktree change\n"), 0600)

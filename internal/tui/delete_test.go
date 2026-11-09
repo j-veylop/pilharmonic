@@ -70,7 +70,7 @@ func TestDeleteCompletedConfirmationAndAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", finishedRunner{})
+	s.RegisterRunner("general", finishedRunner{})
 	done, err := s.CreateTask("done", "completed work", dir)
 	if err != nil {
 		t.Fatal(err)

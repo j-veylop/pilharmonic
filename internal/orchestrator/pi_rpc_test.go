@@ -75,7 +75,7 @@ func TestLiveContextRecordedAndAcknowledged(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := liveTestRunner{make(chan struct{}), make(chan Trigger, 1), make(chan struct{})}
-	s.RegisterRunner("pi", runner)
+	s.RegisterRunner("general", runner)
 	task, err := s.CreateTask("work", "original", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestUnacknowledgedContextBecomesUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := unackedRunner{make(chan struct{}), make(chan struct{})}
-	s.RegisterRunner("pi", r)
+	s.RegisterRunner("general", r)
 	task, err := s.CreateTask("work", "mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ while read line; do :; done
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.RegisterRunner("pi", PiRunner{Command: fakePi(t, script)})
+	s.RegisterRunner("general", PiRunner{Command: fakePi(t, script)})
 	task, err := s.CreateTask("test", "work", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ while read line; do :; done
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.RegisterRunner("pi", PiRunner{Command: fakePi(t, script)})
+	s.RegisterRunner("general", PiRunner{Command: fakePi(t, script)})
 	task, err := s.CreateTask("work", "mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)

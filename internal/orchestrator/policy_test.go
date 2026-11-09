@@ -27,7 +27,7 @@ func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		_, err := io.WriteString(out, "done")
 		return err
 	}))

@@ -32,7 +32,7 @@ func BenchmarkStreamingPersistence(b *testing.B) {
 					Attempts: []Attempt{{ID: id, Status: Completed, Output: output}}})
 			}
 			ready := make(chan io.Writer, 1)
-			s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, w io.Writer) error {
+			s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, w io.Writer) error {
 				ready <- w
 				<-ctx.Done()
 				return ctx.Err()

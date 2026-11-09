@@ -41,7 +41,7 @@ func changeRunner(_ context.Context, task Task, _ io.Writer) error {
 func TestDiscardWorktreeRemovesMergedWorktreeOnly(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(changeRunner))
+	s.RegisterRunner("general", runnerFunc(changeRunner))
 	done := mergedIsolatedTask(t, s, repo, "discard")
 	tree := done.ExecutionWorkspace
 	reservation := filepath.Dir(tree)
@@ -89,7 +89,7 @@ func TestDiscardWorktreeRemovesMergedWorktreeOnly(t *testing.T) {
 func TestDiscardWorktreeRefusesDirtyWorktree(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(changeRunner))
+	s.RegisterRunner("general", runnerFunc(changeRunner))
 	done := mergedIsolatedTask(t, s, repo, "dirty")
 	file := filepath.Join(done.ExecutionWorkspace, "local.txt")
 	if err := os.WriteFile(file, []byte("not committed\n"), 0600); err != nil {
@@ -122,7 +122,7 @@ func TestDiscardWorktreeRefusesDirtyWorktree(t *testing.T) {
 func TestDiscardWorktreeRefusesUnmergedWorktree(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := changeRunner(context.Background(), task, io.Discard); err != nil {
 			return err
 		}
@@ -157,7 +157,7 @@ func TestDiscardWorktreeRefusesRunningTask(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		started <- struct{}{}
 		<-release
 		return changeRunner(context.Background(), task, io.Discard)
@@ -187,7 +187,7 @@ func TestDiscardWorktreeRefusesRunningTask(t *testing.T) {
 func TestDiscardMergedWorktreesSkipsRefusedWorktrees(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(changeRunner))
+	s.RegisterRunner("general", runnerFunc(changeRunner))
 	first := mergedIsolatedTask(t, s, repo, "first")
 	second := mergedIsolatedTask(t, s, repo, "second")
 	dirty := filepath.Join(first.ExecutionWorkspace, "local.txt")
@@ -224,7 +224,7 @@ func TestDiscardMergedWorktreesSkipsRefusedWorktrees(t *testing.T) {
 func TestDeleteTaskRemovesRetainedWorktree(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(changeRunner))
+	s.RegisterRunner("general", runnerFunc(changeRunner))
 	done := mergedIsolatedTask(t, s, repo, "delete")
 	if err := s.DeleteTask(done.ID); err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestRecoverInterruptedDiscard(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "state.json")
 			s := openTestService(t, path)
 			repo := committedRepo(t)
-			s.RegisterRunner("pi", runnerFunc(changeRunner))
+			s.RegisterRunner("general", runnerFunc(changeRunner))
 			task := mergedIsolatedTask(t, s, repo, "recover")
 			s.mu.Lock()
 			s.data.Tasks[0].DiscardPending = true
@@ -293,7 +293,7 @@ func TestRecoverInterruptedDiscard(t *testing.T) {
 func TestDiscardIntentSaveFailurePreservesWorktree(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, path)
-	s.RegisterRunner("pi", runnerFunc(changeRunner))
+	s.RegisterRunner("general", runnerFunc(changeRunner))
 	task := mergedIsolatedTask(t, s, committedRepo(t), "intent")
 	// Saving over a directory fails before the destructive Git operation.
 	s.mu.Lock()
@@ -318,7 +318,7 @@ func TestDiscardIntentSaveFailurePreservesWorktree(t *testing.T) {
 func TestDiscardFinalSaveCanRetry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, path)
-	s.RegisterRunner("pi", runnerFunc(changeRunner))
+	s.RegisterRunner("general", runnerFunc(changeRunner))
 	task := mergedIsolatedTask(t, s, committedRepo(t), "final save")
 	s.mergeMu.Lock()
 	unlock := sync.OnceFunc(s.mergeMu.Unlock)

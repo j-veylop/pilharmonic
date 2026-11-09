@@ -19,7 +19,7 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 	defer s.Shutdown()
 	started := make(chan Task, 2)
 	release := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
 		started <- task
 		if task.ParentID == "" {
 			<-release
@@ -115,7 +115,7 @@ func TestSpawnSubagentRequiresRunningParentAndHonorsLimits(t *testing.T) {
 	defer s.Shutdown()
 	started := make(chan Task, 4)
 	release := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		started <- task
 		select {
 		case <-release:
@@ -164,7 +164,7 @@ func TestSubagentControlRoundTripAndCredentials(t *testing.T) {
 	}
 	defer s.Shutdown()
 	release := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
 		if task.ParentID == "" {
 			select {
 			case <-release:
@@ -290,7 +290,7 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := make(chan Task, 1)
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))

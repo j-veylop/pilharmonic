@@ -25,7 +25,7 @@ func TestRouterRoutesRequestAndReturnsToBoard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", routerRunner{})
+	s.RegisterRunner("general", routerRunner{})
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), router: true, width: 120, height: 35}
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("write tests")})
 	if !strings.Contains(ansi.Strip(m.View()), "write tests") {
@@ -110,9 +110,9 @@ func TestRouterEmptyState(t *testing.T) {
 func TestRouterFitsTerminal(t *testing.T) {
 	now := time.Now()
 	m := model{router: true, width: 120, height: 35, tasks: []orchestrator.Task{
-		{ID: "blocked", Title: "blocked task with a long title that may wrap", Status: orchestrator.Queued, Agent: "pi", CreatedAt: now, Reports: []orchestrator.Report{{Kind: "blocked", Message: "need input", CreatedAt: now}}},
-		{ID: "review", Title: "finished task", Status: orchestrator.Completed, Agent: "pi", CreatedAt: now.Add(-time.Minute)},
-		{ID: "running", Title: "running task", Status: orchestrator.Running, Agent: "pi", CreatedAt: now.Add(-2 * time.Minute)},
+		{ID: "blocked", Title: "blocked task with a long title that may wrap", Status: orchestrator.Queued, Agent: "general", CreatedAt: now, Reports: []orchestrator.Report{{Kind: "blocked", Message: "need input", CreatedAt: now}}},
+		{ID: "review", Title: "finished task", Status: orchestrator.Completed, Agent: "general", CreatedAt: now.Add(-time.Minute)},
+		{ID: "running", Title: "running task", Status: orchestrator.Running, Agent: "general", CreatedAt: now.Add(-2 * time.Minute)},
 	}}
 	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 10}} {
 		m.width, m.height = size[0], size[1]

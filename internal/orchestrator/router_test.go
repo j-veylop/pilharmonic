@@ -16,7 +16,7 @@ func TestSubmitRequestAcceptsAssignsAndStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		_, err := io.WriteString(out, "done")
 		return err
 	}))
@@ -66,7 +66,7 @@ func TestSubmitRequestSchedulesAtCapacity(t *testing.T) {
 	}
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
 		started <- struct{}{}
 		select {
 		case <-release:
@@ -135,7 +135,7 @@ func TestSubmitRequestDefaultsToIsolatedWorktree(t *testing.T) {
 	}
 	defer s.Shutdown()
 	seen := make(chan Task, 1)
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))

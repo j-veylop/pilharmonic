@@ -17,31 +17,31 @@ func TestTaskMakesChangesClassification(t *testing.T) {
 		want   bool
 	}{
 		{"inspect role", "review the parser", "reviewer", false},
-		{"inspect fallback", "review the parser", "pi", false},
+		{"inspect fallback", "review the parser", "general", false},
 		{"read fallback", "read the configuration", "custom", false},
-		{"inspect command", "inspect the logs", "pi", false},
-		{"investigate command", "investigate the failure", "pi", false},
-		{"explain fix", "show me how to fix the parser", "pi", false},
+		{"inspect command", "inspect the logs", "general", false},
+		{"investigate command", "investigate the failure", "general", false},
+		{"explain fix", "show me how to fix the parser", "general", false},
 		{"inspect existing fix", "review the recent fix", "reviewer", false},
-		{"inspect then edit", "inspect the parser and remove dead code", "pi", true},
+		{"inspect then edit", "inspect the parser and remove dead code", "general", true},
 		{"review then make faster", "review the parser and make it faster", "reviewer", true},
 		{"explore role", "explain the parser", "explorer", false},
 		{"explain command", "explain how to run gofmt", "explorer", false},
-		{"question command", "what does the parser do", "pi", false},
-		{"question mutation", "what is wrong? fix the parser", "pi", true},
+		{"question command", "what does the parser do", "general", false},
+		{"question mutation", "what is wrong? fix the parser", "general", true},
 		{"debug role", "debug the failure", "debugger", false},
 		{"read-only git role", "git status", "gitter", false},
 		{"run tests role", "run the tests", "tester", false},
-		{"run test suite", "run the test suite", "pi", false},
+		{"run test suite", "run the test suite", "general", false},
 		{"run a test", "run a test for the parser", "tester", false},
-		{"cleanup request", "cleanup the temporary files", "pi", true},
+		{"cleanup request", "cleanup the temporary files", "general", true},
 		{"implement role", "fix the parser", "implementer", true},
-		{"general role", "do work", "pi", true},
+		{"general role", "do work", "general", true},
 		{"unknown role inspection", "review the parser", "custom", false},
 		{"unknown role change", "do work", "custom", true},
 		{"review then edit", "review the parser and fix the bug", "reviewer", true},
 		{"review then improve", "review the parser and improve tests", "reviewer", true},
-		{"verify request", "verify the parser", "pi", false},
+		{"verify request", "verify the parser", "general", false},
 		{"polite edit", "Can you add regression tests", "tester", true},
 		{"punctuated edit", "review the code; update the docs", "reviewer", true},
 		{"newline edit", "review the code\nupdate the docs", "reviewer", true},
@@ -50,7 +50,7 @@ func TestTaskMakesChangesClassification(t *testing.T) {
 		{"git push", "git push the branch", "gitter", true},
 		{"git worktree list", "git worktree list", "gitter", false},
 		{"git worktree mutation", "git worktree add ../review-tree", "gitter", true},
-		{"check out mutation", "check out a new branch", "pi", true},
+		{"check out mutation", "check out a new branch", "general", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,7 +123,7 @@ func TestInspectionRequestWithFallbackExecutorUsesSharedWorkspace(t *testing.T) 
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, statePath)
 	seen := make(chan Task, 1)
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))

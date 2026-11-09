@@ -119,7 +119,7 @@ func TestReviewStatePersistsAcrossReopen(t *testing.T) {
 
 func TestStartClearsReviewDecision(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	task, err := s.CreateTask("start", "do work", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestStartClearsReviewDecision(t *testing.T) {
 
 func TestRetryClearsReviewDecision(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		return errors.New("attempt failed")
 	}))
 	task, err := s.CreateTask("retry", "do work", t.TempDir())
@@ -179,7 +179,7 @@ func assertReviewCleared(t *testing.T, s *Service, id string) {
 func TestIsolatedCompletionOpensReview(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		return os.WriteFile(filepath.Join(task.Workspace, "reviewed.txt"), []byte("work\n"), 0600)
 	}))
 	task, err := s.CreateTask("review", "prepare work", repo)
@@ -213,7 +213,7 @@ func TestIsolatedCompletionOpensReview(t *testing.T) {
 func TestCompletionWithoutNewWorkSkipsReview(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	task, err := s.CreateTask("noop", "do nothing", repo)
 	if err != nil {
 		t.Fatal(err)
@@ -235,7 +235,7 @@ func TestCompletionWithoutNewWorkSkipsReview(t *testing.T) {
 
 func TestSharedCompletionSkipsReview(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	task, err := s.CreateTask("shared", "do work", t.TempDir())
 	if err != nil {
 		t.Fatal(err)

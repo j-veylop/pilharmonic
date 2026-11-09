@@ -76,7 +76,7 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 	defer s.Shutdown()
 	release := make(chan struct{})
 	writers := make(chan outputWriter, 1)
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
 		writers <- out.(outputWriter)
 		select {
 		case <-release:
@@ -115,7 +115,7 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 	if _, err = s.FollowUp(task.ID, "follow-up"); err != nil {
 		t.Fatal(err)
 	}
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
 		writers <- out.(outputWriter)
 		<-ctx.Done()
 		return ctx.Err()

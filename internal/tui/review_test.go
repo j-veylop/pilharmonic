@@ -88,7 +88,7 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", reviewChangeRunner{})
+	s.RegisterRunner("general", reviewChangeRunner{})
 
 	approved := startIsolatedReviewTask(t, s, repo, "approve")
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
@@ -131,7 +131,7 @@ func TestReviewKeysRefuseStaleCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", reviewChangeRunner{})
+	s.RegisterRunner("general", reviewChangeRunner{})
 	task := startIsolatedReviewTask(t, s, repo, "updated review")
 	for _, key := range []string{"v", "V"} {
 		m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}

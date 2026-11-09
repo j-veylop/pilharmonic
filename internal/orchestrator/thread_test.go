@@ -76,7 +76,7 @@ func TestThreadFanoutUnavailableRunnerAndRollback(t *testing.T) {
 	first, _ := s.CreateTask("one", "first", workspace)
 	second, _ := s.CreateRelatedTask(first.ID, "two", "second", workspace)
 	started := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
 	if err := s.Start(context.Background(), first.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestThreadFanoutRunningDelivery(t *testing.T) {
 	first, _ := s.CreateTask("one", "first", t.TempDir())
 	started := make(chan struct{})
 	received := make(chan Trigger, 1)
-	s.RegisterRunner("pi", testThreadRunner{started: started, received: received})
+	s.RegisterRunner("general", testThreadRunner{started: started, received: received})
 	if err := s.Start(context.Background(), first.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestFollowUpRunningTaskUsesLiveContext(t *testing.T) {
 	}
 	started := make(chan struct{})
 	received := make(chan Trigger, 1)
-	s.RegisterRunner("pi", testThreadRunner{started: started, received: received})
+	s.RegisterRunner("general", testThreadRunner{started: started, received: received})
 	if err := s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestFollowUpRequeuesTerminalTaskWithoutChangingMandate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Shutdown()
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	task, err := s.CreateTask("work", "original mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)

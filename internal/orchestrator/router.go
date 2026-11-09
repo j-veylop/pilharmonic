@@ -14,7 +14,7 @@ import (
 const LocalPolicyVersion = "local-1"
 
 // DefaultRouteAgent is the executor assigned by the local routing policy.
-const DefaultRouteAgent = "pi"
+const DefaultRouteAgent = "general"
 
 // routingProfile returns the profile name the local router assigns.
 func (s *Service) routingProfile() (string, error) {

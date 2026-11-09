@@ -34,7 +34,7 @@ func TestRouteRunAndReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
 		_, err := io.WriteString(out, "work done")
 		return err
 	}))
@@ -68,7 +68,7 @@ func TestCancelAndRecovery(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s, _ := Open(path)
 	started := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
 	task, err := s.CreateTask("x", "y", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestCancelAndRecovery(t *testing.T) {
 
 func TestLegacyRunningTaskMigrationThenRecovery(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	fixture := `{"tasks":[{"id":"legacy-task","title":"old task","prompt":"old mandate","workspace":"/workspace","status":"running","agent":"pi","created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:06Z","events":[{"time":"2026-01-02T03:04:06Z","kind":"started","message":"Started"}]}]}`
+	fixture := `{"tasks":[{"id":"legacy-task","title":"old task","prompt":"old mandate","workspace":"/workspace","status":"running","agent":"general","created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:06Z","events":[{"time":"2026-01-02T03:04:06Z","kind":"started","message":"Started"}]}]}`
 	if err := os.WriteFile(path, []byte(fixture), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestValidationAndFailure(t *testing.T) {
 	if _, err := s.CreateTask("x", "y", filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("missing workspace accepted")
 	}
-	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return errors.New("runner failed") }))
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return errors.New("runner failed") }))
 	task, _ := s.CreateTask("x", "y", t.TempDir())
 	if err := s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestValidationAndFailure(t *testing.T) {
 func TestShutdownCancelsAndWaits(t *testing.T) {
 	s, _ := Open(filepath.Join(t.TempDir(), "state.json"))
 	started := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
 	task, _ := s.CreateTask("x", "y", t.TempDir())
 	if err := s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestContextRoutingAndPersistence(t *testing.T) {
 		t.Fatalf("bad thread: %+v", restored.data.Threads)
 	}
 	received := make(chan Task, 1)
-	restored.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error { received <- task; return nil }))
+	restored.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error { received <- task; return nil }))
 	if err := restored.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestRetryPreservesAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs := 0
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		runs++
 		if runs == 1 {
 			io.WriteString(out, "first attempt")

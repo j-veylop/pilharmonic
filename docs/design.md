@@ -134,7 +134,7 @@ settings and resuming queued work. The Pi adapter passes the specialist model,
 or the task profile model when omitted, on each execution. The attempt records
 that selector independently of the inherited profile name.
 
-A profile can supply coordinator instructions for the top-level Pi task. The
+A profile can supply coordinator instructions for the top-level general task. The
 scheduler adds them to its delegation guidance when the attempt has delegation
 credentials and shell access. Specialist and child prompts omit this guidance
 for the coordinator role. The model decides when to call the helper.

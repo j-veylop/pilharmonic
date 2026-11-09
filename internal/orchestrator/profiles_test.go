@@ -140,7 +140,7 @@ func TestRelatedTaskRunsWithAcceptedProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := make(chan Task, 1)
-	s.RegisterRunner("pi", supportingRunner{runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", supportingRunner{runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		run <- task
 		return nil
 	})})
@@ -194,7 +194,7 @@ func TestProfileAdapterSupportIsEnforced(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := validateProfileForRunner(PiRunner{}, Profile{Name: "explorer", Tools: []string{"read"}, Model: "provider/model"}); err != nil {
-		t.Fatalf("pi rejected a translatable profile: %v", err)
+		t.Fatalf("general executor rejected a translatable profile: %v", err)
 	}
 	if err := validateProfileForRunner(CommandRunner{Command: "cat"}, Profile{Name: "note", Instructions: "Be brief."}); err != nil {
 		t.Fatalf("command runner rejected trusted instructions: %v", err)
@@ -208,7 +208,7 @@ func TestProfileAdapterSupportIsEnforced(t *testing.T) {
 	if err = s.SetTaskAgent(task.ID, "cat"); err == nil {
 		t.Fatal("generic executor accepted a tool palette")
 	}
-	s.RegisterRunner("pi", CommandRunner{Command: "cat"})
+	s.RegisterRunner("general", CommandRunner{Command: "cat"})
 	if err = s.Start(context.Background(), task.ID); err == nil || !strings.Contains(err.Error(), "tool palette") {
 		t.Fatalf("start with an unsupported profile: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestQueuedTaskFailsWhenProfileBecomesUnsupported(t *testing.T) {
 		t.Fatal(err)
 	}
 	release := make(chan struct{})
-	s.RegisterRunner("pi", supportingRunner{runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
+	s.RegisterRunner("general", supportingRunner{runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
 		select {
 		case <-release:
 			return nil
@@ -257,7 +257,7 @@ func TestQueuedTaskFailsWhenProfileBecomesUnsupported(t *testing.T) {
 		t.Fatalf("second task was not queued: %+v", queued)
 	}
 	// The executor is replaced by one that cannot translate a tool palette.
-	s.RegisterRunner("pi", CommandRunner{Command: "cat"})
+	s.RegisterRunner("general", CommandRunner{Command: "cat"})
 	close(release)
 	await(t, s, first.ID, Completed)
 	failed := await(t, s, second.ID, Failed)
@@ -272,7 +272,7 @@ func TestNonIntegratingProfileRetainsWorktree(t *testing.T) {
 	if err := s.RegisterProfile(Profile{Name: "reviewer", Description: "Review only", NoIntegrate: true, NoSubagents: true}); err != nil {
 		t.Fatal(err)
 	}
-	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		return os.WriteFile(filepath.Join(task.Workspace, "review.txt"), []byte("reviewed\n"), 0600)
 	}))
 	task, err := s.CreateTaskWithProfile("review", "review the tree", repo, "reviewer")
@@ -322,7 +322,7 @@ func TestSubagentProfileInheritanceAndContainment(t *testing.T) {
 	}
 	started := make(chan Task, 8)
 	release := make(chan struct{})
-	s.RegisterRunner("pi", supportingRunner{runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", supportingRunner{runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		started <- task
 		select {
 		case <-release:
@@ -377,7 +377,7 @@ func TestNoSubagentsProfileWithholdsCredentials(t *testing.T) {
 	}
 	started := make(chan Task, 1)
 	release := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		started <- task
 		select {
 		case <-release:

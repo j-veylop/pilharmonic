@@ -62,7 +62,7 @@ func TestDeleteRefusesRunningAndRollsBackFailedSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
 	task, err := s.CreateTask("a", "prompt", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestDeleteRefusesParentWithSubagents(t *testing.T) {
 	}
 	defer s.Shutdown()
 	started := make(chan struct{}, 2)
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		started <- struct{}{}
 		if task.ParentID == "" {
 			<-ctx.Done()

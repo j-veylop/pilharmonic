@@ -22,7 +22,7 @@ func TestActivityPersistenceAndSnapshot(t *testing.T) {
 	defer s.Shutdown()
 	writers := make(chan outputWriter, 1)
 	finish := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
 		writers <- out.(outputWriter)
 		select {
 		case <-finish:

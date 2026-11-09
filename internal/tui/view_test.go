@@ -14,7 +14,7 @@ import (
 
 func TestViewFitsTerminal(t *testing.T) {
 	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 10}, {20, 5}} {
-		m := model{width: size[0], height: size[1], workspace: "/a/very/long/path", tasks: []orchestrator.Task{{ID: "123", Title: "A very long task title", Prompt: "the original task", Status: orchestrator.Running, Agent: "pi", Output: "working\nmore output"}}}
+		m := model{width: size[0], height: size[1], workspace: "/a/very/long/path", tasks: []orchestrator.Task{{ID: "123", Title: "A very long task title", Prompt: "the original task", Status: orchestrator.Running, Agent: "general", Output: "working\nmore output"}}}
 		for _, history := range []bool{false, true} {
 			m.history = history
 			view := m.View()
@@ -123,7 +123,7 @@ func TestPanelDoesNotRewrapViewportRows(t *testing.T) {
 }
 
 func TestDetailTabsOmitActivityTab(t *testing.T) {
-	task := orchestrator.Task{ID: "task", Title: "work", Prompt: "do work", Agent: "pi"}
+	task := orchestrator.Task{ID: "task", Title: "work", Prompt: "do work", Agent: "general"}
 	m := model{width: 120, height: 30, tasks: []orchestrator.Task{task}}
 	for _, activity := range []bool{false, true} {
 		m.activity = activity
@@ -172,7 +172,7 @@ func TestThinkingToggleChangesOutputAndKeepsLayoutBounded(t *testing.T) {
 
 func TestTextUsesNoBackgroundColour(t *testing.T) {
 	m := model{width: 120, height: 30, tasks: []orchestrator.Task{{
-		ID: "task", Title: "work", Prompt: "do work", Agent: "pi",
+		ID: "task", Title: "work", Prompt: "do work", Agent: "general",
 		Output: "`inline code`\n\n```\ncode block\n```\n",
 	}}}
 	views := []string{m.View()}

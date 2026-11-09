@@ -97,7 +97,7 @@ func (m model) activityContent(width int) []string {
 	if m.activityExpanded {
 		a, _, ok := m.selectedActivity()
 		if !ok {
-			add("This activity is no longer retained. Esc returns to the list.")
+			add("This call is no longer retained. Esc returns to the list.")
 			return lines
 		}
 		statusStyle, glyph := m.toolStatusStyle(a.Status)
@@ -115,9 +115,9 @@ func (m model) activityContent(width int) []string {
 		return lines
 	}
 	scope := []string{"all attempts", "latest attempt", "errors only"}[m.activityFilter]
-	add(mutedStyle.Render("j/k select · enter expand · v filter: " + scope))
+	add(mutedStyle.Render("Filter: " + scope + " (v)"))
 	if len(activities) == 0 {
-		add("No tool calls match this view. Press v to change the filter.")
+		add("No calls match. v changes the filter.")
 		return lines
 	}
 	selected, _, ok := m.selectedActivity()

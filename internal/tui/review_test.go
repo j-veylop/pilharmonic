@@ -139,7 +139,7 @@ func TestReviewKeysRequirePreparedWork(t *testing.T) {
 	for _, key := range []string{"v", "V"} {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 		m = next.(model)
-		if m.input || !strings.Contains(m.notice, "No prepared worktree commit") {
+		if m.input || !strings.Contains(m.notice, "No worktree commit") {
 			t.Fatalf("%s: input=%v notice=%q", key, m.input, m.notice)
 		}
 	}

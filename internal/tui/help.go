@@ -22,23 +22,23 @@ z              Expand details to full width
 Esc            Return / close expanded activity
 
 TASKS
-n              New task (manual draft)
-/              Open router: route new work
+n              New task draft
+/              Route new work
 a              Related task in selected thread
 b              Spawn subagent from running task
 A              Choose executor before scheduling
-w              Toggle Git worktree isolation (default on if possible)
-r / R          Start / requeue unsuccessful task
+w              Toggle worktree isolation (default on when possible)
+r / R          Start / requeue task
 v / V          Approve / reject prepared worktree commit
 c              Cancel task
-d              Delete inactive task and worktree (confirm y)
-D              Delete completed tasks and worktrees (confirm y)
+d              Delete inactive task + worktree (confirm y)
+D              Delete completed tasks + worktrees (confirm y)
 x              Discard selected merged worktree (confirm y)
 X              Discard all merged worktrees (confirm y)
 f              Send context to thread subscribers
 F              Follow up selected task
 s              Pause / resume thread subscription
-p              Report: kind followed by message
+p              Report: kind + message
                progress, waiting, blocked, ready, failed
 
 VIEWS & ACTIVITY
@@ -60,7 +60,7 @@ COMPOSERS & PICKERS
 Enter          Submit input / confirm agent
 Esc            Cancel input / close picker
 j / k          Select agent in picker
-Typing         Normal text in task/report input`
+Typing         Text in composers`
 
 var helpTopics = []string{"Navigation", "Tasks", "Activity", "General"}
 
@@ -124,7 +124,7 @@ func (m model) helpView(background string, w, h int) string {
 	for len(content) < mh-3 {
 		content = append(content, "")
 	}
-	content = append(content, accentStyle.Render("h/l tabs · j/k / wheel scroll · esc close"))
+	content = append(content, accentStyle.Render("h/l tabs · j/k scroll · esc close"))
 	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
 	bg := strings.Split(background, "\n")
 	box := strings.Split(modal, "\n")

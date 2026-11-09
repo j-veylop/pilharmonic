@@ -37,7 +37,7 @@ func TestDiscardWorktreeConfirmation(t *testing.T) {
 	if _, err = os.Stat(done.ExecutionWorkspace); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("confirmed discard left the worktree: %v", err)
 	}
-	if !strings.Contains(m.notice, "worktree discarded") {
+	if !strings.Contains(m.notice, "Worktree discarded") {
 		t.Fatalf("discard not acknowledged: %q", m.notice)
 	}
 	if _, ok := s.GetTask(done.ID); !ok {

@@ -54,7 +54,7 @@ func (m *model) clampRouter() {
 
 func routeState(task orchestrator.Task) string {
 	if task.Status == orchestrator.Queued && task.ScheduleRequested {
-		return "queued for capacity"
+		return "queued"
 	}
 	return string(task.Status)
 }
@@ -70,7 +70,7 @@ func routeWorkspace(task orchestrator.Task) string {
 }
 
 func routeNotice(task orchestrator.Task) string {
-	return "Routed to " + terminalText(task.Agent) + " · " + routeState(task) + " · " + routeWorkspace(task) + " · " + terminalText(task.Title)
+	return "Routed to " + terminalText(task.Agent) + " · " + routeState(task) + " · " + routeWorkspace(task) + " — " + terminalText(task.Title)
 }
 
 // routerKey handles the unified entry point. Typing goes to the composer; Tab
@@ -122,7 +122,7 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case tea.KeyEnter:
 		text := strings.TrimSpace(m.routerDraft)
 		if text == "" {
-			m.notice = "Describe the work before routing."
+			m.notice = "Enter a request first."
 			return m, nil
 		}
 		if m.service == nil {
@@ -163,23 +163,21 @@ func (m model) routerPanel(width, height int) string {
 	inner := max(1, width-4)
 	var lines []string
 	policy := lipgloss.NewStyle().Foreground(cyan).Bold(true).Render(orchestrator.LocalPolicyVersion)
-	lines = append(lines, accentStyle.Render("ROUTE WORK")+mutedStyle.Render("  ·  deterministic local policy ")+policy)
-	lines = append(lines, mutedStyle.Render("Describe the work once. The router assigns the executor, starts it, and surfaces what needs you."))
+	lines = append(lines, accentStyle.Render("ROUTE WORK")+mutedStyle.Render("  ·  policy ")+policy)
 	lines = append(lines, "")
 	lines = append(lines, fit(m.routerComposer(), inner, 1))
-	lines = append(lines, mutedStyle.Render("enter route · tab attention list · esc task board"))
 	lines = append(lines, "")
 	attention := m.attentionTasks()
 	lines = append(lines, accentStyle.Render(fmt.Sprintf("NEEDS ATTENTION  %02d", len(attention))))
 	if len(attention) == 0 {
-		lines = append(lines, mutedStyle.Render("Nothing needs you right now."))
+		lines = append(lines, mutedStyle.Render("Nothing needs attention."))
 	} else {
 		limit := min(len(attention), 8)
 		for i := 0; i < limit; i++ {
 			lines = append(lines, m.routerAttentionRow(attention[i], i, inner))
 		}
 		if len(attention) > limit {
-			lines = append(lines, mutedStyle.Render(fmt.Sprintf("+%d more in the task board", len(attention)-limit)))
+			lines = append(lines, mutedStyle.Render(fmt.Sprintf("+%d more", len(attention)-limit)))
 		}
 	}
 	lines = append(lines, "")
@@ -195,8 +193,6 @@ func (m model) routerPanel(width, height int) string {
 			lines = append(lines, mutedStyle.Render(fmt.Sprintf("+%d earlier", len(m.tasks)-limit)))
 		}
 	}
-	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render("Every trusted local request is accepted; the decision, assignment and start are recorded in task history."))
 	return panel(strings.Join(lines, "\n"), width, height)
 }
 
@@ -237,5 +233,5 @@ func (m model) routerRecentRow(task orchestrator.Task, width int) string {
 
 // routerFooterHint keeps the router footer in one place.
 func routerFooterHint() string {
-	return "type request · enter route · tab attention · esc tasks · ? help · ctrl+c quit"
+	return "enter route · tab attention · esc tasks · ? help · ctrl+c quit"
 }

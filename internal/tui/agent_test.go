@@ -67,7 +67,7 @@ func TestAgentPickerShowsCapabilities(t *testing.T) {
 		Capabilities: orchestrator.AgentCapabilities{LiveContext: true, ToolActivity: true, StructuredReports: true},
 	}}, width: 160, height: 30}
 	view := m.View()
-	for _, want := range []string{"live follow-up context", "tool activity", "structured reports"} {
+	for _, want := range []string{"Live follow-up context", "tool activity", "structured reports"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in agent picker: %s", want, view)
 		}

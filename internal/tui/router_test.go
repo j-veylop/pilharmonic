@@ -100,7 +100,7 @@ func TestRouterAttentionListOpensTask(t *testing.T) {
 func TestRouterEmptyState(t *testing.T) {
 	m := model{router: true, width: 100, height: 30}
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"ROUTE WORK", "Describe the work", "Nothing needs you right now.", "No requests yet."} {
+	for _, want := range []string{"ROUTE WORK", "Describe the work", "Nothing needs attention.", "No requests yet."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in %s", want, view)
 		}

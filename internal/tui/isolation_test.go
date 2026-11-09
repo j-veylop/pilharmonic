@@ -21,7 +21,7 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35}
-	if !strings.Contains(m.View(), "shared source workspace") {
+	if !strings.Contains(m.View(), "shared workspace") {
 		t.Fatal("initial workspace state not shown")
 	}
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("w")})
@@ -35,7 +35,7 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if !got.Isolated {
 		t.Fatal("isolation was not enabled")
 	}
-	if !strings.Contains(m.notice, "Isolation enabled") || !strings.Contains(m.View(), "isolated Git worktree requested") {
+	if !strings.Contains(m.notice, "Isolation enabled") || !strings.Contains(m.View(), "isolated worktree requested") {
 		t.Fatalf("isolation state not surfaced: notice=%q view=%s", m.notice, m.View())
 	}
 
@@ -50,7 +50,7 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if got.Isolated {
 		t.Fatal("isolation was not disabled")
 	}
-	if !strings.Contains(m.notice, "Isolation disabled") || !strings.Contains(m.View(), "shared source workspace") {
+	if !strings.Contains(m.notice, "Isolation off") || !strings.Contains(m.View(), "shared workspace") {
 		t.Fatalf("disabled state not surfaced: notice=%q view=%s", m.notice, m.View())
 	}
 }
@@ -62,7 +62,7 @@ func TestDetailShowsAutomaticMergeResult(t *testing.T) {
 		MergeStatus: orchestrator.MergeMerged, MergeCommit: "def456",
 	}}}
 	view := m.View()
-	for _, text := range []string{"merged into source", "def456"} {
+	for _, text := range []string{"Merge: merged", "def456"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("missing %q in view", text)
 		}

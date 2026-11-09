@@ -217,7 +217,7 @@ func (m model) taskPanel(width, height int) string {
 	lines = append(lines, accentStyle.Render("TASKS")+mutedStyle.Render(fmt.Sprintf("  / %02d", len(m.tasks))))
 	lines = append(lines, "")
 	if len(m.tasks) == 0 {
-		lines = append(lines, mutedStyle.Render("Nothing here yet."), mutedStyle.Render("Press n to create a task."))
+		lines = append(lines, mutedStyle.Render("No tasks yet."), mutedStyle.Render("n creates one."))
 	} else {
 		slots := (height - 4) / 2
 		if slots < 1 {
@@ -286,7 +286,7 @@ func (m model) detailContent(width int) []string {
 	add := func(s string) { lines = append(lines, strings.Split(ansi.Hardwrap(s, width, true), "\n")...) }
 	add(accentStyle.Render("MANDATE"))
 	add(terminalText(t.Prompt))
-	add(mutedStyle.Render("Agent: " + terminalText(t.Agent) + " (A to change before start)"))
+	add(mutedStyle.Render("Agent: " + terminalText(t.Agent) + " · A to change"))
 	if t.ParentID != "" {
 		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
 	}
@@ -294,8 +294,8 @@ func (m model) detailContent(width int) []string {
 	worktreeGlyph := lipgloss.NewStyle().Foreground(cyan).Render(glyphWorktree)
 	if t.Isolated {
 		if t.ExecutionWorkspace == "" {
-			add(accentStyle.Render(worktreeGlyph + " Workspace: isolated Git worktree requested (w to change)"))
-			add(mutedStyle.Render("Starts from committed HEAD; uncommitted files are not copied."))
+			add(accentStyle.Render(worktreeGlyph + " Workspace: isolated worktree requested (w to change)"))
+			add(mutedStyle.Render("Committed HEAD only; uncommitted files are excluded."))
 		} else {
 			add(accentStyle.Render(worktreeGlyph + " Execution: " + terminalText(t.ExecutionWorkspace)))
 			add(mutedStyle.Render("Isolated worktree · commit " + terminalText(t.IsolationCommit)))
@@ -303,14 +303,14 @@ func (m model) detailContent(width int) []string {
 	} else if t.ParentID != "" {
 		add(mutedStyle.Render(glyphInherited + " Execution: inherited from parent task"))
 	} else {
-		add(mutedStyle.Render(glyphShared + " Execution: shared source workspace (w to isolate before start)"))
+		add(mutedStyle.Render(glyphShared + " Execution: shared workspace (w to isolate before start)"))
 	}
 	badge := workspaceBadgeFor(t)
 	switch t.MergeStatus {
 	case orchestrator.MergeMerged:
-		add(lipgloss.NewStyle().Foreground(badge.color).Render(badge.glyph+" Merge: merged into source") + mutedStyle.Render(" · "+terminalText(t.MergeCommit)))
+		add(lipgloss.NewStyle().Foreground(badge.color).Render(badge.glyph+" Merge: merged") + mutedStyle.Render(" · commit "+terminalText(t.MergeCommit)))
 	case orchestrator.MergeUpToDate:
-		add(mutedStyle.Render(badge.glyph + " Merge: no isolated changes to merge"))
+		add(mutedStyle.Render(badge.glyph + " Merge: no changes to merge"))
 	case orchestrator.MergeFailed:
 		detail := "MERGE FAILED  "
 		if t.MergeConflict() {
@@ -346,7 +346,7 @@ func (m model) detailContent(width int) []string {
 		add(accentStyle.Render(strings.ToUpper(report.Kind)) + source + "  " + terminalText(report.Message))
 	}
 	if t.ContextPaused {
-		add(mutedStyle.Render("Thread context subscription paused (s to resume)"))
+		add(mutedStyle.Render("Context paused (s to resume)"))
 	}
 	if t.Error != "" {
 		add("")
@@ -356,7 +356,7 @@ func (m model) detailContent(width int) []string {
 		add("")
 		add(accentStyle.Render("HISTORY"))
 		if len(t.Context) > 0 {
-			add(accentStyle.Render("CONTEXT") + mutedStyle.Render("  current summary per input"))
+			add(accentStyle.Render("CONTEXT"))
 		}
 		for _, c := range t.Context {
 			delivery := c.Delivery
@@ -449,7 +449,7 @@ func (m model) detailPanel(width, height int) string {
 	}
 	inner := width - 4
 	if len(m.tasks) == 0 {
-		return panel(titleStyle.Render("TASK DETAILS")+"\n\n"+mutedStyle.Render("Select a task to inspect its progress."), width, height)
+		return panel(titleStyle.Render("TASK DETAILS")+"\n\n"+mutedStyle.Render("Select a task to view details."), width, height)
 	}
 	t := m.tasks[m.selected]
 	titleLine := titleStyle.Render(strings.ReplaceAll(terminalText(t.Title), "\n", " ")) + "  " + taskLabel(t)
@@ -484,16 +484,16 @@ func (m model) detailPanel(width, height int) string {
 }
 
 func (m model) footer(w int) string {
-	footerText := "n new · / route · r run · h/l focus · z expand · tab history · t activity · T thinking · ? help · q quit"
+	footerText := "n new · / route · r run · ? help · q quit"
 	switch {
 	case m.router:
 		footerText = routerFooterHint()
 	case m.activity:
-		footerText = "t output · j/k select · enter expand · esc collapse · wheel/^u/^d scroll · h tasks · ? help"
+		footerText = "t output · v filter · esc collapse · ? help · q quit"
 	case m.detailFocus || m.fullscreen:
-		footerText = "j/k scroll · ^u/^d page · gg/G · T thinking · h tasks · ? help · q quit"
+		footerText = "j/k scroll · T thinking · h tasks · ? help · q quit"
 	case w < 76:
-		footerText = "j/k tasks · l details · / route · z expand · ? help · q quit"
+		footerText = "j/k tasks · l details · / route · ? help · q quit"
 	}
 	var hints []string
 	for _, line := range strings.Split(footerText, "\n") {
@@ -509,16 +509,16 @@ func (m model) footer(w int) string {
 		footer = accentStyle.Render("› "+strings.ReplaceAll(terminalText(m.notice), "\n", " ")) + "\n" + footer
 	}
 	if m.deleteTaskID != "" {
-		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+strings.ReplaceAll(terminalText(m.deleteTaskTitle), "\n", " ")) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Removes its retained worktree; source workspace is kept.")
+		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+strings.ReplaceAll(terminalText(m.deleteTaskTitle), "\n", " ")) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Removes its worktree; source workspace is untouched.")
 	}
 	if m.deleteCompleted {
-		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", m.deleteCount)) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept. Retained worktrees are removed.")
+		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", m.deleteCount)) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept; worktrees are removed.")
 	}
 	if m.discardTaskID != "" {
-		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+strings.ReplaceAll(terminalText(m.discardTaskTitle), "\n", " ")) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Uncommitted or unmerged work is refused. Task history is kept.")
+		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+strings.ReplaceAll(terminalText(m.discardTaskTitle), "\n", " ")) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Refuses uncommitted or unmerged work; task history is kept.")
 	}
 	if m.discardMerged {
-		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", m.discardCount)) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Worktrees with uncommitted or unmerged work are kept. Task history is kept.")
+		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", m.discardCount)) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Skips uncommitted or unmerged work; task history is kept.")
 	}
 	if m.input {
 		label := "NEW TASK"
@@ -548,7 +548,7 @@ func (m model) footer(w int) string {
 }
 
 func (m model) agentPanel(width, height int) string {
-	lines := []string{titleStyle.Render("SELECT AGENT"), mutedStyle.Render("For this queued task only"), ""}
+	lines := []string{titleStyle.Render("SELECT AGENT"), mutedStyle.Render("Queued task only"), ""}
 	slots := max(1, (height-7)/2)
 	start := max(0, m.agentIndex-slots+1)
 	for i := start; i < len(m.agentChoices) && i < start+slots; i++ {
@@ -559,9 +559,9 @@ func (m model) agentPanel(width, height int) string {
 			prefix = ""
 			style = accentStyle
 		}
-		capability := "One-shot execution · no live context"
+		capability := "One-shot · no live context"
 		if agent.LiveContext {
-			capability = "Execution + live follow-up context"
+			capability = "Live follow-up context"
 		}
 		if agent.Capabilities.ToolActivity {
 			capability += " · tool activity"

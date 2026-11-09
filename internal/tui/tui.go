@@ -95,9 +95,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.notice = msg.err.Error()
 		} else if msg.enabled {
-			m.notice = "Isolation enabled: committed Git HEAD only; local uncommitted files are not copied."
+			m.notice = "Isolation enabled: starts from committed HEAD; uncommitted files are excluded."
 		} else {
-			m.notice = "Isolation disabled; task will run in its source workspace."
+			m.notice = "Isolation off: task uses the source workspace."
 		}
 		m.tasks = m.service.ListTasks()
 		m.clamp()
@@ -184,7 +184,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					m.notice = err.Error()
 				} else {
-					m.notice = "Task, history and retained worktree deleted."
+					m.notice = "Task deleted with history and worktree."
 				}
 				m.deleteTaskID, m.deleteTaskTitle = "", ""
 				m.tasks = m.service.ListTasks()
@@ -204,7 +204,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					m.notice = err.Error()
 				} else {
-					m.notice = "Retained worktree discarded; task history kept."
+					m.notice = "Worktree discarded; task history kept."
 				}
 				m.discardTaskID, m.discardTaskTitle = "", ""
 				m.tasks = m.service.ListTasks()
@@ -302,14 +302,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyEnter:
 				prompt := strings.TrimSpace(m.draft)
 				if prompt == "" {
-					m.notice = "Enter a task before submitting."
+					m.notice = "Enter a task first."
 					break
 				}
 				if m.reviewTask != "" {
 					if err := m.service.RejectReview(m.reviewTask, prompt); err != nil {
 						m.notice = err.Error()
 					} else {
-						m.notice = "Review rejected; the retained worktree was not changed."
+						m.notice = "Review rejected; worktree unchanged."
 					}
 					m.reviewTask = ""
 				} else if m.reportTask != "" {
@@ -326,7 +326,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if err != nil {
 						m.notice = err.Error()
 					} else {
-						m.notice = "Thread context recorded; see history for delivery status."
+						m.notice = "Context recorded; delivery status is in history."
 					}
 					m.contextTask = ""
 				} else if m.followUpTask != "" {
@@ -334,9 +334,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if err != nil {
 						m.notice = err.Error()
 					} else if requeued {
-						m.notice = "Follow-up recorded; task requeued. Press r to start it."
+						m.notice = "Follow-up recorded; requeued. Press r to start."
 					} else {
-						m.notice = "Follow-up recorded; see history for delivery status."
+						m.notice = "Follow-up recorded; delivery status is in history."
 					}
 					m.followUpTask = ""
 				} else if m.subagentTask != "" {
@@ -439,7 +439,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.tasks) > 0 {
 				task := m.tasks[m.selected]
 				if task.Status != orchestrator.Queued || task.ScheduleRequested {
-					m.notice = "Choose an agent before requesting a start."
+					m.notice = "Choose an agent before starting."
 				} else {
 					m.agentTask = task.ID
 					m.agentChoices = m.service.ListAgents()
@@ -471,11 +471,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.tasks) > 0 {
 				t := m.tasks[m.selected]
 				if t.Status != orchestrator.Running {
-					m.notice = "Subagents can only be spawned from a running task."
+					m.notice = "Spawn subagents only from a running task."
 				} else {
 					m.subagentTask = t.ID
 					m.input = true
-					m.notice = "Subagent: enter a self-contained mandate."
+					m.notice = "Enter a self-contained mandate for the subagent."
 				}
 			}
 		case "pgup":
@@ -503,9 +503,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input = true
 				m.notice = ""
 				if t.Status == orchestrator.Queued || t.Status == orchestrator.Running {
-					m.notice = "Follow up this task; context does not expand its mandate."
+					m.notice = "Context does not expand the mandate."
 				} else {
-					m.notice = "Follow up this task; it will be requeued and needs r to start."
+					m.notice = "Follow-up requeues the task; press r to start."
 				}
 			}
 		case "up", "k":
@@ -530,7 +530,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.tasks) > 0 {
 				m.reportTask = m.tasks[m.selected].ID
 				m.input = true
-				m.notice = "Report: progress, waiting, blocked, ready or failed, followed by a message"
+				m.notice = "Report: kind and message (progress, waiting, blocked, ready, failed)"
 			}
 		case "s":
 			if len(m.tasks) > 0 {
@@ -538,14 +538,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err := m.service.SetContextSubscription(t.ID, t.ContextPaused); err != nil {
 					m.notice = err.Error()
 				} else {
-					m.notice = "Thread subscription updated."
+					m.notice = "Context subscription updated."
 				}
 			}
 		case "w":
 			if len(m.tasks) > 0 && !m.isolationBusy {
 				t := m.tasks[m.selected]
 				if t.Status != orchestrator.Queued || t.ScheduleRequested {
-					m.notice = "Choose workspace isolation before requesting a start."
+					m.notice = "Choose isolation before starting."
 				} else {
 					m.isolationBusy = true
 					m.notice = "Checking workspace isolation…"
@@ -558,7 +558,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					m.notice = err.Error()
 				} else {
-					m.notice = "Execution requested; waiting tasks start when capacity is available."
+					m.notice = "Execution requested; queued tasks start when capacity frees."
 				}
 			}
 		case "R":
@@ -574,7 +574,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.tasks) > 0 {
 				t := m.tasks[m.selected]
 				if !t.AwaitingReview() {
-					m.notice = "No prepared worktree commit is awaiting review."
+					m.notice = "No worktree commit awaits review."
 				} else if err := m.service.ApproveReview(t.ID, ""); err != nil {
 					m.notice = err.Error()
 				} else {
@@ -585,18 +585,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.tasks) > 0 {
 				t := m.tasks[m.selected]
 				if !t.AwaitingReview() {
-					m.notice = "No prepared worktree commit is awaiting review."
+					m.notice = "No worktree commit awaits review."
 				} else {
 					m.reviewTask = t.ID
 					m.input = true
-					m.notice = "Reject review: enter a reason."
+					m.notice = "Enter a reason to reject the review."
 				}
 			}
 		case "d":
 			if len(m.tasks) > 0 {
 				task := m.tasks[m.selected]
 				if task.Status == orchestrator.Running {
-					m.notice = "Cancel the running task and wait before deleting."
+					m.notice = "Cancel and stop the running task before deleting."
 				} else {
 					m.deleteTaskID, m.deleteTaskTitle = task.ID, task.Title
 					m.notice = ""
@@ -616,7 +616,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !task.Isolated || task.ExecutionWorkspace == "" {
 					m.notice = "Selected task has no retained worktree."
 				} else if task.Status == orchestrator.Running {
-					m.notice = "Cancel the running task and wait before discarding its worktree."
+					m.notice = "Cancel and stop the running task before discarding its worktree."
 				} else {
 					m.discardTaskID, m.discardTaskTitle = task.ID, task.Title
 					m.notice = ""

@@ -15,6 +15,22 @@ import (
 // PiRunner translates Pi's JSON event stream into readable live output.
 type PiRunner struct{ Command string }
 
+// Pi's default tool palette contains read, bash, edit and write but not the
+// dedicated grep, find and ls tools. While those are absent, Pi's generated
+// system prompt tells the model to use bash for file operations, and delegated
+// tasks drift into shell commands for reading, searching and editing files.
+// Request the full file-tool set and state the intended division of labour.
+const (
+	piTools        = "read,bash,edit,write,grep,find,ls"
+	piToolGuidance = "Orchestrator execution policy: use the read tool to inspect files, edit or write to change them, and grep, find or ls to search or list. Use bash only to run commands such as builds, tests and formatters, not for reading, searching, listing or editing files."
+)
+
+// piArgs returns the Pi flags shared by the JSON and RPC adapters. Unknown tool
+// names are ignored by Pi, and the flags are arguments rather than shell text.
+func piArgs(mode string) []string {
+	return []string{"--mode", mode, "--tools", piTools, "--append-system-prompt", piToolGuidance}
+}
+
 func (PiRunner) Capabilities() AgentCapabilities {
 	return AgentCapabilities{LiveContext: true, ToolActivity: true, StructuredReports: true}
 }
@@ -43,7 +59,7 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 		}
 	}
 	prompt.WriteString(t.controlGuidance)
-	cmd := exec.CommandContext(ctx, name, "--mode", "json", "--", prompt.String())
+	cmd := exec.CommandContext(ctx, name, append(piArgs("json"), "--", prompt.String())...)
 	cmd.Dir = t.Workspace
 	cmd.Env = t.runnerEnvironment()
 	stdout, err := cmd.StdoutPipe()

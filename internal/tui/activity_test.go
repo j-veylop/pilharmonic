@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"orchestrator/internal/orchestrator"
 )
 
@@ -67,5 +68,14 @@ func TestReadableToolTextResult(t *testing.T) {
 	got := readableResult(json.RawMessage(`{"content":[{"type":"text","text":"first line\nsecond line"}],"details":{}}`))
 	if got != "first line\nsecond line" {
 		t.Fatalf("escaped output: %q", got)
+	}
+}
+
+func TestActivityListDistinguishesStatuses(t *testing.T) {
+	view := ansi.Strip(activityModel().View())
+	for _, want := range []string{"✓", "finished", "⠿", "running", "main.go"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q in %s", want, view)
+		}
 	}
 }

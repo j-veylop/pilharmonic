@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"orchestrator/internal/orchestrator"
 )
@@ -101,7 +100,8 @@ func (m model) activityContent(width int) []string {
 			add("This activity is no longer retained. Esc returns to the list.")
 			return lines
 		}
-		add(accentStyle.Render(terminalText(a.Name)) + "  " + terminalText(a.Status))
+		statusStyle, glyph := toolStatusStyle(a.Status)
+		add(titleStyle.Render(terminalText(a.Name)) + "  " + statusStyle.Bold(true).Render(glyph+" "+a.Status))
 		add(mutedStyle.Render("Attempt " + a.AttemptID + "  ·  " + a.StartedAt.Local().Format("15:04:05")))
 		if a.DurationMS != nil {
 			add(fmt.Sprintf("Duration %.0f ms", *a.DurationMS))
@@ -122,21 +122,33 @@ func (m model) activityContent(width int) []string {
 	}
 	selected, _, ok := m.selectedActivity()
 	for _, a := range activities {
+		isSelected := ok && a.ID == selected.ID && a.AttemptID == selected.AttemptID
 		marker := "  "
-		if ok && a.ID == selected.ID && a.AttemptID == selected.AttemptID {
+		if isSelected {
 			marker = "▸ "
 		}
-		row := marker + a.StartedAt.Local().Format("15:04:05") + " " + terminalText(a.Status) + " · " + terminalText(a.Summary())
+		style, glyph := toolStatusStyle(a.Status)
+		stamp := a.StartedAt.Local().Format("15:04:05")
+		summary := terminalText(a.Summary())
+		duration := ""
 		if a.DurationMS != nil {
-			row += fmt.Sprintf(" · %.0fms", *a.DurationMS)
+			duration = fmt.Sprintf(" · %.0fms", *a.DurationMS)
 		}
-		if ok && a.ID == selected.ID && a.AttemptID == selected.AttemptID {
-			add(accentStyle.Render(fit(row, width, 1)))
-		} else if a.Status == "failed" || a.Status == "interrupted" {
-			add(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8F9B")).Render(fit(row, width, 1)))
-		} else {
-			add(fit(row, width, 1))
+		plain := marker + stamp + " " + glyph + " " + a.Status
+		if summary != "" {
+			plain += " · " + summary
 		}
+		plain += duration
+		if isSelected {
+			add(accentStyle.Render(fit(plain, width, 1)))
+			continue
+		}
+		row := marker + mutedStyle.Render(stamp) + " " + style.Bold(true).Render(glyph+" "+a.Status)
+		if summary != "" {
+			row += mutedStyle.Render(" · ") + styledToolSummary(a.Summary())
+		}
+		row += mutedStyle.Render(duration)
+		add(fit(row, width, 1))
 	}
 	return lines
 }

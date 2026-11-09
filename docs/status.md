@@ -93,8 +93,11 @@ reopening state after a crash or kill.
    path uses `pi --mode json --` and is kept for other runners/tests.
 6. **Output.** Each write appends to the task output, trims it to the newest
    256 KiB, mirrors it onto the latest attempt, and saves the whole state file.
-   The TUI sanitizes output before display (strips ANSI, expands tabs, drops
-   control characters), so agent text is rendered as data.
+   In the output view, assistant text is rendered as Markdown while inline tool
+   markers become compact status rows with a coloured rail and glyph; a
+   directly paired start/finish collapses into one finished row. The TUI
+   sanitizes output before display (strips ANSI, expands tabs, drops control
+   characters), so agent text is rendered as data.
 7. **Thread work.** `a` creates a related task in the selected task's thread
    with its own mandate and decision (`thread.go`). `f` sends one follow-up
    trigger to all subscribed queued and running tasks in that thread.

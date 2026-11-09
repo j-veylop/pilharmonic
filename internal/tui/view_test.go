@@ -25,6 +25,17 @@ func TestViewFitsTerminal(t *testing.T) {
 	}
 }
 
+func TestViewWithToolOutputFitsTerminal(t *testing.T) {
+	task := orchestrator.Task{ID: "tool", Title: "checks", Prompt: "run checks", Status: orchestrator.Running, Output: "# Update\n\nWorking.\n\n[running] bash: " + strings.Repeat("long-command ", 20) + "\n[finished] bash: go test ./...\n[failed] bash: go vet ./...\n\nDone.\n"}
+	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 10}} {
+		m := model{width: size[0], height: size[1], tasks: []orchestrator.Task{task}}
+		view := m.View()
+		if lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
+			t.Fatalf("%v: rendered %dx%d", size, lipgloss.Width(view), lipgloss.Height(view))
+		}
+	}
+}
+
 func TestHistoryShowsContextDelivery(t *testing.T) {
 	m := model{width: 120, height: 35, history: true, tasks: []orchestrator.Task{{ID: "1", Title: "test", Prompt: "do work", Status: orchestrator.Running, Context: []orchestrator.Trigger{{ID: "trigger-1", Delivery: "pending"}, {ID: "trigger-2", Delivery: "rejected", DeliveryError: "not accepted"}}}}}
 	view := m.View()

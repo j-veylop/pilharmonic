@@ -76,6 +76,23 @@ func statusLabel(status orchestrator.Status) string {
 	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + strings.ToUpper(string(status)))
 }
 
+// toolStatusStyle gives tool activity a consistent visual language in the
+// output transcript and the activity view.
+func toolStatusStyle(status string) (lipgloss.Style, string) {
+	switch status {
+	case "running":
+		return lipgloss.NewStyle().Foreground(cyan), "⠿"
+	case "finished":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#98DAA6")), "✓"
+	case "failed":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8F9B")), "✗"
+	case "interrupted":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8F9B")), "⊘"
+	default:
+		return mutedStyle, "•"
+	}
+}
+
 // fit limits the rendered surface to the terminal's cells, including ANSI styles.
 func fit(s string, width, height int) string {
 	if width < 1 || height < 1 {

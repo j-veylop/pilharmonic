@@ -3,6 +3,9 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -53,6 +56,8 @@ type model struct {
 	isolationBusy    bool
 	cleanup          cleanupRequest
 	cleanupBusy      bool
+	selection        textSelection
+	clipboard        io.Writer
 	spinner          spinner.Model
 }
 
@@ -65,10 +70,9 @@ func Run(service *orchestrator.Service, workspace string) error {
 		router:    true,
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 	}
-	// Leave mouse reporting to the terminal so drag-selection and the terminal's
-	// own copy/paste bindings keep working. The UI has keyboard navigation for
-	// every mouse action.
-	_, err := tea.NewProgram(initial, tea.WithAltScreen()).Run()
+	output := newTerminalOutput(os.Stdout)
+	initial.clipboard = output
+	_, err := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(output)).Run()
 	return err
 }
 
@@ -90,6 +94,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clamp()
 		m.clampScroll()
+		m.selection = textSelection{}
 		return m, nil
 	case isolationResultMsg:
 		m.isolationBusy = false
@@ -107,6 +112,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.clampScroll()
+		m.cancelStaleSelection()
 	case tickMsg:
 		oldID := m.selectedID()
 		oldLines := m.detailLineCount()
@@ -117,16 +123,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activityID = ""
 			m.activityExpanded = false
 			m.historyOffset = 0
+			m.selection = textSelection{}
 		} else if m.historyOffset > 0 {
 			m.historyOffset += m.detailLineCount() - oldLines
 		}
 		m.clampScroll()
+		m.cancelStaleSelection()
 		return m, tick()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+	case selectionCopiedMsg:
+		if msg.err != nil {
+			m.notice = "Could not copy selection: " + msg.err.Error()
+		} else if msg.lines > 0 {
+			m.notice = fmt.Sprintf("Copied %d line(s) to clipboard via OSC 52.", msg.lines)
+		}
+		return m, nil
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.KeyMsg:
+		m.selection = textSelection{}
 		if m.help {
 			return m.helpKey(msg.String())
 		}

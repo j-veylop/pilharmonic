@@ -112,6 +112,16 @@ default and combines tool start and finish markers into status rows. Pi closes
 an open thinking block before emitting prose or tool activity to handle late
 thinking-end events. Agent output is untrusted display data.
 
+Mouse drag selection is limited to the detail content pane. Releasing a
+nonempty selection writes its plain text as an OSC 52 clipboard sequence,
+serialized with renderer output so the escape codes cannot be split. Sidebar,
+header, tabs, footer and modal overlays are excluded. The copy is best effort:
+terminals that disable OSC 52 ignore it, and the UI does not change task state.
+A drag freezes the visible content and its cell mapping at press time; motion
+and release reuse that snapshot. If new output, scrolling or a resize changes
+the mapping, the pending selection is canceled rather than copying text the
+pointer no longer covers.
+
 For a walkthrough of startup, state migration, request routing, execution and
 cleanup, see the [implementation notes](status.md).
 

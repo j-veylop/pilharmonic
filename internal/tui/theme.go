@@ -62,6 +62,9 @@ var (
 	selectionBodyStyle = lipgloss.NewStyle().
 				Foreground(ink).
 				Bold(true)
+	selectionHighlightStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color(colorAccentDeep)).
+				Foreground(lipgloss.Color(colorInk))
 	keyStyle = lipgloss.NewStyle().
 			Foreground(accent).
 			Bold(true)

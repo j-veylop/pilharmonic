@@ -20,9 +20,10 @@ func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
 	}
 	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
 	m = next.(model)
-	if m.helpScroll != 0 {
-		t.Fatal("help consumed terminal mouse input")
+	if m.helpScroll == 0 {
+		t.Fatal("help wheel did not scroll")
 	}
+	m.helpScroll = 0
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(model)
 	if m.helpScroll == 0 {

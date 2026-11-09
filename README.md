@@ -22,7 +22,8 @@ Use `go run . -help` for all startup flags. Common options are `-workspace` for 
 | Share context | `a` creates a related task with its own mandate and the default profile in effect when accepted. `f` sends context to subscribed queued and running tasks in the thread. `s` pauses or resumes the selected task's subscription. |
 | Follow up on one task | `F` sends context to that task. For a finished task it also requeues it. Press `r` to start a fresh attempt with its mandate and context. |
 | Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `v` filters calls and Enter in the detail pane expands arguments and results. |
-| Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `z` expands details. The application does not capture the mouse: drag to select text and use the terminal's normal copy/paste shortcuts. |
+| Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `z` expands details. The mouse wheel scrolls details. |
+| Copy output | Drag inside the details pane to select text. Releasing the mouse copies the selection through the terminal's OSC 52 clipboard support. Selection cannot start in or extend into the sidebar, header or footer. Terminals that block OSC 52 ignore the copy. Use the terminal's normal shortcut to paste into composers. |
 | Report or review | `p` records a status report. On a task awaiting review, `v` approves the prepared commit and `V` records a rejection reason. |
 | Cancel or retry | `c` cancels. `R` requeues a failed, interrupted or canceled task, or a completed task whose merge failed. Then `r` starts it. |
 | Clean up | `x` discards a clean, integrated worktree and keeps task history. `d` deletes an inactive task and its worktree. `X` and `D` apply the corresponding bulk actions. Confirm with `y`. |

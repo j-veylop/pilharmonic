@@ -603,7 +603,7 @@ func (m model) detailPanel(width, height int) string {
 	end := len(content) - offset
 	start := max(0, end-available)
 	if available > 0 {
-		lines = append(lines, content[start:end]...)
+		lines = append(lines, m.highlightSelection(content, start, end, inner)...)
 	}
 	label := "OUTPUT"
 	if m.activity {

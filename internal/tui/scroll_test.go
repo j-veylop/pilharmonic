@@ -42,16 +42,18 @@ func TestOutputScrollKeyboard(t *testing.T) {
 	}
 }
 
-func TestMouseWheelStaysWithTerminal(t *testing.T) {
+func TestMouseWheelScrollsDetails(t *testing.T) {
 	task := orchestrator.Task{ID: "x", Title: "title", Output: strings.Repeat("output\n", 100)}
 	m := model{width: 100, height: 20, tasks: []orchestrator.Task{task}}
-	before := m.historyOffset
-	for _, button := range []tea.MouseButton{tea.MouseButtonWheelUp, tea.MouseButtonWheelDown} {
-		next, _ := m.Update(tea.MouseMsg{Button: button})
-		m = next.(model)
+	next, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	m = next.(model)
+	if m.historyOffset != 3 {
+		t.Fatalf("wheel up offset %d", m.historyOffset)
 	}
-	if m.historyOffset != before {
-		t.Fatalf("mouse wheel changed scroll offset: %d", m.historyOffset)
+	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	m = next.(model)
+	if m.historyOffset != 0 {
+		t.Fatalf("wheel down offset %d", m.historyOffset)
 	}
 }
 

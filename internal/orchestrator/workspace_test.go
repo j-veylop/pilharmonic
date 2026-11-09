@@ -309,7 +309,7 @@ func TestIsolatedWorkspaceRejectsSymlinkReservation(t *testing.T) {
 	}
 }
 
-func TestIsolatedWorkspaceSurvivesTaskDeletion(t *testing.T) {
+func TestIsolatedWorkspaceIsCleanedUpWithTaskDeletion(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
@@ -327,11 +327,102 @@ func TestIsolatedWorkspaceSurvivesTaskDeletion(t *testing.T) {
 	if done.ExecutionWorkspace == "" {
 		t.Fatal("no execution workspace recorded")
 	}
+	reservation := filepath.Join(filepath.Dir(s.path), "workspaces", task.ID)
+	if _, err := os.Stat(reservation); err != nil {
+		t.Fatalf("worktree reservation missing before deletion: %v", err)
+	}
 	if err = s.DeleteTask(task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(done.ExecutionWorkspace); err != nil {
-		t.Fatalf("worktree was removed with the task: %v", err)
+	if _, err := os.Stat(done.ExecutionWorkspace); !os.IsNotExist(err) {
+		t.Fatalf("worktree was retained after deletion: %v", err)
+	}
+	if _, err := os.Stat(reservation); !os.IsNotExist(err) {
+		t.Fatalf("workspace reservation was retained after deletion: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "tracked.txt")); err != nil {
+		t.Fatalf("source workspace was changed: %v", err)
+	}
+	if list := testGit(t, repo, "worktree", "list", "--porcelain"); strings.Contains(list, done.ExecutionWorkspace) {
+		t.Fatalf("source repository still registers the removed worktree: %s", list)
+	}
+}
+
+func TestCanceledIsolatedWorkspaceIsRetainedUntilDeletion(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	started := make(chan struct{})
+	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+		if err := os.WriteFile(filepath.Join(task.Workspace, "canceled.txt"), []byte("partial work"), 0600); err != nil {
+			return err
+		}
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	task, err := s.CreateTask("canceled", "do work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err = s.Cancel(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, task.ID, Canceled)
+	if _, err := os.Stat(filepath.Join(done.ExecutionWorkspace, "canceled.txt")); err != nil {
+		t.Fatalf("canceled worktree was cleaned up before deletion: %v", err)
+	}
+	if err = s.DeleteTask(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	reservation := filepath.Join(filepath.Dir(s.path), "workspaces", task.ID)
+	if _, err := os.Stat(reservation); !os.IsNotExist(err) {
+		t.Fatalf("canceled worktree reservation was retained after deletion: %v", err)
+	}
+}
+
+func TestDeleteCompletedTasksCleansUpWorktrees(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.RegisterRunner("pi", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	var tasks []Task
+	for _, title := range []string{"first", "second"} {
+		task, err := s.CreateTask(title, "do work", repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tasks = append(tasks, task)
+	}
+	for _, task := range tasks {
+		if err := s.Start(context.Background(), task.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var reservations []string
+	for _, task := range tasks {
+		done := await(t, s, task.ID, Completed)
+		if done.ExecutionWorkspace == "" {
+			t.Fatalf("task %s has no prepared worktree", task.ID)
+		}
+		reservations = append(reservations, filepath.Join(filepath.Dir(s.path), "workspaces", task.ID))
+	}
+	deleted, err := s.DeleteCompletedTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != len(tasks) {
+		t.Fatalf("deleted %d completed tasks, want %d", deleted, len(tasks))
+	}
+	for _, reservation := range reservations {
+		if _, err := os.Stat(reservation); !os.IsNotExist(err) {
+			t.Fatalf("worktree reservation was retained after bulk deletion: %v", err)
+		}
 	}
 }
 

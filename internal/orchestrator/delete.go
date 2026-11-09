@@ -5,13 +5,15 @@ import (
 	"fmt"
 )
 
-// DeleteTask permanently removes an inactive task and its history. If no
-// other task references its thread, the thread and its routing history are
-// removed as well. Files in the workspace are not touched.
+// DeleteTask permanently removes an inactive task, its history and its
+// dedicated worktree. If no other task references its thread, the thread and
+// its routing history are removed as well. Files in the source workspace are
+// not touched. The task is deleted durably before its worktree is cleaned up;
+// a cleanup failure leaves the retained worktree and is reported.
 func (s *Service) DeleteTask(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closing {
+		s.mu.Unlock()
 		return errors.New("service is shutting down")
 	}
 	for i, t := range s.data.Tasks {
@@ -19,17 +21,21 @@ func (s *Service) DeleteTask(id string) error {
 			continue
 		}
 		if t.Status == Running {
+			s.mu.Unlock()
 			return fmt.Errorf("task is running; cancel it and wait before deleting")
 		}
 		if _, active := s.cancel[id]; active {
+			s.mu.Unlock()
 			return errors.New("task is still stopping; wait before deleting")
 		}
 		for _, other := range s.data.Tasks {
 			if other.ParentID == t.ID {
+				s.mu.Unlock()
 				return errors.New("task has spawned subagents; delete them before deleting the parent")
 			}
 		}
 
+		deleted := clone(t)
 		tasks := make([]Task, 0, len(s.data.Tasks)-1)
 		tasks = append(tasks, s.data.Tasks[:i]...)
 		tasks = append(tasks, s.data.Tasks[i+1:]...)
@@ -53,10 +59,16 @@ func (s *Service) DeleteTask(id string) error {
 		s.data.Tasks, s.data.Threads = tasks, threads
 		if err := s.save(); err != nil {
 			s.data.Tasks, s.data.Threads = oldTasks, oldThreads
+			s.mu.Unlock()
 			return err
+		}
+		s.mu.Unlock()
+		if err := s.cleanupTaskWorkspace(deleted); err != nil {
+			return fmt.Errorf("task deleted but workspace cleanup failed: %w", err)
 		}
 		return nil
 	}
+	s.mu.Unlock()
 	return errors.New("task not found")
 }
 
@@ -69,23 +81,28 @@ func (s *Service) DeletableCompletedTasks() int {
 	return len(s.deletableCompletedLocked())
 }
 
-// DeleteCompletedTasks permanently removes all eligible completed tasks and
-// the threads that no remaining task uses. Files in the workspace are not
-// touched. It returns the number of deleted tasks.
+// DeleteCompletedTasks permanently removes all eligible completed tasks, their
+// threads when no remaining task uses them, and their dedicated worktrees.
+// Files in the source workspace are not touched. It returns the number of
+// deleted tasks. Cleanup continues for every task and reports joined failures;
+// the deletions are already durable when a cleanup error is returned.
 func (s *Service) DeleteCompletedTasks() (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closing {
+		s.mu.Unlock()
 		return 0, errors.New("service is shutting down")
 	}
 	eligible := s.deletableCompletedLocked()
 	if len(eligible) == 0 {
+		s.mu.Unlock()
 		return 0, nil
 	}
 	tasks := make([]Task, 0, len(s.data.Tasks)-len(eligible))
+	deleted := make([]Task, 0, len(eligible))
 	usedThreads := make(map[string]bool)
 	for _, task := range s.data.Tasks {
 		if eligible[task.ID] {
+			deleted = append(deleted, clone(task))
 			continue
 		}
 		tasks = append(tasks, task)
@@ -101,9 +118,21 @@ func (s *Service) DeleteCompletedTasks() (int, error) {
 	s.data.Tasks, s.data.Threads = tasks, threads
 	if err := s.save(); err != nil {
 		s.data.Tasks, s.data.Threads = oldTasks, oldThreads
+		s.mu.Unlock()
 		return 0, err
 	}
-	return len(eligible), nil
+	s.mu.Unlock()
+
+	var cleanupErr error
+	for _, task := range deleted {
+		if err := s.cleanupTaskWorkspace(task); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("task %s: %w", task.ID, err))
+		}
+	}
+	if cleanupErr != nil {
+		return len(deleted), fmt.Errorf("deleted %d completed task(s) but workspace cleanup failed: %w", len(deleted), cleanupErr)
+	}
+	return len(deleted), nil
 }
 
 // deletableCompletedLocked computes the set of completed tasks whose children,

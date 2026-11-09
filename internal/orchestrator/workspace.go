@@ -14,7 +14,7 @@ import (
 
 // SetTaskIsolation changes the workspace choice for a queued task. New tasks
 // default to an isolated worktree when their workspace supports one. Worktrees
-// are preserved for review, including when a task is deleted.
+// are preserved while the task exists, including across retries and review.
 func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -83,6 +83,83 @@ func workspaceIsolatable(workspace string) bool {
 }
 
 type workspaceOwner struct{ TaskID, Source, CommonDir, Commit string }
+
+const workspaceCleanupTimeout = 30 * time.Second
+
+// cleanupTaskWorkspace removes a deleted task's dedicated worktree and
+// reservation. Cleanup runs outside the service mutex because it invokes Git.
+// It never touches the source workspace.
+func (s *Service) cleanupTaskWorkspace(t Task) error {
+	s.mergeMu.Lock()
+	defer s.mergeMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), workspaceCleanupTimeout)
+	defer cancel()
+	return removeTaskWorkspace(ctx, s.path, t)
+}
+
+// removeTaskWorkspace validates the reservation's ownership record before
+// removing anything. A missing reservation is a successful no-op, so shared
+// workspace tasks and tasks that never prepared a worktree need no special
+// handling.
+func removeTaskWorkspace(ctx context.Context, statePath string, t Task) error {
+	if statePath == "" || t.ID == "" || filepath.Base(t.ID) != t.ID || t.ID == "." || t.ID == ".." {
+		return errors.New("invalid task identity for workspace cleanup")
+	}
+	base, err := filepath.Abs(filepath.Join(filepath.Dir(statePath), "workspaces"))
+	if err != nil {
+		return err
+	}
+	reservation := filepath.Join(base, t.ID)
+	info, err := os.Lstat(reservation)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("workspace reservation: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("workspace reservation is not a regular directory")
+	}
+	ownerInfo, err := os.Lstat(filepath.Join(reservation, "owner.json"))
+	if err != nil || !ownerInfo.Mode().IsRegular() {
+		return errors.New("workspace reservation has no valid ownership record")
+	}
+	b, err := os.ReadFile(filepath.Join(reservation, "owner.json"))
+	if err != nil {
+		return err
+	}
+	var owner workspaceOwner
+	if json.Unmarshal(b, &owner) != nil || owner.TaskID != t.ID || owner.Source == "" || owner.CommonDir == "" || owner.Commit == "" {
+		return errors.New("workspace ownership does not match task")
+	}
+
+	tree := filepath.Join(reservation, "tree")
+	info, err = os.Lstat(tree)
+	if errors.Is(err, os.ErrNotExist) {
+		return os.RemoveAll(reservation)
+	}
+	if err != nil {
+		return fmt.Errorf("workspace worktree: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("workspace worktree is not a regular directory")
+	}
+	common, err := gitOutput(ctx, tree, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return fmt.Errorf("inspect worktree before cleanup: %w", err)
+	}
+	common, err = filepath.EvalSymlinks(common)
+	if err != nil {
+		return err
+	}
+	if common != owner.CommonDir {
+		return errors.New("worktree belongs to a different repository")
+	}
+	if _, err = gitOutput(ctx, owner.Source, "worktree", "remove", "--force", "--", tree); err != nil {
+		return fmt.Errorf("remove worktree: %w", err)
+	}
+	return os.RemoveAll(reservation)
+}
 
 func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, string, error) {
 	root, err := gitOutput(ctx, t.Workspace, "rev-parse", "--show-toplevel")

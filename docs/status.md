@@ -176,7 +176,8 @@ not decompose requests or evaluate them with a model.
     Merges are serialized. A no-change completion is recorded as `up_to_date`;
     a clean merge records the worktree and merge commits; a conflict or Git
     failure aborts the source merge and records `merge_failed` separately from
-    the successful attempt. The worktree is retained in every case. A merged
+    the successful attempt. The worktree is retained in every case until the
+    task is deleted. A merged
     commit, or a worktree commit whose merge failed, is then recorded as
     `pending` review with its commit; an up-to-date completion has no new
     commit and is not opened for review. The latest attempt is finalized,
@@ -193,8 +194,10 @@ not decompose requests or evaluate them with a model.
     A task with child tasks must have them deleted first, so parent links never
     dangle. `D` then `y` deletes every completed task whose children would also
     be removed, keeps completed parents that still have unfinished children,
-    and removes threads no remaining task uses. The task's worktree is
-    retained. Workspace files are never touched.
+    and removes threads no remaining task uses. Both deletion paths remove the
+    tasks' retained worktrees and reservations after the state change is
+    durable. The source workspace is never touched. A canceled task keeps its
+    worktree until deletion so a retry can reuse it.
 
 ## Data model
 
@@ -222,8 +225,10 @@ not decompose requests or evaluate them with a model.
 - **Workspace reservation** lives beside the state file at
   `workspaces/<task-id>/`: `owner.json` records the task, source repository,
   common Git directory and initial commit, and `tree/` is the detached Git
-  worktree. It is not part of `state.json` and is retained after the task is
-  deleted, including after an automatic merge failure.
+  worktree. It is not part of `state.json` and is retained while the task
+  exists, including after an automatic merge failure, so retries and review
+  can use it. Deleting the task removes the reservation; if cleanup fails, the
+  deletion remains durable and the reservation is left in place with an error.
 
 Statuses: `queued`, `running`, `completed`, `failed`, `canceled`,
 `interrupted`. A `completed` task means the process exited successfully (for
@@ -308,9 +313,11 @@ rejection neither undoes a merge nor removes the retained worktree.
   cannot be isolated, and the `git` executable is required. Successful isolated
   tasks merge automatically, but that is integration, not review: review is a
   recorded approve/reject decision on a prepared commit and does not gate
-  merging. There is no in-app diff, conflict resolution or discard action, and
-  a conflicting merge must be resolved outside the application. Worktrees are never cleaned up automatically, so
-  they accumulate beside the state file. A dirty source checkout can make an
+  merging. There is no in-app diff, conflict resolution or discard action that
+  keeps the task, and a conflicting merge must be resolved outside the
+  application. Worktrees for
+  retained tasks accumulate beside the state file; deleting a task cleans up
+  its worktree, but there is no separate discard action. A dirty source checkout can make an
   otherwise clean worktree merge fail without changing the worktree. Tasks in
   workspaces that cannot be isolated, or that are explicitly opted out, share
   their workspace.
@@ -380,7 +387,8 @@ Tests use fake runners and temporary state files; none needs model credentials.
 - `workspace_test.go`: isolated worktree preparation from committed `HEAD`,
   default isolation for new tasks, shared-workspace fallback and override,
   subdirectory workspaces, retry reuse, ownership and symlink rejection,
-  non-repository failure, retention after deletion and toggle rules.
+  non-repository failure, retention after cancellation, cleanup with single
+  and bulk deletion, and toggle rules.
 - `merge_test.go`: automatic merge of worktree changes, no merge for failed
   attempts, up-to-date no-change completion, conflict abort with retained
   worktree and serialized concurrent merges.

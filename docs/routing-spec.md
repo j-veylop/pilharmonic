@@ -24,7 +24,7 @@ Subagent delegation is implemented as a separate acceptance path (`subagent-1`),
 
 1. Add explicit authorization policies and auditable decisions before introducing external sources. The policy gate and audit evidence exist; policy configuration, rejected-request records and external-source authentication remain open.
 2. Extend structured reports to configured command adapters and richer assignment policy; Pi capabilities and adapter reports exist, and explicit operator reports already support waiting, blocked, ready and failed attention states.
-3. Add automatic cleanup, conflict resolution and in-app review for isolated worktrees. Default worktree isolation and automatic merging of successful work exist; cleanup and review remain open.
+3. Extend isolated-worktree handling. Default worktree isolation, automatic merging of successful work, recorded review and worktree cleanup on task deletion exist; automatic conflict resolution and an in-app diff or discard action remain open.
 4. Add external sources and model-assisted evaluation only after the deterministic authorization gate; evaluator output is untrusted and cannot authorize itself.
 
 Tests should cover duplicate triggers, subscriber changes during retries, partial or uncertain delivery, process crash, restart, concurrent scheduling, save failure and shutdown. Use fake sources and runners so tests do not need model credentials.

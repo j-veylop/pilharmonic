@@ -31,8 +31,8 @@ w              Toggle Git worktree isolation (default on if possible)
 r / R          Start / requeue unsuccessful task
 v / V          Approve / reject prepared worktree commit
 c              Cancel task
-d              Delete inactive task (confirm y)
-D              Delete all completed tasks (confirm y)
+d              Delete inactive task and worktree (confirm y)
+D              Delete completed tasks and worktrees (confirm y)
 f              Send context to thread subscribers
 F              Follow up selected task
 s              Pause / resume thread subscription

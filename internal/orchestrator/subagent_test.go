@@ -89,6 +89,24 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 	}
 }
 
+func TestSpawnSubagentDuringWorkspacePreparation(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	// startLocked marks the attempt running before the worker has prepared
+	// the worktree. Reproduce that window without racing a real git process.
+	parent := Task{ID: "parent", Status: Running, Isolated: true, Workspace: t.TempDir(), Agent: DefaultRouteAgent}
+	s.data.Tasks = []Task{parent}
+	if _, err := s.SpawnSubagent(parent.ID, "child", "delegated work", ""); err == nil {
+		t.Fatal("spawned a child in the source workspace during preparation")
+	}
+	if got := s.ListTasks(); len(got) != 1 || len(got[0].Events) != 0 {
+		t.Fatalf("spawn changed task history: %+v", got)
+	}
+}
+
 func TestSpawnSubagentRequiresRunningParentAndHonorsLimits(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
@@ -268,6 +286,9 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	if err = s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"reviewer","description":"Review Go concurrency.","command":"cat"}]}`)); err != nil {
+		t.Fatal(err)
+	}
 	seen := make(chan Task, 1)
 	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
@@ -281,6 +302,9 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	running := <-seen
+	if !strings.Contains(running.controlGuidance, `"reviewer" — Review Go concurrency.`) || !strings.Contains(running.controlGuidance, "--agent NAME") {
+		t.Fatal("missing specialist selection guidance")
+	}
 	if running.controlToken == "" || running.controlSocket == "" || !strings.Contains(running.controlGuidance, "Subagent delegation") {
 		t.Fatalf("missing attempt credentials: %+v", running)
 	}

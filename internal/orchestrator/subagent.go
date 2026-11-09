@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -46,6 +48,20 @@ func (s *Service) SpawnSubagent(parentID, title, prompt, agent string) (Task, er
 }
 
 func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (Task, error) {
+	task, err := s.createSubagent(parentID, title, prompt, agent, token)
+	if err != nil {
+		return Task{}, err
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		s.noteSubagentStartFailure(task.ID, err)
+		current, _ := s.GetTask(task.ID)
+		return current, fmt.Errorf("subagent recorded but start failed: %w", err)
+	}
+	current, _ := s.GetTask(task.ID)
+	return current, nil
+}
+
+func (s *Service) createSubagent(parentID, title, prompt, agent, token string) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -56,12 +72,11 @@ func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (T
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closing {
-		s.mu.Unlock()
 		return Task{}, errors.New("service is shutting down")
 	}
 	if s.subagentMaxDepth == 0 || s.subagentMaxChildren == 0 {
-		s.mu.Unlock()
 		return Task{}, errors.New("subagent spawning is disabled")
 	}
 	var parent *Task
@@ -74,22 +89,21 @@ func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (T
 		}
 	}
 	if parent == nil {
-		s.mu.Unlock()
 		return Task{}, errors.New("parent task not found")
 	}
 	if token != "" {
 		if parent.controlToken == "" || subtle.ConstantTimeCompare([]byte(parent.controlToken), []byte(token)) != 1 {
-			s.mu.Unlock()
 			return Task{}, errors.New("invalid subagent credential")
 		}
 	}
+	if parent.integrating {
+		return Task{}, errors.New("parent worktree is being integrated")
+	}
 	if parent.Status != Running {
-		s.mu.Unlock()
 		return Task{}, fmt.Errorf("parent task is %s, not running", parent.Status)
 	}
 	depth := parent.Depth + 1
 	if depth > s.subagentMaxDepth {
-		s.mu.Unlock()
 		return Task{}, fmt.Errorf("subagent depth limit reached (maximum %d)", s.subagentMaxDepth)
 	}
 	children := 0
@@ -99,45 +113,32 @@ func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (T
 		}
 	}
 	if children >= s.subagentMaxChildren {
-		s.mu.Unlock()
 		return Task{}, fmt.Errorf("subagent limit reached (maximum %d child tasks)", s.subagentMaxChildren)
 	}
 	agent = strings.TrimSpace(agent)
 	if agent == "" {
-		agent = parent.Agent
+		agent = s.selectAgentLocked(prompt, parent.Agent)
 	}
 	if _, ok := s.runners[agent]; !ok {
-		s.mu.Unlock()
 		return Task{}, fmt.Errorf("agent %q unavailable", agent)
 	}
 	workspace := parent.ExecutionWorkspace
 	if workspace == "" {
+		if parent.Isolated {
+			return Task{}, errors.New("parent isolated workspace is not ready")
+		}
 		workspace = parent.Workspace
 	}
 	info, err := os.Stat(workspace)
 	if err != nil {
-		s.mu.Unlock()
 		return Task{}, fmt.Errorf("parent execution workspace: %w", err)
 	}
 	if !info.IsDir() {
-		s.mu.Unlock()
 		return Task{}, errors.New("parent execution workspace must be a directory")
 	}
-	id, err := newID()
-	if err != nil {
-		s.mu.Unlock()
-		return Task{}, err
-	}
-	triggerID, err := newID()
-	if err != nil {
-		s.mu.Unlock()
-		return Task{}, err
-	}
-	threadID, err := newID()
-	if err != nil {
-		s.mu.Unlock()
-		return Task{}, err
-	}
+	id := newID()
+	triggerID := newID()
+	threadID := newID()
 	now := time.Now().UTC()
 	trigger := Trigger{ID: triggerID, Source: SubagentPolicySource, Text: prompt, CreatedAt: now}
 	decision, err := s.authorizeLocked(AuthorizationRequest{
@@ -152,7 +153,6 @@ func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (T
 		Depth:     depth,
 	})
 	if err != nil {
-		s.mu.Unlock()
 		return Task{}, err
 	}
 	decision.CreatedAt = now
@@ -182,18 +182,9 @@ func (s *Service) spawnSubagent(parentID, title, prompt, agent, token string) (T
 		s.data.Tasks = s.data.Tasks[:len(s.data.Tasks)-1]
 		s.data.Threads = s.data.Threads[:len(s.data.Threads)-1]
 		s.data.Tasks[parentIndex].Events = s.data.Tasks[parentIndex].Events[:len(s.data.Tasks[parentIndex].Events)-1]
-		s.mu.Unlock()
 		return Task{}, err
 	}
-	s.mu.Unlock()
-
-	if err = s.Start(context.Background(), id); err != nil {
-		s.noteSubagentStartFailure(id, err)
-		current, _ := s.GetTask(id)
-		return current, fmt.Errorf("subagent recorded but start failed: %w", err)
-	}
-	current, _ := s.GetTask(id)
-	return current, nil
+	return clone(task), nil
 }
 
 func (s *Service) noteSubagentStartFailure(id string, cause error) {
@@ -218,17 +209,28 @@ func (s *Service) noteSubagentStartFailure(id string, cause error) {
 
 // subagentGuidance is trusted orchestrator text appended to the initial prompt.
 // It describes a bounded capability and grants no authority beyond delegation.
-func subagentGuidance(remainingDepth, maxChildren int) string {
+func (s *Service) subagentGuidanceLocked(remainingDepth, maxChildren int) string {
 	if remainingDepth <= 0 || maxChildren <= 0 {
 		return ""
 	}
-	return fmt.Sprintf(`
+	var guidance strings.Builder
+	fmt.Fprintf(&guidance, `
 
 Subagent delegation is available while this task runs:
   "$ORCHESTRATOR_SUBAGENT_CLI" subagent --title "short title"
 Pass the delegated instructions on stdin. The command waits for the child and prints its result; add --no-wait to return immediately with the child task ID. The child has its own mandate and fresh context, shares this workspace, and inherits no authority from this conversation. Delegation cannot widen the original mandate. Remaining depth: %d; at most %d child task(s) for this task.
 
+Choose a registered executor with --agent NAME when its specialty fits the child mandate. Omit --agent for automatic specialist selection, falling back to the parent executor.
+Available executors:
 `, remainingDepth, maxChildren)
+	for _, name := range slices.Sorted(maps.Keys(s.runners)) {
+		fmt.Fprintf(&guidance, "- %q", name)
+		if description := s.agentDescriptions[name]; description != "" {
+			fmt.Fprintf(&guidance, " — %s", description)
+		}
+		guidance.WriteByte('\n')
+	}
+	return guidance.String()
 }
 
 var controlEnvironmentKeys = map[string]bool{

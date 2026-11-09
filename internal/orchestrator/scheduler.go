@@ -55,10 +55,7 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	id, err := newID()
-	if err != nil {
-		return err
-	}
+	id := newID()
 	runCtx, cancel := context.WithCancel(ctx)
 	old := clone(*t)
 	t.Status = Running
@@ -71,14 +68,9 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	t.MergedAt = time.Time{}
 	t.resetReview()
 	if s.controlPath != "" && s.subagentMaxDepth > t.Depth && s.subagentMaxChildren > 0 {
-		token, tokenErr := newID()
-		if tokenErr != nil {
-			cancel()
-			return tokenErr
-		}
 		t.controlSocket = s.controlPath
-		t.controlToken = token
-		t.controlGuidance = subagentGuidance(s.subagentMaxDepth-t.Depth, s.subagentMaxChildren)
+		t.controlToken = newID()
+		t.controlGuidance = s.subagentGuidanceLocked(s.subagentMaxDepth-t.Depth, s.subagentMaxChildren)
 	} else {
 		t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
 	}
@@ -106,6 +98,7 @@ func (s *Service) scheduleLocked() error {
 	if s.closing {
 		return nil
 	}
+	defer s.resumeMergesLocked()
 	for len(s.cancel) < s.limit {
 		next := -1
 		for i := range s.data.Tasks {

@@ -2,13 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"strings"
 )
 
-const shortcutHelp = `NAVIGATION
-h / l          Focus tasks / details
+var helpTopics = []struct{ title, body string }{
+	{"Navigation", `h / l          Focus tasks / details
 j / k          Move down / up; counts: 5j, 3k
 gg / G         First / last task or top / bottom
 Ctrl-u / d     Half page up / down
@@ -19,10 +20,8 @@ Home / End     Top / bottom of details
 Mouse wheel    Scroll details
 Enter          Toggle pane focus
 z              Expand details to full width
-Esc            Return / close expanded activity
-
-TASKS
-n              New task draft
+Esc            Return / close expanded activity`},
+	{"Tasks", `n              New task draft
 /              Route new work
 a              Related task in selected thread
 b              Spawn subagent from running task
@@ -39,19 +38,15 @@ f              Send context to thread subscribers
 F              Follow up selected task
 s              Pause / resume thread subscription
 p              Report: kind + message
-               progress, waiting, blocked, ready, failed
-
-VIEWS & ACTIVITY
-Tab            Switch output / history
+               progress, waiting, blocked, ready, failed`},
+	{"Activity", `Tab            Switch output / history
 t              Toggle tool activity
 T              Show / hide thinking blocks
 j / k          Select activity in detail focus
 Enter          Expand / collapse selected tool call
 v              All calls / latest attempt / errors
-Ctrl-u / d     Scroll expanded arguments and results
-
-GENERAL
-esc            Close router / return to tasks
+Ctrl-u / d     Scroll expanded arguments and results`},
+	{"General", `esc            Close router / return to tasks
 ?              Open / close this help
 q              Quit (closes help when open)
 Ctrl-c         Quit application
@@ -60,20 +55,14 @@ COMPOSERS & PICKERS
 Enter          Submit input / confirm agent
 Esc            Cancel input / close picker
 j / k          Select agent in picker
-Typing         Text in composers`
-
-var helpTopics = []string{"Navigation", "Tasks", "Activity", "General"}
+Typing         Text in composers`},
+}
 
 func (m model) helpLines(width int) []string {
-	starts := []string{"NAVIGATION\n", "TASKS\n", "VIEWS & ACTIVITY\n", "GENERAL\n"}
-	page := max(0, min(len(starts)-1, m.helpPage))
-	start := strings.Index(shortcutHelp, starts[page]) + len(starts[page])
-	end := len(shortcutHelp)
-	if page+1 < len(starts) {
-		end = strings.Index(shortcutHelp, starts[page+1])
-	}
-	return strings.Split(ansi.Hardwrap(strings.TrimSpace(shortcutHelp[start:end]), max(1, width), true), "\n")
+	page := max(0, min(len(helpTopics)-1, m.helpPage))
+	return strings.Split(ansi.Hardwrap(helpTopics[page].body, max(1, width), true), "\n")
 }
+
 func (m *model) scrollHelp(delta int) {
 	m.helpPage = max(0, min(len(helpTopics)-1, m.helpPage+delta))
 	m.helpScroll = 0
@@ -92,16 +81,16 @@ func (m *model) scrollHelpBody(delta int) {
 func (m model) helpTabs(width int) string {
 	var tabs []string
 	page := max(0, min(len(helpTopics)-1, m.helpPage))
-	for i, title := range helpTopics {
+	for i, topic := range helpTopics {
 		style := inactiveTabStyle.Padding(0, 1)
 		if i == page {
 			style = activeTabStyle.Padding(0, 1)
 		}
-		tabs = append(tabs, style.Render(title))
+		tabs = append(tabs, style.Render(topic.title))
 	}
 	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 	if lipgloss.Width(row) > width {
-		return fit(accentStyle.Render("‹ "+helpTopics[page]+" ›")+mutedStyle.Render(fmt.Sprintf(" %d/4", page+1)), width, 1)
+		return fit(accentStyle.Render("‹ "+helpTopics[page].title+" ›")+mutedStyle.Render(fmt.Sprintf(" %d/%d", page+1, len(helpTopics))), width, 1)
 	}
 	return row
 }
@@ -112,7 +101,7 @@ func (m model) helpView(background string, w, h int) string {
 	page := max(0, min(len(helpTopics)-1, m.helpPage))
 	start := min(max(0, m.helpScroll), max(0, len(lines)-available))
 	var content []string
-	content = append(content, accentStyle.Render("KEYBOARD SHORTCUTS")+mutedStyle.Render(fmt.Sprintf("  Page %d / 4", page+1)), m.helpTabs(mw-4))
+	content = append(content, accentStyle.Render("KEYBOARD SHORTCUTS")+mutedStyle.Render(fmt.Sprintf("  Page %d / %d", page+1, len(helpTopics))), m.helpTabs(mw-4))
 	for _, line := range lines[start:min(len(lines), start+available)] {
 		if line != "" && !strings.HasPrefix(line, " ") && !strings.Contains(line, "  ") {
 			line = titleStyle.Render(line)

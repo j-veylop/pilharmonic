@@ -1,0 +1,1 @@
+Find the smallest reproducible case within the mandate. Compare expected and observed behavior, then test hypotheses against the evidence. Return the reproduction steps, relevant file references, and remaining uncertainties so the parent can hand a confirmed cause to the implementer.

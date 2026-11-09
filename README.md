@@ -1,66 +1,103 @@
 # Orchestrator
 
-A local terminal application for submitting and tracking coding-agent work, inspired by [DeepSeek's super-agent prototype](https://github.com/deepseek-ai/dsh-superagent-prototype). The router is the main entry point: it accepts local requests deterministically, records the decision, assigns an executor and starts the work. This is an early foundation; the full upstream authorization and model-assisted routing model is not implemented. See [design notes](docs/design.md).
+Orchestrator is a local terminal application for submitting work to coding agents and tracking the result. Each request has a recorded acceptance decision, an immutable mandate and a history of execution attempts. The project takes inspiration from [DeepSeek's super-agent prototype](https://github.com/deepseek-ai/dsh-superagent-prototype).
 
 ## Run
 
-Install Go 1.24 or newer and the [Pi coding agent](https://github.com/badlogic/pi-mono), and configure Pi's model credentials. From this directory:
+Use Go 1.24 or newer and an interactive terminal. For the default executor, install [Pi](https://github.com/badlogic/pi-mono) and configure its model credentials. From the repository root, run:
 
 ```sh
 go run .
 ```
 
-To build a binary instead, run `go build` and execute `./orchestrator`.
+On the router screen, type a request and press **Enter**. The local router accepts it, selects an executor and requests execution. By default two agents can run at once. Additional start requests wait in FIFO order. Press **Esc** for the task board, **/** to return to the router, or **?** for the keyboard reference.
 
-The interface opens on the **router**. Describe the work and press `Enter`: the deterministic local router accepts the request, derives a title, assigns Pi, records the decision and starts execution, queueing it when capacity is full. The same screen lists work that needs you (blocked, waiting, awaiting review, undelivered follow-ups, failed or interrupted tasks) and recent routes. Press `Esc` for the task board, `/` to return to the router, and `?` for all controls. One request becomes one task; the router does not decompose requests or evaluate them with a model. A built-in `local` authorization policy (`local-1`) performs the acceptance gate, and each decision records its policy ID/version, source, actor and a digest of the evaluated input. Policies are compiled in; there is no policy configuration file yet.
+Use `go run . -help` for all startup flags. Common options are `-workspace` for the source directory, `-state` for the JSON state file and `-max-concurrent` for the process limit. The defaults are the current directory and `orchestrator/state.json` under the user config directory. Use a separate state file for each running instance. The state file contains prompts, recent output (up to 256 KiB per attempt), routing decisions and history in plain text.
 
-Use `-max-concurrent N` to set the maximum number of simultaneously running agents (default: 2). When capacity is full, started tasks and routed requests wait and run automatically in request order when a slot opens. Waiting start requests persist and resume on the next launch; tasks that have not been started stay idle. Use `-workspace /path/to/project` to choose the directory in which new tasks run (default: current directory), and `-state /path/to/state.json` to choose the state file (default: your user config directory under `orchestrator/state.json`). New tasks use an isolated Git worktree by default when the selected workspace is a repository with a committed `HEAD`; use `-isolation=false` to run new tasks directly in the shared workspace. A workspace that cannot be isolated (no Git repository or no commit) keeps using the shared workspace. The interface requires an interactive terminal.
+## Task board
 
-Running agents may delegate work as subagents. The orchestrator records each child as a task with its own immutable mandate, thread, decision and execution attempt, linked to the parent by `ParentID` and a depth. Delegation is bounded by `-max-subagent-depth` (default: 2) and `-max-subagents` (default: 4 child tasks per task), and can be disabled with `-subagents=false`. A local owner-only Unix socket is created beside the state file (override with `-subagent-socket`); running attempts receive short-lived process credentials through their environment, and the credentials are never written to the state file. A child inherits the parent's execution workspace (and, by default, its executor) but not its conversation or authority beyond the delegated mandate. Children have independent lifecycles: canceling or completing the parent does not cancel them. If capacity is unavailable, a waiting parent receives a `queued` result after a short start timeout instead of holding its slot forever.
+| Action | Keys and behavior |
+| --- | --- |
+| Draft and run | `n` creates a queued draft. Use `A` to choose its executor or `w` to toggle isolation before requesting a start with `r`. |
+| Share context | `a` creates a related task with its own mandate. `f` sends context to subscribed queued and running tasks in the thread. `s` pauses or resumes the selected task's subscription. |
+| Follow up on one task | `F` sends context to that task. For a finished task it also requeues it. Press `r` to start a fresh attempt with its mandate and context. |
+| Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `v` filters calls and Enter in the detail pane expands arguments and results. |
+| Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `z` expands details. |
+| Report or review | `p` records a status report. On a task awaiting review, `v` approves the prepared commit and `V` records a rejection reason. |
+| Cancel or retry | `c` cancels. `R` requeues a failed, interrupted or canceled task, or a completed task whose merge failed. Then `r` starts it. |
+| Clean up | `x` discards a clean, integrated worktree and keeps task history. `d` deletes an inactive task and its worktree. `X` and `D` apply the corresponding bulk actions. Confirm with `y`. |
 
-On the task board, press `n` to type a manual draft and queue it instead of routing it immediately. Press `a` to create a related task in the selected task’s thread, `b` on a running task to spawn a subagent with a separate mandate, `f` to send context to its queued and running thread peers, `F` to follow up just the selected task, and `r` to start a task. Press `w` on a queued task that has not been started to toggle Git worktree isolation (new tasks default to isolated when the workspace supports it). Press `v` to approve or `V` to reject the prepared worktree commit awaiting review; rejection asks for a reason. Each related task has its own mandate; tasks created later do not receive old follow-ups. The original request remains the mandate; additional context is passed separately. Use the arrow keys or `j`/`k` to select a task, `c` to cancel, `r` to start a queued task, `R` to requeue a failed, interrupted, or canceled task (or a completed task whose automatic merge failed), `Tab` to switch between output and event history, `T` to show or hide thinking blocks, `PgUp`/`PgDn` to page through task details, `[`/`]` to scroll one line, `Home`/`End` to jump to the top or bottom, or the mouse wheel to scroll, `d` then `y` to delete an inactive task, `D` then `y` to delete all completed tasks, `x` then `y` to discard the selected task's retained worktree while keeping the task, `X` then `y` to discard all merged worktrees, and `q` to quit. Deletion removes history and the task's retained worktree, but leaves the source workspace untouched. Discard refuses a running task, uncommitted changes or an unmerged worktree commit. A follow-up on a queued or running task is contextual input; on a completed, failed, canceled, or interrupted task it records at-start context, clears the previous terminal error, and requeues the task without changing its mandate. The follow-up does not start the task: press `r`. A requeued follow-up starts a fresh agent process with the mandate and context; it is not a resumed chat session. Bulk deletion removes completed tasks whose child tasks are also completed, so parent links never dangle. Quitting cancels active tasks and waits for them to stop. Status and recent output appear in the detail view; Tab shows attempt and event history. Each attempt retains its output in the state file. Retrying starts a new Pi process against the same workspace (or prepared worktree) and does not undo earlier changes. Pi streams assistant text, thinking blocks and tool start/finish activity into the output view. Running Pi tasks receive follow-ups through RPC. The history shows whether Pi accepted or rejected a follow-up, or whether delivery is unknown; acceptance does not prove that the model consumed it. Each hand-off is recorded per execution attempt, so a retry does not inherit an earlier delivery outcome. Follow-ups accepted by Pi are queued until its current work finishes. A task marked completed means its process exited successfully, not that its changes have been reviewed. A successful isolated task also attempts an automatic merge back into its source repository; a merge can still fail and needs attention. A prepared worktree commit that was merged or that failed to merge is then recorded as awaiting review, where an operator can approve or reject it with an optional note. That review is a recorded decision, not a gate: it does not undo or prevent the automatic merge.
+Quitting cancels active attempts and waits for their workers. After an unexpected stop, reopening the state file marks running attempts interrupted. Persisted start requests resume after startup configuration loads. Manual drafts stay idle.
 
-Threads, triggers, router decisions, tasks, parent/child links, events, and captured output are stored locally in the state file; authorization decisions retain their policy identity, source, actor and input digest. Output is limited to the most recent 256 KiB per attempt. They may contain sensitive prompts or agent output. Tasks that were running when the application stopped are marked interrupted when the state is next opened. This initial store is intended for a single application instance; do not share a state file between concurrent instances.
+## Workspaces and review
 
-Pi runs with the selected workspace as its working directory and its own configured permissions. New tasks default to an isolated run in a dedicated Git worktree created from the repository's committed `HEAD`; uncommitted files are not copied. To use the shared source workspace instead, create a manual draft with `n`, press `w` before starting it, then press `r`, or start the application with `-isolation=false`. Shared-workspace tasks can edit the same files concurrently. The worktree is prepared under `workspaces/` beside the state file, recorded on the task, and reused by retries. When an isolated task completes successfully, the orchestrator commits any worktree changes with a task-identifying message and automatically merges that commit into the source repository's current checkout, creating a merge commit; concurrent merges are serialized. Failed or canceled attempts are not merged. If the source cannot merge cleanly, the merge is aborted, the failure is shown on the task and on the router as needing attention, and the worktree is kept for manual conflict resolution. A source checkout with uncommitted or untracked changes to files the worktree also changes blocks the merge instead: Git aborts without touching those files, the error names them and asks you to commit or stash them, and retrying the task after the source is clean merges the retained worktree. A completion with no new changes is recorded as up to date and is not opened for review. The worktree is retained after the task finishes and while a failed or canceled task can be retried, so unmerged work remains available for inspection and conflict resolution. Deleting the task removes its retained worktree and reservation after the deletion is durable; a cleanup failure leaves them in place and is reported, and the source workspace is never changed. A review rejection does not remove the retained worktree. An explicit discard (`x`/`X`) removes a retained worktree without deleting the task; it is refused for a running task, uncommitted changes or a worktree commit that is not yet merged. Isolation is not a sandbox; the agent keeps the host's permissions. Subagents tracked by the orchestrator are also not sandboxed, and processes spawned directly by a Pi extension remain outside orchestrator tracking. There is no GitHub integration.
+In a Git repository with a committed `HEAD`, new tasks default to a detached worktree under `workspaces/` beside the state file. The worktree starts from committed files and is reused on retries. Other workspaces run in place. Use `-isolation=false` to default to the shared workspace.
 
-Task rows, details and recent routes pair a Nerd Font glyph with a text label to show workspace and integration state: a git-branch glyph for an isolated worktree, git-merge for merged work, a check for up to date, a warning for a merge conflict, a cross for another merge failure or a rejected review, an eye for a pending review, and a folder or link for shared or inherited workspaces. The glyphs are display aids; the task fields and history remain authoritative.
+**Successful isolated runs automatically commit pending changes and merge into the source repository's current checkout.** Merges are serialized. If a merge fails, inspect the error and retained worktree. Overlapping local changes in the source may need to be committed or stashed before retrying. Execution status, merge outcome and operator review are separate records. Rejecting a commit in the UI records your decision after the merge attempt.
 
-## Development
+A parent waits to integrate while descendants use its worktree. Inspect any
+unsuccessful descendant before retrying integration. Delete descendant tasks
+before discarding the shared worktree. Cleanup runs in the background against
+the confirmed task IDs. After an interrupted discard, reopening the state file
+keeps a surviving tree or finishes clearing a removed one.
 
-```sh
-go build
-go test ./...
-go vet ./...
-```
+Agents run with the host user's permissions. A running task can delegate with `b` in the UI or the `orchestrator subagent` helper through its local control socket. Each child has an independent lifecycle and mandate and shares its parent's execution workspace. Defaults allow two levels of delegation and four children per parent. Use `-subagents=false` to disable delegation.
 
-Read [AGENTS.md](AGENTS.md) for repository conventions and [docs/design.md](docs/design.md) for the routing model and planned boundaries. [docs/status.md](docs/status.md) is a current-state walkthrough of the code, request lifecycle, invariants and known gaps. Additional executor implementations belong behind the runner interface.
+## Built-in specialists
 
-The compact interface gives most of the screen to task details. Press `Enter` to switch arrow keys between task selection and detail scrolling, `z` to expand details to the full width, and `Esc` to return. Narrow terminals show details without a sidebar; arrow keys still select tasks. Press `?` to show all controls. Press `w` to toggle Git worktree isolation for the selected queued task before it is started; new tasks default to isolation when the workspace supports it. Press `s` to pause or resume thread context for the selected task. Press `p` to record a report, entering a kind (`progress`, `waiting`, `blocked`, `ready`, or `failed`) followed by a message, such as `blocked Need the database credentials`. Operator reports are manual status updates; Pi also records structured progress and failure reports from its lifecycle. Reports appear in task details. The history tab also lists each context input's current delivery summary and a per-attempt delivery record with its outcome, reason and timestamps. Text is rendered with foreground colour only and stays on the terminal's own background.
+Every launch registers six Pi specialists from `internal/orchestrator/specialists.go`.
 
-## Additional agents
+| Specialist | Use it for |
+| --- | --- |
+| `debugger` | Reproduce a failure, isolate its cause, and report evidence for the implementer. |
+| `explorer` | Trace a code path or locate the files and tests behind a feature. |
+| `implementer` | Make a scoped change and verify it. |
+| `tester` | Design and run focused regression tests. |
+| `reviewer` | Inspect a proposed change for bugs and missing coverage. |
+| `gitter` | Inspect Git history or carry out delegated branch, commit, and merge work. |
 
-Load trusted command definitions with `go run . -agents agents.json`. Pi remains available by default. For a credentials-free smoke test, use this configuration (the `echo-test` executor simply prints its input):
+The router matches the opening action of the mandate. For example, “review the diff”
+selects `reviewer`, “add tests for parsing” selects `tester`, and “add a parser”
+selects `implementer`. Unmatched requests use `pi`. The executor appears on the
+task board and in task details. Drafts allow a manual override before starting.
+
+Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
+instructions. They are embedded at build time. To select a Pi model, set
+`ORCHESTRATOR_MODEL_<ROLE>` before launch, using the uppercase specialist name.
+For example, `ORCHESTRATOR_MODEL_REVIEWER=provider/model-id go run .` sets the
+reviewer's model. Use `pi --list-models` to find an available ID. An unset
+variable uses Pi's configured default. These settings apply to the bundled Pi
+roles; custom command executors take their model arguments from `agents.json`.
+
+Open the task board, create a draft with **n**, then press **A** to see their
+descriptions. A delegating parent can select one by name. They use the same
+Pi installation and credentials as the default executor. A command configured
+with the same name in `-agents` takes precedence.
+
+## Run a command executor without credentials
+
+Save the following as `agents.json` and run `go run . -agents agents.json`. On the task board, create a draft with `n`, choose `echo-test` with `A`, then start it with `r`.
 
 ```json
 {
   "agents": [
-    {"name": "echo-test", "command": "cat", "args": []}
+    {"name": "echo-test", "description": "Print the received prompt for smoke tests.", "command": "cat", "args": []}
   ]
 }
 ```
 
-The router always assigns Pi. To use another agent, press `n` for a manual draft, press `A` to choose its agent, then press `r`. Agent selection is available only before a start has been requested. A real command agent must accept a prompt through stdin and run once; configure its executable and fixed arguments in the same format. Commands run directly in the task workspace, with no shell substitution. Command agents stream stdout/stderr but do not accept live follow-ups or emit structured reports; their declared capabilities are shown in the chooser. Pi declares live context, tool activity and structured reports, and records a progress report when it accepts the initial prompt or a failed report when it reports an error. Free-form agent prose is never converted into a report. A running agent that received subagent credentials can delegate with `"$ORCHESTRATOR_SUBAGENT_CLI" subagent --title "short title"`, passing the child mandate on stdin. The helper returns the child's final output when it completes, or a queued task ID when capacity is unavailable; `--no-wait` returns the child ID immediately. Provide the same configuration on later launches so persisted tasks can find their selected executor. See [executor contract](docs/executors.md).
+Each executor can have an optional `description`. Parents with delegation enabled see the registered names and descriptions and can pass `--agent NAME` to the subagent helper. Omitting the flag selects from the child mandate, with the parent’s executor as fallback.
 
+The command receives the mandate and queued context on stdin. Its stdout and stderr appear in the output view. Configure only trusted executables and supply the configuration again on later launches. Pi also supports live follow-ups, structured tool activity and reports. See the [executor contract](docs/executors.md).
 
-Vim navigation: `h`/`l` focus tasks/details; `j`/`k` move in the focused pane; `gg`/`G` jump to the first/last task or top/bottom of details. Use `Ctrl-u`/`Ctrl-d` for half pages, `Ctrl-b`/`Ctrl-f` for full pages, and `Ctrl-y`/`Ctrl-e` for individual detail lines. Motions accept counts such as `5j` or `3k`. `A` opens the agent chooser (moved from `g` to reserve `gg`). Input composers keep these keys as normal text; Esc exits input or returns to task navigation.
+## Development
 
-Press `t` to open tool activity for the selected task; it is a keyboard mode rather than a detail tab. In the output view, tool calls appear as compact, indented rows with a status-coloured rail and glyph, visually separate from Markdown-rendered assistant prose; the running glyph animates with Bubble Tea's spinner, and a completed call replaces its running row instead of repeating it. The activity view remains the place to inspect arguments, results and durations. In the focused detail pane, `j`/`k` select a call and Enter expands its arguments and result; Esc collapses it. Expanded calls retain their selection while new activity arrives. Mouse wheel and the existing page/line scrolling controls read long payloads. Each call shows its execution attempt, and large retained payloads carry a `truncated` marker. Tool summaries show commands, file paths or search queries when Pi supplies those arguments. Activity captured before this feature is not reconstructed from old start/stop output.
+The module root builds the CLI, `internal/orchestrator` owns task state and execution, and `internal/tui` contains the Bubble Tea interface. Run these checks from the module root. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
 
-In the activity view (`t`), press `v` to cycle through all calls, the latest attempt, and errors only. Calls show timestamps and available duration; the detail header shows the current running tool action. Enter expands the selected call, and Esc returns to the list.
+```sh
+go build .
+go test ./...
+go vet ./...
+```
 
-Pi thinking blocks are captured in the output transcript but hidden by default so long reasoning does not displace the answer. Press `T` to show or hide them. A hidden block collapses to a compact `thinking hidden` row; a shown block is labelled `THINKING` and rendered separately from assistant prose and tool activity. The markers are a display hint from the Pi adapter, and thinking text remains untrusted agent output. The adapter closes an open thinking block before writing prose or tool activity, so a provider that reports `thinking_end` late cannot hide the answer inside the block.
-
-Agent output is rendered as Markdown using Glamour, including headings, lists, tables and code blocks. Long content still uses the existing scrolling controls. Press `?` for a centered shortcut-help popup; `h`/`l`, Left/Right or Tab change help topics; `j`/`k`, page keys and the wheel scroll within a topic, and `Esc` or `?` closes it. While help is open, task shortcuts are captured by the popup.
-
-Help is grouped into horizontal Navigation, Tasks, Activity, and General tabs. Use `h`/`l`, Left/Right, or Tab/Shift-Tab to change topics. Use `j`/`k`, PgUp/PgDn or the wheel to scroll inside the current topic. Home/End selects the first/last topic.
+See the [repository instructions](AGENTS.md), [design notes](docs/design.md), [lifecycle walkthrough](docs/status.md) and [persistence benchmark](docs/status.md#persistence-benchmark).

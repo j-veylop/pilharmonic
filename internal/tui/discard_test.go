@@ -33,7 +33,7 @@ func TestDiscardWorktreeConfirmation(t *testing.T) {
 	}
 
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = runCleanup(t, m)
 	if _, err = os.Stat(done.ExecutionWorkspace); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("confirmed discard left the worktree: %v", err)
 	}
@@ -61,11 +61,15 @@ func TestDiscardAllMergedWorktreesConfirmation(t *testing.T) {
 	if !strings.Contains(m.View(), "DISCARD 2 MERGED WORKTREE(S)") {
 		t.Fatalf("missing bulk-discard confirmation: %s", m.View())
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	later := startIsolatedReviewTask(t, s, repo, "later")
+	m = runCleanup(t, m)
 	for _, task := range []orchestrator.Task{first, second} {
 		if _, err = os.Stat(task.ExecutionWorkspace); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("worktree %s still exists: %v", task.ID, err)
 		}
+	}
+	if _, err := os.Stat(later.ExecutionWorkspace); err != nil {
+		t.Fatalf("bulk discard included a later worktree: %v", err)
 	}
 	if !strings.Contains(m.notice, "Discarded 2 merged worktree(s)") {
 		t.Fatalf("bulk discard not acknowledged: %q", m.notice)

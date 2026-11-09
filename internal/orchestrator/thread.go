@@ -29,14 +29,8 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 		return Task{}, errors.New("workspace must be a directory")
 	}
 	isolated := s.defaultTaskIsolation(abs)
-	id, err := newID()
-	if err != nil {
-		return Task{}, err
-	}
-	triggerID, err := newID()
-	if err != nil {
-		return Task{}, err
-	}
+	id := newID()
+	triggerID := newID()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
@@ -77,7 +71,7 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 		if isolated {
 			events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
 		}
-		task := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: trigger, Decision: decision, Events: events}
+		task := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: s.selectAgentLocked(prompt, DefaultRouteAgent), CreatedAt: now, UpdatedAt: now, Trigger: trigger, Decision: decision, Events: events}
 		s.data.Tasks = append(s.data.Tasks, task)
 		thread.Triggers = append(thread.Triggers, trigger)
 		thread.Decisions = append(thread.Decisions, decision)
@@ -90,6 +84,18 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 		return clone(task), nil
 	}
 	return Task{}, errors.New("task thread not found")
+}
+
+const threadContextReason = "manual thread follow-up; does not expand mandates"
+
+// Older state records thread-wide delivery in the decision reason.
+func (thread Thread) isThreadContext(triggerID string) bool {
+	for _, d := range thread.Decisions {
+		if d.TriggerID == triggerID && d.Outcome == "context" && d.Reason == threadContextReason {
+			return true
+		}
+	}
+	return false
 }
 
 // SendThreadContext routes one immutable manual trigger to all queued and running
@@ -120,12 +126,8 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 		t := &s.data.Threads[i]
 		for _, existing := range t.Triggers {
 			if existing.ID == triggerID {
-				if t.ID == threadID && existing.Text == text {
-					for _, decision := range t.Decisions {
-						if decision.TriggerID == triggerID && decision.Outcome == "context" && decision.Reason == "manual thread follow-up; does not expand mandates" {
-							return nil
-						}
-					}
+				if t.ID == threadID && existing.Text == text && t.isThreadContext(triggerID) {
+					return nil
 				}
 				return errors.New("trigger ID already exists")
 			}
@@ -180,7 +182,7 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 		return errors.New("thread has no subscribed queued or running tasks")
 	}
 	thread.Triggers = append(thread.Triggers, base)
-	thread.Decisions = append(thread.Decisions, Decision{TriggerID: triggerID, Outcome: "context", Reason: "manual thread follow-up; does not expand mandates", CreatedAt: now})
+	thread.Decisions = append(thread.Decisions, Decision{TriggerID: triggerID, Outcome: "context", Reason: threadContextReason, CreatedAt: now})
 	if err := s.save(); err != nil {
 		for i, old := range oldTasks {
 			s.data.Tasks[i] = old
@@ -197,11 +199,7 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 }
 
 func (s *Service) AddManualThreadContext(taskID, text string) error {
-	id, err := newID()
-	if err != nil {
-		return err
-	}
-	return s.SendThreadContext(taskID, id, text)
+	return s.SendThreadContext(taskID, newID(), text)
 }
 
 // FollowUp records one manual follow-up for a selected task. Queued and running
@@ -223,12 +221,14 @@ func (s *Service) FollowUp(taskID, text string) (bool, error) {
 		if t.ID != taskID {
 			continue
 		}
+		if t.DiscardPending {
+			return false, errors.New("worktree discard is pending; wait before following up")
+		}
 		if t.Status == Queued || t.Status == Running {
-			id, err := newID()
-			if err != nil {
-				return false, err
-			}
-			return false, s.addContextLocked(taskID, id, text)
+			return false, s.addContextLocked(taskID, newID(), text)
+		}
+		if err := s.checkRequeueIntegrationLocked(*t); err != nil {
+			return false, err
 		}
 		switch t.Status {
 		case Completed, Failed, Canceled, Interrupted:
@@ -245,10 +245,7 @@ func (s *Service) FollowUp(taskID, text string) (bool, error) {
 		if thread == nil {
 			return false, errors.New("task thread not found")
 		}
-		id, err := newID()
-		if err != nil {
-			return false, err
-		}
+		id := newID()
 		now := time.Now().UTC()
 		trigger := Trigger{ID: id, Source: "manual", Text: text, CreatedAt: now, Delivery: DeliveryAtStart}
 		decision := Decision{TriggerID: id, Outcome: "context", Reason: "manual follow-up; requeues the task without changing its mandate", CreatedAt: now}

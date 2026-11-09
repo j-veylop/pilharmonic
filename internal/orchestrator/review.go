@@ -78,21 +78,20 @@ func (t *Task) settleReview(status, commit, actor, note string) error {
 
 // ApproveReview records the local operator's approval of the prepared worktree
 // commit currently awaiting review.
-func (s *Service) ApproveReview(id, note string) error {
-	return s.recordReview(id, ReviewApproved, note)
+func (s *Service) ApproveReview(id, commit, note string) error {
+	return s.recordReview(id, ReviewApproved, commit, note)
 }
 
 // RejectReview records the local operator's rejection of the prepared worktree
 // commit currently awaiting review. The commit and worktree are retained; the
 // decision does not undo an automatic merge.
-func (s *Service) RejectReview(id, note string) error {
-	return s.recordReview(id, ReviewRejected, note)
+func (s *Service) RejectReview(id, commit, note string) error {
+	return s.recordReview(id, ReviewRejected, commit, note)
 }
 
-// recordReview persists an operator decision with its event. The decision is
-// matched against the stored commit so a stale caller cannot decide on
-// different work. Caller state is rolled back if the save fails.
-func (s *Service) recordReview(id, decision, note string) error {
+// recordReview checks that the displayed commit still awaits review and
+// persists the decision with its event. A failed save restores the previous state.
+func (s *Service) recordReview(id, decision, commit, note string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
@@ -104,7 +103,7 @@ func (s *Service) recordReview(id, decision, note string) error {
 			continue
 		}
 		old := clone(*t)
-		if err := t.settleReview(decision, t.ReviewCommit, LocalActor, note); err != nil {
+		if err := t.settleReview(decision, commit, LocalActor, note); err != nil {
 			return err
 		}
 		t.UpdatedAt = t.ReviewedAt

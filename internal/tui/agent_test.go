@@ -63,7 +63,7 @@ func TestAgentPickerFitsSmallTerminal(t *testing.T) {
 
 func TestAgentPickerShowsCapabilities(t *testing.T) {
 	m := model{agentTask: "task", agentChoices: []orchestrator.AgentInfo{{
-		Name: "pi", LiveContext: true,
+		Name:         "pi",
 		Capabilities: orchestrator.AgentCapabilities{LiveContext: true, ToolActivity: true, StructuredReports: true},
 	}}, width: 160, height: 30}
 	view := m.View()

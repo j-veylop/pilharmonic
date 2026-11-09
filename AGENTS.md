@@ -2,6 +2,8 @@
 
 This repository is a small, local-first agent orchestrator. Read `docs/design.md` before changing routing, lifecycle, persistence, or executor behavior. Keep the implementation understandable and prefer the Go standard library; Bubble Tea is the intentional terminal UI dependency.
 
+- Keep the CLI at the Go module root. Engine code belongs in `internal/orchestrator` and terminal code in `internal/tui`. Read the package-level `AGENTS.md` before editing either package.
+- Format changed Go files with `gofmt`. When imports change module requirements, run `go mod tidy` and include the resulting `go.mod` and `go.sum` changes.
 - Preserve the distinction between an incoming request, the decision to accept it, its original mandate, and an execution attempt. Later context must not silently expand a mandate.
 - Treat agent output as untrusted data. Do not execute output as shell commands. Pass prompts as process arguments or input, never through a shell.
 - Preserve durable history and make state changes safe under concurrent UI and worker activity. Do not claim features or safety guarantees that are not implemented.

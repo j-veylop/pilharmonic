@@ -75,9 +75,9 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 	}
 	defer s.Shutdown()
 	release := make(chan struct{})
-	started := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
-		close(started)
+	writers := make(chan outputWriter, 1)
+	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
+		writers <- out.(outputWriter)
 		select {
 		case <-release:
 			return nil
@@ -92,8 +92,7 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 	if err = s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
-	<-started
-	writer := outputWriter{s, task.ID}
+	writer := <-writers
 	if err = writer.RecordReport("progress", "halfway"); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +111,30 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 	await(t, s, task.ID, Completed)
 	if err = writer.RecordReport("progress", "too late"); err == nil {
 		t.Fatal("adapter reported after the attempt ended")
+	}
+	if _, err = s.FollowUp(task.ID, "follow-up"); err != nil {
+		t.Fatal(err)
+	}
+	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
+		writers <- out.(outputWriter)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	currentWriter := <-writers
+	if err = writer.RecordReport("progress", "stale"); err == nil {
+		t.Fatal("an old adapter reported for the new attempt")
+	}
+	if _, err = writer.Write([]byte("stale")); err == nil {
+		t.Fatal("an old adapter wrote output for the new attempt")
+	}
+	if err = writer.RecordToolActivity(ToolActivity{ID: "stale"}); err == nil {
+		t.Fatal("an old adapter recorded a tool call for the new attempt")
+	}
+	if err = currentWriter.RecordReport("progress", "second attempt"); err != nil {
+		t.Fatal(err)
 	}
 }
 

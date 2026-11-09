@@ -13,7 +13,11 @@ import (
 )
 
 // PiRunner translates Pi's JSON event stream into readable live output.
-type PiRunner struct{ Command string }
+type PiRunner struct {
+	Command      string
+	instructions string
+	model        string
+}
 
 // Pi's default tool palette contains read, bash, edit and write but not the
 // dedicated grep, find and ls tools. While those are absent, Pi's generated
@@ -32,8 +36,17 @@ const (
 
 // piArgs returns the Pi flags shared by the JSON and RPC adapters. Unknown tool
 // names are ignored by Pi, and the flags are arguments rather than shell text.
-func piArgs(mode string) []string {
-	return []string{"--mode", mode, "--tools", piTools, "--append-system-prompt", piToolGuidance}
+func (p PiRunner) piArgs(mode string) []string {
+	guidance := piToolGuidance
+	if p.instructions != "" {
+		guidance += "\n" + p.instructions
+	}
+
+	args := []string{"--mode", mode, "--tools", piTools, "--append-system-prompt", guidance}
+	if p.model != "" {
+		args = append(args, "--model", p.model)
+	}
+	return args
 }
 
 func (PiRunner) Capabilities() AgentCapabilities {
@@ -119,11 +132,48 @@ func adapterReport(out io.Writer, kind, message string) error {
 	return recorder.RecordReport(kind, message)
 }
 
-func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
-	name := p.Command
-	if name == "" {
-		name = "pi"
+type piAssistantUpdate struct {
+	Type         string `json:"type"`
+	Delta        string `json:"delta"`
+	Content      string `json:"content"`
+	ContentIndex int    `json:"contentIndex"`
+}
+
+func (t *piTranscript) update(e piAssistantUpdate) error {
+	switch e.Type {
+	case "text_start":
+		return t.closeThinking()
+	case "text_delta":
+		return t.prose(e.Delta)
+	case "thinking_start":
+		return t.thinkingStart(e.ContentIndex)
+	case "thinking_delta":
+		return t.thinkingDelta(e.ContentIndex, e.Delta)
+	case "thinking_end":
+		return t.thinkingEnd(e.ContentIndex, e.Content)
+	default:
+		return nil
 	}
+}
+
+type piMessage struct {
+	Role         string `json:"role"`
+	StopReason   string `json:"stopReason"`
+	ErrorMessage string `json:"errorMessage"`
+}
+
+// failure returns the final assistant message's error, if any.
+func (m piMessage) failure() string {
+	if m.StopReason != "error" && m.StopReason != "aborted" {
+		return ""
+	}
+	if m.ErrorMessage != "" {
+		return m.ErrorMessage
+	}
+	return "Pi reported " + m.StopReason
+}
+
+func piPrompt(t Task) string {
 	var prompt strings.Builder
 	prompt.WriteString("Original mandate:\n" + t.Prompt)
 	if len(t.Context) > 0 {
@@ -133,7 +183,15 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 		}
 	}
 	prompt.WriteString(t.controlGuidance)
-	cmd := exec.CommandContext(ctx, name, append(piArgs("json"), "--", prompt.String())...)
+	return prompt.String()
+}
+
+func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
+	name := p.Command
+	if name == "" {
+		name = "pi"
+	}
+	cmd := exec.CommandContext(ctx, name, append(p.piArgs("json"), "--", piPrompt(t))...)
 	cmd.Dir = t.Workspace
 	cmd.Env = t.runnerEnvironment()
 	stdout, err := cmd.StdoutPipe()
@@ -153,20 +211,11 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 	transcript := newPiTranscript(out)
 	for scanner.Scan() {
 		var event struct {
-			Type      string `json:"type"`
-			ToolName  string `json:"toolName"`
-			IsError   bool   `json:"isError"`
-			Assistant struct {
-				Type         string `json:"type"`
-				Delta        string `json:"delta"`
-				Content      string `json:"content"`
-				ContentIndex int    `json:"contentIndex"`
-			} `json:"assistantMessageEvent"`
-			Message struct {
-				Role         string `json:"role"`
-				StopReason   string `json:"stopReason"`
-				ErrorMessage string `json:"errorMessage"`
-			} `json:"message"`
+			Type      string            `json:"type"`
+			ToolName  string            `json:"toolName"`
+			IsError   bool              `json:"isError"`
+			Assistant piAssistantUpdate `json:"assistantMessageEvent"`
+			Message   piMessage         `json:"message"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			streamErr = fmt.Errorf("invalid Pi JSON event: %w", err)
@@ -175,18 +224,7 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 		var writeErr error
 		switch event.Type {
 		case "message_update":
-			switch event.Assistant.Type {
-			case "text_start":
-				writeErr = transcript.closeThinking()
-			case "text_delta":
-				writeErr = transcript.prose(event.Assistant.Delta)
-			case "thinking_start":
-				writeErr = transcript.thinkingStart(event.Assistant.ContentIndex)
-			case "thinking_delta":
-				writeErr = transcript.thinkingDelta(event.Assistant.ContentIndex, event.Assistant.Delta)
-			case "thinking_end":
-				writeErr = transcript.thinkingEnd(event.Assistant.ContentIndex, event.Assistant.Content)
-			}
+			writeErr = transcript.update(event.Assistant)
 		case "tool_execution_start":
 			writeErr = transcript.prose("\n[tool started: " + event.ToolName + "]\n")
 		case "tool_execution_end":
@@ -199,13 +237,7 @@ func (p PiRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 			writeErr = transcript.closeThinking()
 			if event.Message.Role == "assistant" {
 				sawAssistant = true
-				agentErr = ""
-			}
-			if event.Message.Role == "assistant" && (event.Message.StopReason == "error" || event.Message.StopReason == "aborted") {
-				agentErr = event.Message.ErrorMessage
-				if agentErr == "" {
-					agentErr = "Pi reported " + event.Message.StopReason
-				}
+				agentErr = event.Message.failure()
 			}
 		}
 		if writeErr != nil {

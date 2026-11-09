@@ -15,7 +15,7 @@ func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m = next.(model)
-	if m.input {
+	if m.input.kind != "" {
 		t.Fatal("help key started task composer")
 	}
 	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})

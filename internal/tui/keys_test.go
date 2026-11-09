@@ -55,12 +55,20 @@ func TestVimMotionsAndFocus(t *testing.T) {
 	}
 }
 func TestVimKeysRemainTextInComposer(t *testing.T) {
-	m := model{input: true}
+	m := model{input: composer{kind: newTaskInput}}
 	for _, r := range "ggGhjkl123" {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = next.(model)
 	}
-	if m.draft != "ggGhjkl123" || m.vimG || m.vimCount != 0 {
+	if m.input.text != "ggGhjkl123" || m.vimG || m.vimCount != 0 {
 		t.Fatalf("composer consumed motions: %+v", m)
+	}
+}
+
+func TestCancelComposerClearsTargetAndDraft(t *testing.T) {
+	m := model{input: composer{kind: threadInput, target: "previous", text: "discard me"}}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.input != (composer{}) {
+		t.Fatalf("canceled input retained state: %+v", m.input)
 	}
 }

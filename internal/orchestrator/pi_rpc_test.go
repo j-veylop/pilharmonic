@@ -15,11 +15,16 @@ func TestPiRPCAcknowledgesFollowup(t *testing.T) {
 	script := `read initial
 printf '%s\n' '{"type":"response","id":"initial","success":true,"data":{"disposition":"started"}}'
 read follow
-printf '%s\n' '{"type":"response","id":"f1","success":true,"data":{"disposition":"queued"}}' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Done"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}' '{"type":"agent_settled"}'
+case "$follow" in
+  *'"id":"follow:initial"'*) ;;
+  *) exit 1 ;;
+esac
+printf '%s\n' '{"type":"response","id":"follow:initial","success":true,"data":{"disposition":"queued"}}' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Done"}}' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}' '{"type":"agent_settled"}'
 while read line; do :; done
 `
 	follow := make(chan Trigger, 1)
-	follow <- Trigger{ID: "f1", Text: "existing style"}
+	// A caller may choose the same trigger ID that the adapter uses for the initial prompt.
+	follow <- Trigger{ID: "initial", Text: "existing style"}
 	var output bytes.Buffer
 	acknowledgements := make(chan string, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -32,7 +37,7 @@ while read line; do :; done
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := <-acknowledgements; got != "f1:queued" {
+	if got := <-acknowledgements; got != "initial:queued" {
 		t.Fatal(got)
 	}
 	if !strings.Contains(output.String(), "Done") {

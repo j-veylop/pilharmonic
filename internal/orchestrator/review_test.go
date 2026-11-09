@@ -259,11 +259,11 @@ func TestServiceReviewDecisionIsPersistedAndAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.ApproveReview(task.ID, ""); err == nil {
+	if err = s.ApproveReview(task.ID, "abc123", ""); err == nil {
 		t.Fatal("approved a task with no prepared work")
 	}
 	beginReviewForTest(t, s, task.ID)
-	if err = s.ApproveReview(task.ID, "  looks good  "); err != nil {
+	if err = s.ApproveReview(task.ID, "abc123", "  looks good  "); err != nil {
 		t.Fatal(err)
 	}
 	approved, _ := s.GetTask(task.ID)
@@ -279,7 +279,7 @@ func TestServiceReviewDecisionIsPersistedAndAudited(t *testing.T) {
 	if !audited {
 		t.Fatalf("approval event missing: %+v", approved.Events)
 	}
-	if err = s.RejectReview(task.ID, "changed my mind"); err == nil {
+	if err = s.RejectReview(task.ID, "abc123", "changed my mind"); err == nil {
 		t.Fatal("replaced a settled review")
 	}
 	if err = s.Shutdown(); err != nil {
@@ -295,7 +295,7 @@ func TestServiceReviewDecisionIsPersistedAndAudited(t *testing.T) {
 	if got.ReviewStatus != ReviewApproved || got.ReviewCommit != "abc123" || got.ReviewNote != "looks good" {
 		t.Fatalf("review decision not durable: %+v", got)
 	}
-	if err = restored.RejectReview(task.ID, "late rejection"); err == nil {
+	if err = restored.RejectReview(task.ID, "abc123", "late rejection"); err == nil {
 		t.Fatal("reopened service replaced a settled review")
 	}
 }
@@ -307,7 +307,7 @@ func TestRejectReviewRecordsReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	beginReviewForTest(t, s, task.ID)
-	if err = s.RejectReview(task.ID, "  not needed  "); err != nil {
+	if err = s.RejectReview(task.ID, "abc123", "  not needed  "); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.GetTask(task.ID)
@@ -317,7 +317,7 @@ func TestRejectReviewRecordsReason(t *testing.T) {
 	if got.AwaitingReview() || !got.ReviewSettled() {
 		t.Fatalf("unexpected review state: %+v", got)
 	}
-	if err = s.ApproveReview("missing", ""); err == nil {
+	if err = s.ApproveReview("missing", "abc123", ""); err == nil {
 		t.Fatal("reviewed a missing task")
 	}
 }

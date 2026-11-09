@@ -72,17 +72,6 @@ func (t *Task) updatePendingDelivery(triggerID, attemptID, state, reason string,
 	return false
 }
 
-func (t *Task) setContextDelivery(triggerID, state, reason string) {
-	for i := len(t.Context) - 1; i >= 0; i-- {
-		if t.Context[i].ID != triggerID {
-			continue
-		}
-		t.Context[i].Delivery = state
-		t.Context[i].DeliveryError = reason
-		return
-	}
-}
-
 // settlePendingDeliveries marks unresolved hand-offs from one attempt as
 // unknown. A process ending, a restart or cancellation cannot prove delivery.
 func (t *Task) settlePendingDeliveries(attemptID, reason string, now time.Time) {
@@ -96,9 +85,10 @@ func (t *Task) settlePendingDeliveries(attemptID, reason string, now time.Time) 
 		d.UpdatedAt = now
 	}
 	if attemptID != "" && attemptID == t.currentAttemptID() {
-		for _, c := range t.Context {
+		for i := range t.Context {
+			c := &t.Context[i]
 			if c.Delivery == DeliveryPending {
-				t.setContextDelivery(c.ID, DeliveryUnknown, reason)
+				c.Delivery, c.DeliveryError = DeliveryUnknown, reason
 			}
 		}
 	}

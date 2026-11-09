@@ -62,27 +62,52 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 	return strings.TrimSpace(string(output)), nil
 }
 
+// gitPath resolves a path reported by git rev-parse before comparing it with
+// a reservation. Git may return a path through a symlink.
+func gitPath(ctx context.Context, dir string, option string) (string, error) {
+	path, err := gitOutput(ctx, dir, "rev-parse", "--path-format=absolute", option)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(path)
+}
+
 // workspaceIsolatable reports whether a task created for workspace can start in
 // a dedicated worktree. Isolation is the default only when the workspace is in
 // a Git repository with a committed HEAD. A non-repository, an unborn
 // repository, or a missing git executable keeps the task in the shared
 // workspace because no worktree can be prepared from it.
 func workspaceIsolatable(workspace string) bool {
-	if _, err := exec.LookPath("git"); err != nil {
-		return false
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := gitOutput(ctx, workspace, "rev-parse", "--show-toplevel"); err != nil {
 		return false
 	}
-	if _, err := gitOutput(ctx, workspace, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
-		return false
-	}
-	return true
+	_, err := gitOutput(ctx, workspace, "rev-parse", "--verify", "HEAD^{commit}")
+	return err == nil
 }
 
 type workspaceOwner struct{ TaskID, Source, CommonDir, Commit string }
+
+func readWorkspaceOwner(reservation, taskID string) (workspaceOwner, error) {
+	var owner workspaceOwner
+	path := filepath.Join(reservation, "owner.json")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return owner, errors.New("workspace reservation has no valid ownership record")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return owner, err
+	}
+	if err = json.Unmarshal(b, &owner); err != nil {
+		return owner, fmt.Errorf("workspace ownership: %w", err)
+	}
+	if owner.TaskID != taskID || owner.Source == "" || owner.CommonDir == "" || owner.Commit == "" {
+		return owner, errors.New("workspace ownership does not match task")
+	}
+	return owner, nil
+}
 
 const workspaceCleanupTimeout = 30 * time.Second
 
@@ -120,17 +145,9 @@ func removeTaskWorkspace(ctx context.Context, statePath string, t Task) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("workspace reservation is not a regular directory")
 	}
-	ownerInfo, err := os.Lstat(filepath.Join(reservation, "owner.json"))
-	if err != nil || !ownerInfo.Mode().IsRegular() {
-		return errors.New("workspace reservation has no valid ownership record")
-	}
-	b, err := os.ReadFile(filepath.Join(reservation, "owner.json"))
+	owner, err := readWorkspaceOwner(reservation, t.ID)
 	if err != nil {
 		return err
-	}
-	var owner workspaceOwner
-	if json.Unmarshal(b, &owner) != nil || owner.TaskID != t.ID || owner.Source == "" || owner.CommonDir == "" || owner.Commit == "" {
-		return errors.New("workspace ownership does not match task")
 	}
 
 	tree := filepath.Join(reservation, "tree")
@@ -144,13 +161,9 @@ func removeTaskWorkspace(ctx context.Context, statePath string, t Task) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("workspace worktree is not a regular directory")
 	}
-	common, err := gitOutput(ctx, tree, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	common, err := gitPath(ctx, tree, "--git-common-dir")
 	if err != nil {
 		return fmt.Errorf("inspect worktree before cleanup: %w", err)
-	}
-	common, err = filepath.EvalSymlinks(common)
-	if err != nil {
-		return err
 	}
 	if common != owner.CommonDir {
 		return errors.New("worktree belongs to a different repository")
@@ -162,11 +175,7 @@ func removeTaskWorkspace(ctx context.Context, statePath string, t Task) error {
 }
 
 func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, string, error) {
-	root, err := gitOutput(ctx, t.Workspace, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", "", err
-	}
-	root, err = filepath.EvalSymlinks(root)
+	root, err := gitPath(ctx, t.Workspace, "--show-toplevel")
 	if err != nil {
 		return "", "", err
 	}
@@ -178,11 +187,7 @@ func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, st
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", "", errors.New("workspace is outside source repository")
 	}
-	common, err := gitOutput(ctx, root, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return "", "", err
-	}
-	common, err = filepath.EvalSymlinks(common)
+	common, err := gitPath(ctx, root, "--git-common-dir")
 	if err != nil {
 		return "", "", err
 	}
@@ -213,17 +218,12 @@ func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, st
 		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return "", "", errors.New("workspace reservation is not a regular directory")
 		}
-		info, statErr = os.Lstat(filepath.Join(reservation, "owner.json"))
-		if statErr != nil || !info.Mode().IsRegular() {
-			return "", "", errors.New("workspace reservation has no valid ownership record")
+		saved, err := readWorkspaceOwner(reservation, t.ID)
+		if err != nil {
+			return "", "", err
 		}
-		b, readErr := os.ReadFile(filepath.Join(reservation, "owner.json"))
-		if readErr != nil {
-			return "", "", readErr
-		}
-		var saved workspaceOwner
-		if json.Unmarshal(b, &saved) != nil || saved.TaskID != t.ID || saved.Source != root || saved.CommonDir != common || saved.Commit == "" {
-			return "", "", errors.New("workspace ownership does not match task and source")
+		if saved.Source != root || saved.CommonDir != common {
+			return "", "", errors.New("workspace ownership does not match source")
 		}
 		owner = saved
 	} else {
@@ -233,20 +233,18 @@ func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, st
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return "", "", errors.New("execution workspace is not a regular directory")
 		}
-		actual, gitErr := gitOutput(ctx, tree, "rev-parse", "--path-format=absolute", "--git-common-dir")
+		actual, gitErr := gitPath(ctx, tree, "--git-common-dir")
 		if gitErr != nil {
 			return "", "", gitErr
 		}
-		actual, err = filepath.EvalSymlinks(actual)
-		if err != nil || actual != common {
+		if actual != common {
 			return "", "", errors.New("execution workspace belongs to a different repository")
 		}
-		top, gitErr := gitOutput(ctx, tree, "rev-parse", "--show-toplevel")
+		top, gitErr := gitPath(ctx, tree, "--show-toplevel")
 		if gitErr != nil {
 			return "", "", gitErr
 		}
-		top, err = filepath.EvalSymlinks(top)
-		if err != nil || top != tree {
+		if top != tree {
 			return "", "", errors.New("execution workspace is not the reserved worktree")
 		}
 	} else if errors.Is(statErr, os.ErrNotExist) {

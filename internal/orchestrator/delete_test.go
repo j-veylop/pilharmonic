@@ -190,10 +190,10 @@ func TestDeleteCompletedTasksKeepsIncompleteWorkAndWorkspace(t *testing.T) {
 	}
 	s.mu.Unlock()
 
-	if count := s.DeletableCompletedTasks(); count != 3 {
+	if count := len(s.CompletedDeletionCandidates()); count != 3 {
 		t.Fatalf("deletable count = %d, want 3", count)
 	}
-	deleted, err := s.DeleteCompletedTasks()
+	deleted, err := s.DeleteCompletedTasks(s.CompletedDeletionCandidates())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestDeleteCompletedTasksKeepsIncompleteWorkAndWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reloaded.Shutdown()
-	if count := reloaded.DeletableCompletedTasks(); count != 0 {
+	if count := len(reloaded.CompletedDeletionCandidates()); count != 0 {
 		t.Fatalf("deleted tasks restored: %d deletable", count)
 	}
 	if _, ok := reloaded.GetTask(blockedParent.ID); !ok {
@@ -248,14 +248,14 @@ func TestDeleteCompletedTasksRollsBackFailedSave(t *testing.T) {
 	s.mu.Unlock()
 	savedPath := s.path
 	s.path = t.TempDir()
-	if _, err = s.DeleteCompletedTasks(); err == nil {
+	if _, err = s.DeleteCompletedTasks(s.CompletedDeletionCandidates()); err == nil {
 		t.Fatal("failed save succeeded")
 	}
 	s.path = savedPath
 	if _, ok := s.GetTask(task.ID); !ok {
 		t.Fatal("failed save did not restore tasks")
 	}
-	if count := s.DeletableCompletedTasks(); count != 1 {
+	if count := len(s.CompletedDeletionCandidates()); count != 1 {
 		t.Fatalf("failed save changed deletion eligibility: %d", count)
 	}
 }

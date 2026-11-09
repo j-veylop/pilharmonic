@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -52,13 +51,6 @@ func (m *model) clampRouter() {
 	}
 }
 
-func routeState(task orchestrator.Task) string {
-	if task.Status == orchestrator.Queued && task.ScheduleRequested {
-		return "queued"
-	}
-	return string(task.Status)
-}
-
 func routeWorkspace(task orchestrator.Task) string {
 	if task.Isolated {
 		return "isolated worktree"
@@ -70,7 +62,7 @@ func routeWorkspace(task orchestrator.Task) string {
 }
 
 func routeNotice(task orchestrator.Task) string {
-	return "Routed to " + terminalText(task.Agent) + " · " + routeState(task) + " · " + routeWorkspace(task) + " — " + terminalText(task.Title)
+	return "Routed to " + terminalText(task.Agent) + " · " + string(task.Status) + " · " + routeWorkspace(task) + " — " + terminalText(task.Title)
 }
 
 // routerKey handles the unified entry point. Typing goes to the composer; Tab
@@ -146,15 +138,8 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		}
 		m.clamp()
 		m.clampScroll()
-	case tea.KeyBackspace, tea.KeyCtrlH:
-		if len(m.routerDraft) > 0 {
-			_, n := utf8.DecodeLastRuneInString(m.routerDraft)
-			m.routerDraft = m.routerDraft[:len(m.routerDraft)-n]
-		}
-	case tea.KeyRunes:
-		m.routerDraft += string(msg.Runes)
-	case tea.KeySpace:
-		m.routerDraft += " "
+	default:
+		m.routerDraft = editText(m.routerDraft, msg)
 	}
 	return m, nil
 }
@@ -229,9 +214,4 @@ func (m model) routerRecentRow(task orchestrator.Task, width int) string {
 	row := mutedStyle.Render(stamp) + "  " + status + "  " +
 		titleStyle.Render(terminalText(task.Agent)) + mutedStyle.Render(" · ") + workspaceBadgeFor(task).render() + "  " + title
 	return fit(row, width, 1)
-}
-
-// routerFooterHint keeps the router footer in one place.
-func routerFooterHint() string {
-	return "enter route · tab attention · esc tasks · ? help · ctrl+c quit"
 }

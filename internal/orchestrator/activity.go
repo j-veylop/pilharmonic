@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -71,57 +70,52 @@ func cloneActivities(items []ToolActivity) []ToolActivity {
 func (w outputWriter) RecordToolActivity(activity ToolActivity) error {
 	w.s.mu.Lock()
 	defer w.s.mu.Unlock()
-	for i := range w.s.data.Tasks {
-		task := &w.s.data.Tasks[i]
-		if task.ID != w.id {
-			continue
-		}
-		old := clone(*task)
-		if len(task.Attempts) > 0 {
-			activity.AttemptID = task.Attempts[len(task.Attempts)-1].ID
-		}
-		index := -1
-		for j := range task.Activities {
-			a := &task.Activities[j]
-			if a.ID == activity.ID && a.AttemptID == activity.AttemptID {
-				index = j
-				break
-			}
-		}
-		if index < 0 {
-			task.Activities = append(task.Activities, ToolActivity{ID: activity.ID, AttemptID: activity.AttemptID, Name: activity.Name, StartedAt: time.Now().UTC()})
-			index = len(task.Activities) - 1
-		}
-		a := &task.Activities[index]
-		if activity.Name != "" {
-			a.Name = activity.Name
-		}
-		if len(activity.Args) > 0 {
-			a.Args = boundedPayload(activity.Args)
-		}
-		if len(activity.Result) > 0 {
-			a.Result = boundedPayload(activity.Result)
-		}
-		if activity.Status != "" {
-			a.Status = activity.Status
-		}
-		if activity.DurationMS != nil {
-			n := *activity.DurationMS
-			a.DurationMS = &n
-		}
-		if a.Status == "finished" || a.Status == "failed" {
-			a.FinishedAt = time.Now().UTC()
-		}
-		if len(task.Activities) > maxActivities {
-			task.Activities = append([]ToolActivity(nil), task.Activities[len(task.Activities)-maxActivities:]...)
-		}
-		if err := w.s.save(); err != nil {
-			*task = old
-			return err
-		}
-		return nil
+	task, err := w.taskLocked()
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("task not found")
+	old := clone(*task)
+	activity.AttemptID = w.attemptID
+	index := -1
+	for j := range task.Activities {
+		a := &task.Activities[j]
+		if a.ID == activity.ID && a.AttemptID == activity.AttemptID {
+			index = j
+			break
+		}
+	}
+	if index < 0 {
+		task.Activities = append(task.Activities, ToolActivity{ID: activity.ID, AttemptID: activity.AttemptID, Name: activity.Name, StartedAt: time.Now().UTC()})
+		index = len(task.Activities) - 1
+	}
+	a := &task.Activities[index]
+	if activity.Name != "" {
+		a.Name = activity.Name
+	}
+	if len(activity.Args) > 0 {
+		a.Args = boundedPayload(activity.Args)
+	}
+	if len(activity.Result) > 0 {
+		a.Result = boundedPayload(activity.Result)
+	}
+	if activity.Status != "" {
+		a.Status = activity.Status
+	}
+	if activity.DurationMS != nil {
+		n := *activity.DurationMS
+		a.DurationMS = &n
+	}
+	if a.Status == "finished" || a.Status == "failed" {
+		a.FinishedAt = time.Now().UTC()
+	}
+	if len(task.Activities) > maxActivities {
+		task.Activities = append([]ToolActivity(nil), task.Activities[len(task.Activities)-maxActivities:]...)
+	}
+	if err := w.s.save(); err != nil {
+		*task = old
+		return err
+	}
+	return nil
 }
 func interruptActivities(task *Task) {
 	for i := range task.Activities {

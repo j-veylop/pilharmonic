@@ -307,3 +307,11 @@ func TestMergeBlockedByDirtySourceExplainsAndRetries(t *testing.T) {
 		t.Fatalf("worktree change was not merged on retry: %q, %v", b, readErr)
 	}
 }
+
+func TestUntrackedMergeFailureGuidance(t *testing.T) {
+	cause := errors.New("The following untracked working tree files would be overwritten by merge:\n\tlocal.txt")
+	err := describeMergeFailure(cause)
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "move or commit") {
+		t.Fatalf("missing untracked file guidance or Git diagnostic: %v", err)
+	}
+}

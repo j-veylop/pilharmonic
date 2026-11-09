@@ -17,7 +17,7 @@ type Report struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// reportKinds bounds the vocabulary so every observation has a known meaning.
+// normalizeReport bounds the vocabulary so every observation has a known meaning.
 func normalizeReport(kind, message string) (string, string, error) {
 	switch kind {
 	case "progress", "waiting", "blocked", "ready", "failed":
@@ -92,17 +92,11 @@ func (w outputWriter) RecordReport(kind, message string) error {
 	if w.s.closing {
 		return errors.New("service is shutting down")
 	}
-	for i := range w.s.data.Tasks {
-		t := &w.s.data.Tasks[i]
-		if t.ID != w.id {
-			continue
-		}
-		if t.Status != Running || len(t.Attempts) == 0 || t.Attempts[len(t.Attempts)-1].Status != Running {
-			return errors.New("adapter reports require a running attempt")
-		}
-		return w.s.appendReportLocked(t, kind, message, "adapter", t.currentAttemptID())
+	t, err := w.taskLocked()
+	if err != nil {
+		return err
 	}
-	return errors.New("task not found")
+	return w.s.appendReportLocked(t, kind, message, "adapter", w.attemptID)
 }
 
 // CurrentReport excludes observations made before the current attempt began.
@@ -130,6 +124,9 @@ func (t Task) Stage() string {
 	if t.Status == Canceled {
 		return "canceled"
 	}
+	if t.MergeStatus == MergeWaiting {
+		return "waiting for subagents"
+	}
 	if t.MergeStatus == MergeFailed {
 		return "merge failed"
 	}
@@ -144,18 +141,15 @@ func (t Task) Stage() string {
 		for _, c := range t.Context {
 			if c.CreatedAt.After(r.CreatedAt) {
 				released = true
+				break
 			}
 		}
 		switch r.Kind {
 		case "ready":
 			return "awaiting review"
-		case "blocked", "failed":
+		case "blocked", "failed", "waiting":
 			if !released {
 				return r.Kind
-			}
-		case "waiting":
-			if !released {
-				return "waiting"
 			}
 		}
 	}

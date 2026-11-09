@@ -29,7 +29,7 @@ func TestAgentConfigurationAndSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	agents := s.ListAgents()
-	if len(agents) != 2 || agents[0].Name != "echo" || agents[0].LiveContext || !agents[1].LiveContext {
+	if len(agents) != 2 || agents[0].Name != "echo" || agents[0].Capabilities.LiveContext || !agents[1].Capabilities.LiveContext {
 		t.Fatalf("bad capabilities: %+v", agents)
 	}
 	task, err := s.CreateTask("task", "literal $(touch forbidden)", t.TempDir())
@@ -86,7 +86,7 @@ func TestAgentCapabilityRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	pi := s.ListAgents()
-	if len(pi) != 1 || pi[0].Name != "pi" || !pi[0].LiveContext || !pi[0].Capabilities.LiveContext || !pi[0].Capabilities.ToolActivity || !pi[0].Capabilities.StructuredReports {
+	if len(pi) != 1 || pi[0].Name != "pi" || !pi[0].Capabilities.LiveContext || !pi[0].Capabilities.ToolActivity || !pi[0].Capabilities.StructuredReports {
 		t.Fatalf("bad Pi capabilities: %+v", pi)
 	}
 	s.RegisterRunner("echo", CommandRunner{Command: "cat"})
@@ -94,10 +94,58 @@ func TestAgentCapabilityRegistry(t *testing.T) {
 		if agent.Name != "echo" {
 			continue
 		}
-		if agent.LiveContext || agent.Capabilities.LiveContext || agent.Capabilities.ToolActivity || agent.Capabilities.StructuredReports {
+		if agent.Capabilities.LiveContext || agent.Capabilities.ToolActivity || agent.Capabilities.StructuredReports {
 			t.Fatalf("command runner overclaimed capabilities: %+v", agent)
 		}
 		return
 	}
 	t.Fatal("echo runner not listed")
+}
+
+func TestBuiltinSpecialistsRespectConfiguredExecutor(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	if err := s.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"tester","command":"cat","description":"Custom test runner"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	s.LoadBuiltinSpecialists()
+	reviewer, ok := s.runners["reviewer"].(PiRunner)
+	if !ok || reviewer.instructions == "" || !strings.Contains(strings.Join(reviewer.piArgs("rpc"), " "), reviewer.instructions) {
+		t.Fatal("missing built-in review instructions")
+	}
+	if _, ok := s.runners["tester"].(CommandRunner); !ok || s.agentDescriptions["tester"] != "Custom test runner" {
+		t.Fatal("configured specialist was replaced")
+	}
+}
+
+func TestBuiltinSpecialistCatalog(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.LoadBuiltinSpecialists()
+	for _, name := range []string{"debugger", "explorer", "implementer", "gitter", "reviewer", "tester"} {
+		runner, ok := s.runners[name].(PiRunner)
+		if !ok || runner.instructions == "" || s.agentDescriptions[name] == "" {
+			t.Errorf("missing specialist instructions or description for %q", name)
+		}
+	}
+}
+
+func TestSpecialistSelectionAndModel(t *testing.T) {
+	t.Setenv("ORCHESTRATOR_MODEL_TESTER", "provider/example")
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.LoadBuiltinSpecialists()
+	for request, want := range map[string]string{
+		"Please add tests for the parser": "tester", "add a parser": "implementer",
+		"Review the diff": "reviewer", "Trace the call": "explorer", "Diagnose the timeout": "debugger",
+		"Rebase the branch": "gitter", "Something unexpected happened": "pi",
+	} {
+		task, err := s.CreateTask("draft", request, t.TempDir())
+		if err != nil || task.Agent != want {
+			t.Fatalf("%q: agent %q, err %v", request, task.Agent, err)
+		}
+	}
+	for _, mode := range []string{"rpc", "json"} {
+		args := s.runners["tester"].(PiRunner).piArgs(mode)
+		if args[len(args)-2] != "--model" || args[len(args)-1] != "provider/example" {
+			t.Fatalf("unexpected args %v", args)
+		}
+	}
 }

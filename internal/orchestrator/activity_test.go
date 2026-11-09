@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,14 +19,30 @@ func TestActivityPersistenceAndSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := outputWriter{s, task.ID}
+	defer s.Shutdown()
+	writers := make(chan outputWriter, 1)
+	finish := make(chan struct{})
+	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
+		writers <- out.(outputWriter)
+		select {
+		case <-finish:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}))
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	w := <-writers
 	if err = w.RecordToolActivity(ToolActivity{ID: "call", Name: "bash", Status: "running", Args: json.RawMessage(`{"command":"go test ./..."}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if err = w.RecordToolActivity(ToolActivity{ID: "call", Status: "finished", Result: json.RawMessage(`{"content":[{"type":"text","text":"PASS"}]}`)}); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, _ := s.GetTask(task.ID)
+	close(finish)
+	snapshot := await(t, s, task.ID, Completed)
 	if len(snapshot.Activities) != 1 || snapshot.Activities[0].Summary() != "bash: go test ./..." {
 		t.Fatalf("bad activities %+v", snapshot.Activities)
 	}

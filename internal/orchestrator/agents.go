@@ -32,23 +32,18 @@ type CapabilityReporter interface {
 
 // AgentInfo exposes only capabilities supported by the registered adapter.
 type AgentInfo struct {
+	Description  string
 	Name         string
-	LiveContext  bool
 	Capabilities AgentCapabilities
 }
 
 func capabilitiesOf(runner Runner) AgentCapabilities {
-	capabilities := AgentCapabilities{}
-	if _, ok := runner.(LiveRunner); ok {
-		capabilities.LiveContext = true
-	}
+	var capabilities AgentCapabilities
 	if provider, ok := runner.(CapabilityReporter); ok {
-		declared := provider.Capabilities()
-		// Live context is determined by the interface the scheduler honors, not
-		// by an adapter's declaration.
-		declared.LiveContext = capabilities.LiveContext
-		capabilities = declared
+		capabilities = provider.Capabilities()
 	}
+	// Only the interface the scheduler calls can provide live context.
+	_, capabilities.LiveContext = runner.(LiveRunner)
 	return capabilities
 }
 
@@ -57,12 +52,12 @@ func (s *Service) ListAgents() []AgentInfo {
 	defer s.mu.Unlock()
 	result := make([]AgentInfo, 0, len(s.runners))
 	for name, runner := range s.runners {
-		capabilities := capabilitiesOf(runner)
-		result = append(result, AgentInfo{Name: name, LiveContext: capabilities.LiveContext, Capabilities: capabilities})
+		result = append(result, AgentInfo{Name: name, Description: s.agentDescriptions[name], Capabilities: capabilitiesOf(runner)})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
 }
+
 func (s *Service) SetTaskAgent(id, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -97,9 +92,10 @@ func (s *Service) SetTaskAgent(id, name string) error {
 }
 
 type AgentConfig struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Command     string   `json:"command"`
+	Args        []string `json:"args,omitempty"`
 }
 
 // LoadAgents loads trusted local command definitions atomically. Pi remains built in.
@@ -163,8 +159,9 @@ func (s *Service) LoadAgents(path string) error {
 			return fmt.Errorf("agent %q already registered", name)
 		}
 	}
-	for name, runner := range runners {
-		s.runners[name] = runner
+	for _, a := range config.Agents {
+		s.runners[a.Name] = runners[a.Name]
+		s.agentDescriptions[a.Name] = strings.Join(strings.Fields(a.Description), " ")
 	}
 	return nil
 }

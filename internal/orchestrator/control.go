@@ -98,16 +98,15 @@ func (s *Service) EnableSubagentControl(path string) error {
 	}
 	s.controlPath = path
 	s.controlListener = listener
-	s.controlCtx = ctx
 	s.controlCancel = cancel
 	s.controlWG.Add(1)
 	s.mu.Unlock()
 
-	go s.acceptSubagentControl(listener)
+	go s.acceptSubagentControl(ctx, listener)
 	return nil
 }
 
-func (s *Service) acceptSubagentControl(listener net.Listener) {
+func (s *Service) acceptSubagentControl(ctx context.Context, listener net.Listener) {
 	defer s.controlWG.Done()
 	for {
 		conn, err := listener.Accept()
@@ -125,7 +124,7 @@ func (s *Service) acceptSubagentControl(listener net.Listener) {
 		s.mu.Unlock()
 		go func() {
 			defer s.controlWG.Done()
-			s.handleSubagentControl(conn)
+			s.handleSubagentControl(ctx, conn)
 			_ = conn.Close()
 			s.mu.Lock()
 			delete(s.controlConns, conn)
@@ -137,7 +136,7 @@ func (s *Service) acceptSubagentControl(listener net.Listener) {
 func (s *Service) closeSubagentControl() {
 	s.mu.Lock()
 	listener, path, cancel := s.controlListener, s.controlPath, s.controlCancel
-	s.controlListener, s.controlPath, s.controlCtx, s.controlCancel = nil, "", nil, nil
+	s.controlListener, s.controlPath, s.controlCancel = nil, "", nil
 	if cancel != nil {
 		cancel()
 	}
@@ -154,7 +153,7 @@ func (s *Service) closeSubagentControl() {
 	}
 }
 
-func (s *Service) handleSubagentControl(conn net.Conn) {
+func (s *Service) handleSubagentControl(ctx context.Context, conn net.Conn) {
 	decoder := json.NewDecoder(io.LimitReader(conn, maxControlRequest+1))
 	decoder.DisallowUnknownFields()
 	var req subagentRequest
@@ -192,23 +191,14 @@ func (s *Service) handleSubagentControl(conn net.Conn) {
 	}
 	response := subagentResponse{TaskID: task.ID, Status: string(task.Status), Output: task.Output, Error: task.Error}
 	if req.Wait {
-		s.mu.Lock()
-		controlCtx := s.controlCtx
-		s.mu.Unlock()
-		if controlCtx == nil {
-			controlCtx = context.Background()
-		}
-		waitCtx, cancel := context.WithTimeout(controlCtx, timeout)
+		waitCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		result, waitErr := s.waitForSubagent(waitCtx, task.ID, startTimeout)
+		response.Status = string(result.Status)
+		response.Output = result.Output
+		response.Error = result.Error
 		if waitErr != nil {
-			response.Status = string(result.Status)
-			response.Output = result.Output
 			response.Error = waitErr.Error()
-		} else {
-			response.Status = string(result.Status)
-			response.Output = result.Output
-			response.Error = result.Error
 		}
 	}
 	if response.Status == string(Queued) {
@@ -224,7 +214,7 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	flags := flag.NewFlagSet("subagent", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	title := flags.String("title", "", "short display title for the child task")
-	agent := flags.String("agent", "", "executor for the child (default: parent executor)")
+	agent := flags.String("agent", "", "executor for the child (default: automatic selection, then parent executor)")
 	socket := flags.String("socket", "", "control socket (default: ORCHESTRATOR_CONTROL_SOCKET)")
 	noWait := flags.Bool("no-wait", false, "record and start the child without waiting for it")
 	startTimeout := flags.Duration("start-timeout", defaultStartTimeout, "how long to wait for a free execution slot")

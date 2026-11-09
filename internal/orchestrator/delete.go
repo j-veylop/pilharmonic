@@ -20,7 +20,11 @@ func (s *Service) DeleteTask(id string) error {
 		if t.ID != id {
 			continue
 		}
-		if s.discarding[id] {
+		if t.MergeStatus == MergeWaiting {
+			s.mu.Unlock()
+			return errors.New("task worktree is awaiting integration")
+		}
+		if t.DiscardPending {
 			s.mu.Unlock()
 			return errors.New("worktree is being discarded; wait before deleting")
 		}
@@ -66,6 +70,9 @@ func (s *Service) DeleteTask(id string) error {
 			s.mu.Unlock()
 			return err
 		}
+		s.wg.Add(1)
+		defer s.wg.Done()
+		s.resumeMergesLocked()
 		s.mu.Unlock()
 		if err := s.cleanupTaskWorkspace(deleted); err != nil {
 			return fmt.Errorf("task deleted but workspace cleanup failed: %w", err)
@@ -76,27 +83,37 @@ func (s *Service) DeleteTask(id string) error {
 	return errors.New("task not found")
 }
 
-// DeletableCompletedTasks reports how many completed tasks DeleteCompletedTasks
-// would remove. A completed task is skipped while it still has a child task
+// CompletedDeletionCandidates returns the IDs eligible for bulk deletion. A completed task is skipped while it still has a child task
 // that would remain, so parent links never dangle.
-func (s *Service) DeletableCompletedTasks() int {
+func (s *Service) CompletedDeletionCandidates() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.deletableCompletedLocked())
+	eligible := s.deletableCompletedLocked(nil)
+	var ids []string
+	for _, t := range s.data.Tasks {
+		if eligible[t.ID] {
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids
 }
 
-// DeleteCompletedTasks permanently removes all eligible completed tasks, their
+// DeleteCompletedTasks permanently removes the still-eligible confirmed tasks, their
 // threads when no remaining task uses them, and their dedicated worktrees.
 // Files in the source workspace are not touched. It returns the number of
 // deleted tasks. Cleanup continues for every task and reports joined failures;
 // the deletions are already durable when a cleanup error is returned.
-func (s *Service) DeleteCompletedTasks() (int, error) {
+func (s *Service) DeleteCompletedTasks(ids []string) (int, error) {
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
 		return 0, errors.New("service is shutting down")
 	}
-	eligible := s.deletableCompletedLocked()
+	confirmed := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		confirmed[id] = true
+	}
+	eligible := s.deletableCompletedLocked(confirmed)
 	if len(eligible) == 0 {
 		s.mu.Unlock()
 		return 0, nil
@@ -125,6 +142,8 @@ func (s *Service) DeleteCompletedTasks() (int, error) {
 		s.mu.Unlock()
 		return 0, err
 	}
+	s.wg.Add(1)
+	defer s.wg.Done()
 	s.mu.Unlock()
 
 	var cleanupErr error
@@ -141,7 +160,7 @@ func (s *Service) DeleteCompletedTasks() (int, error) {
 
 // deletableCompletedLocked computes the set of completed tasks whose children,
 // if any, are also completed and eligible. Caller holds mu.
-func (s *Service) deletableCompletedLocked() map[string]bool {
+func (s *Service) deletableCompletedLocked(confirmed map[string]bool) map[string]bool {
 	children := make(map[string][]string)
 	for _, task := range s.data.Tasks {
 		if task.ParentID != "" {
@@ -150,10 +169,10 @@ func (s *Service) deletableCompletedLocked() map[string]bool {
 	}
 	eligible := make(map[string]bool)
 	for _, task := range s.data.Tasks {
-		if task.Status != Completed {
+		if task.Status != Completed || task.MergeStatus == MergeWaiting || (confirmed != nil && !confirmed[task.ID]) {
 			continue
 		}
-		if _, stopping := s.cancel[task.ID]; !stopping && !s.discarding[task.ID] {
+		if _, stopping := s.cancel[task.ID]; !stopping && !task.DiscardPending {
 			eligible[task.ID] = true
 		}
 	}

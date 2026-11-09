@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -15,6 +16,13 @@ func main() {
 		os.Exit(orchestrator.RunSubagentCommand(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "orchestrator:", err)
+		os.Exit(1)
+	}
+}
+
+func run() (err error) {
 	state := flag.String("state", "", "path to the state file (default: user config directory)")
 	workspace := flag.String("workspace", "", "working directory for new tasks (default: current directory)")
 	agents := flag.String("agents", "", "path to optional agent command configuration JSON")
@@ -30,56 +38,50 @@ func main() {
 		os.Exit(2)
 	}
 	if *workspace == "" {
-		var err error
 		*workspace, err = os.Getwd()
 		if err != nil {
-			fail(err)
+			return err
 		}
 	}
 	if *state == "" {
 		dir, err := os.UserConfigDir()
 		if err != nil {
-			fail(err)
+			return err
 		}
 		*state = filepath.Join(dir, "orchestrator", "state.json")
 	}
 	service, err := orchestrator.Open(*state)
 	if err != nil {
-		fail(err)
+		return err
 	}
+	defer func() { err = errors.Join(err, service.Shutdown()) }()
+
 	if err := service.SetDefaultIsolation(*isolation); err != nil {
-		fail(err)
+		return err
 	}
 	if *agents != "" {
 		if err := service.LoadAgents(*agents); err != nil {
-			fail(err)
+			return err
 		}
 	}
+	service.LoadBuiltinSpecialists()
 	if !*subagents {
 		*maxSubagentDepth, *maxSubagents = 0, 0
 	}
 	if err := service.SetSubagentLimits(*maxSubagentDepth, *maxSubagents); err != nil {
-		fail(err)
+		return err
 	}
-	if *subagents && *maxSubagentDepth > 0 && *maxSubagents > 0 {
+	if *maxSubagentDepth > 0 && *maxSubagents > 0 {
 		path := *subagentSocket
 		if path == "" {
 			path = filepath.Join(filepath.Dir(*state), "subagent.sock")
 		}
 		if err := service.EnableSubagentControl(path); err != nil {
-			fail(err)
+			return err
 		}
 	}
 	if err := service.SetConcurrencyLimit(*maxConcurrent); err != nil {
-		fail(err)
+		return err
 	}
-	runErr := tui.Run(service, *workspace)
-	shutdownErr := service.Shutdown()
-	if runErr != nil {
-		fail(runErr)
-	}
-	if shutdownErr != nil {
-		fail(shutdownErr)
-	}
+	return tui.Run(service, *workspace)
 }
-func fail(err error) { fmt.Fprintln(os.Stderr, "orchestrator:", err); os.Exit(1) }

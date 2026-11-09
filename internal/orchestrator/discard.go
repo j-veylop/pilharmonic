@@ -27,20 +27,38 @@ func (s *Service) DiscardWorktree(id string) error {
 		s.mu.Unlock()
 		return err
 	}
+	if !t.DiscardPending {
+		t.DiscardPending = true
+		if err = s.save(); err != nil {
+			t.DiscardPending = false
+			s.mu.Unlock()
+			return err
+		}
+	}
+	task := *t
 	s.discarding[id] = true
+	s.wg.Add(1)
+	defer s.wg.Done()
 	s.mu.Unlock()
 
 	s.mergeMu.Lock()
-	ctx, cancel := context.WithTimeout(context.Background(), discardTimeout)
-	err = discardWorkspace(ctx, s.path, t)
-	cancel()
+	// An explicit retry can encounter a reservation already removed by Git.
+	gone, reconcileErr := reconcileDiscard(s.path, task)
+	if !gone && reconcileErr == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), discardTimeout)
+		err = discardWorkspace(ctx, s.path, task)
+		cancel()
+		// A failed Git invocation may still have removed the directory.
+		gone, reconcileErr = reconcileDiscard(s.path, task)
+	}
 	s.mergeMu.Unlock()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.discarding, id)
-	if err != nil {
-		return err
+	if reconcileErr != nil {
+		// Keep the durable intent. An explicit retry or restart can reconcile it.
+		return errors.Join(err, reconcileErr)
 	}
 	for i := range s.data.Tasks {
 		current := &s.data.Tasks[i]
@@ -48,68 +66,126 @@ func (s *Service) DiscardWorktree(id string) error {
 			continue
 		}
 		old := clone(*current)
-		path := current.ExecutionWorkspace
-		current.ExecutionWorkspace = ""
-		current.IsolationCommit = ""
-		current.UpdatedAt = time.Now().UTC()
-		current.Events = append(current.Events, Event{current.UpdatedAt, "worktree_discarded", "Discarded retained worktree " + path})
-		if err = s.save(); err != nil {
-			*current = old
-			return err
+		message := "Worktree retained"
+		if err != nil {
+			message += ": " + err.Error()
 		}
-		return nil
+		current.finishDiscard(gone, message)
+		if saveErr := s.save(); saveErr != nil {
+			*current = old
+			return errors.Join(err, saveErr)
+		}
+		return err
 	}
 	return errors.New("task not found")
 }
 
-// discardableTaskLocked validates that a task may have its retained worktree
-// discarded. The recorded merge status is a cheap gate; discardWorkspace still
-// verifies the worktree commit against the source checkout. Caller holds mu.
-func (s *Service) discardableTaskLocked(id string) (Task, error) {
+func (t *Task) finishDiscard(gone bool, message string) {
+	t.DiscardPending = false
+	t.UpdatedAt = time.Now().UTC()
+	kind := "worktree_discard_interrupted"
+	if gone {
+		kind = "worktree_discarded"
+		message = "Discarded retained worktree " + t.ExecutionWorkspace
+		t.ExecutionWorkspace = ""
+		t.IsolationCommit = ""
+	}
+	t.Events = append(t.Events, Event{t.UpdatedAt, kind, message})
+}
+
+// reconcileDiscard never removes a surviving tree. If Git removed it, only
+// an empty reservation or the task's validated ownership record may remain.
+func reconcileDiscard(statePath string, t Task) (bool, error) {
+	if t.ID == "." || !filepath.IsLocal(t.ID) || filepath.Base(t.ID) != t.ID {
+		return false, errors.New("invalid task identity for discard")
+	}
+	base := filepath.Join(filepath.Dir(statePath), "workspaces")
+	info, err := os.Lstat(base)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, errors.New("workspace base is not a directory")
+	}
+	reservation := filepath.Join(base, t.ID)
+	info, err = os.Lstat(reservation)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, errors.New("workspace reservation is not a regular directory")
+	}
+	if _, err = os.Lstat(filepath.Join(reservation, "tree")); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	entries, err := os.ReadDir(reservation)
+	if err != nil {
+		return false, err
+	}
+	if len(entries) > 0 {
+		if len(entries) != 1 || entries[0].Name() != "owner.json" {
+			return false, errors.New("unexpected files in discarded worktree reservation")
+		}
+		if _, err = readWorkspaceOwner(reservation, t.ID); err != nil {
+			return false, err
+		}
+		if err = os.Remove(filepath.Join(reservation, "owner.json")); err != nil {
+			return false, err
+		}
+	}
+	return true, os.Remove(reservation)
+}
+
+func (s *Service) discardableTaskLocked(id string) (*Task, error) {
 	if s.closing {
-		return Task{}, errors.New("service is shutting down")
+		return nil, errors.New("service is shutting down")
 	}
-	for _, t := range s.data.Tasks {
-		if t.ID != id {
-			continue
+	for i := range s.data.Tasks {
+		t := &s.data.Tasks[i]
+		if t.ID == id {
+			return t, s.checkDiscardLocked(*t)
 		}
-		if !t.Isolated || t.ExecutionWorkspace == "" {
-			return Task{}, errors.New("task has no retained isolated worktree")
-		}
-		if t.Status == Running {
-			return Task{}, errors.New("task is running; cancel it and wait before discarding its worktree")
-		}
-		if _, active := s.cancel[t.ID]; active {
-			return Task{}, errors.New("task is still stopping; wait before discarding its worktree")
-		}
-		if s.discarding[t.ID] {
-			return Task{}, errors.New("worktree is already being discarded")
-		}
-		if t.MergeStatus != MergeMerged && t.MergeStatus != MergeUpToDate {
-			return Task{}, errors.New("worktree has not been merged; resolve the merge before discarding")
-		}
-		return t, nil
 	}
-	return Task{}, errors.New("task not found")
+	return nil, errors.New("task not found")
 }
 
-// DeletableWorktrees reports how many retained worktrees are candidates for
-// DiscardMergedWorktrees. A candidate is inactive and recorded as merged or up
-// to date; each discard still re-checks the worktree, so a dirty or unmerged
-// worktree can be refused later.
-func (s *Service) DeletableWorktrees() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.discardCandidatesLocked())
+// checkDiscardLocked checks state shared by the single and bulk operations.
+func (s *Service) checkDiscardLocked(t Task) error {
+	if !t.Isolated || t.ExecutionWorkspace == "" {
+		return errors.New("task has no retained isolated worktree")
+	}
+	if t.Status == Running {
+		return errors.New("task is running; cancel it and wait before discarding its worktree")
+	}
+	if _, active := s.cancel[t.ID]; active {
+		return errors.New("task is still stopping; wait before discarding its worktree")
+	}
+	if s.discarding[t.ID] {
+		return errors.New("worktree is already being discarded")
+	}
+	if t.ScheduleRequested {
+		return errors.New("worktree is scheduled for use")
+	}
+	if s.hasInheritedWorkspaceLocked(t, false) {
+		return errors.New("worktree is still referenced by a subagent; delete its tasks before discarding")
+	}
+	if t.MergeStatus != MergeMerged && t.MergeStatus != MergeUpToDate {
+		return errors.New("worktree has not been merged; resolve the merge before discarding")
+	}
+	return nil
 }
 
-// DiscardMergedWorktrees discards every retained worktree recorded as merged or
-// up to date. Failures are collected so one refused worktree does not stop the
-// others; it returns how many were removed.
-func (s *Service) DiscardMergedWorktrees() (int, error) {
-	s.mu.Lock()
-	ids := s.discardCandidatesLocked()
-	s.mu.Unlock()
+// DiscardMergedWorktrees rechecks each confirmed task and discards its worktree
+// when eligible. Failures on one worktree do not prevent the remaining checks.
+func (s *Service) DiscardMergedWorktrees(ids []string) (int, error) {
 	removed := 0
 	var errs []error
 	for _, id := range ids {
@@ -122,24 +198,16 @@ func (s *Service) DiscardMergedWorktrees() (int, error) {
 	return removed, errors.Join(errs...)
 }
 
-// discardCandidatesLocked mirrors the checks in discardableTaskLocked without
-// touching Git. Caller holds mu.
-func (s *Service) discardCandidatesLocked() []string {
+// WorktreeDiscardCandidates returns IDs of retained worktrees eligible for
+// consideration. DiscardWorktree performs the Git checks when confirmed.
+func (s *Service) WorktreeDiscardCandidates() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var ids []string
 	for _, t := range s.data.Tasks {
-		if !t.Isolated || t.ExecutionWorkspace == "" {
-			continue
+		if s.checkDiscardLocked(t) == nil {
+			ids = append(ids, t.ID)
 		}
-		if t.Status == Running || s.discarding[t.ID] {
-			continue
-		}
-		if _, active := s.cancel[t.ID]; active {
-			continue
-		}
-		if t.MergeStatus != MergeMerged && t.MergeStatus != MergeUpToDate {
-			continue
-		}
-		ids = append(ids, t.ID)
 	}
 	return ids
 }
@@ -172,9 +240,6 @@ func discardWorkspace(ctx context.Context, statePath string, t Task) error {
 	}
 	if _, err = gitOutput(ctx, owner.Source, "worktree", "remove", "--", tree); err != nil {
 		return fmt.Errorf("remove worktree: %w", err)
-	}
-	if err = os.RemoveAll(filepath.Dir(tree)); err != nil {
-		return fmt.Errorf("remove worktree reservation: %w", err)
 	}
 	return nil
 }

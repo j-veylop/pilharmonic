@@ -39,6 +39,12 @@ func TestThreadFanoutAndIdempotency(t *testing.T) {
 	if err := s.SendThreadContext(first.ID, "id-1", "conflict"); err == nil {
 		t.Fatal("accepted conflicting trigger")
 	}
+	if err := s.AddContext(first.ID, "id-1", "shared context"); err == nil {
+		t.Fatal("accepted thread trigger as a task-only retry")
+	}
+	if err := s.AddContext(first.ID, first.Trigger.ID, first.Prompt); err == nil {
+		t.Fatal("accepted the original mandate as a context retry")
+	}
 	a, _ := s.GetTask(first.ID)
 	b, _ := s.GetTask(second.ID)
 	c, _ := s.GetTask(third.ID)
@@ -52,6 +58,12 @@ func TestThreadFanoutAndIdempotency(t *testing.T) {
 	b, _ = reloaded.GetTask(second.ID)
 	if len(b.Context) != 1 || b.Context[0].Delivery != "at_start" {
 		t.Fatalf("not persisted: %+v", b.Context)
+	}
+	if err := reloaded.AddContext(first.ID, "direct", "for first task"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reloaded.AddContext(second.ID, "direct", "for first task"); err == nil {
+		t.Fatal("accepted another task's trigger as a retry")
 	}
 }
 

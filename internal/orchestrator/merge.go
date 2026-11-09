@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +16,7 @@ const (
 	MergeMerged   = "merged"
 	MergeUpToDate = "up_to_date"
 	MergeFailed   = "failed"
+	MergeWaiting  = "waiting_for_subagents"
 )
 
 const mergeTimeout = 30 * time.Second
@@ -33,6 +33,16 @@ type mergeOutcome struct {
 // at the same source checkout. Git operations never run while holding the
 // service mutex.
 func (s *Service) autoMergeIsolated(t Task) mergeOutcome {
+	// A failed descendant may have left partial edits in the shared tree.
+	s.mu.Lock()
+	for _, child := range s.data.Tasks {
+		if child.ParentID != "" && child.Workspace == t.ExecutionWorkspace &&
+			(child.Status == Failed || child.Status == Interrupted || child.Status == Canceled || child.MergeStatus == MergeFailed) {
+			s.mu.Unlock()
+			return mergeOutcome{Status: MergeFailed, Error: "Inspect inherited worktree and resolve unsuccessful subagent " + child.ID + " before retrying integration"}
+		}
+	}
+	s.mu.Unlock()
 	s.mergeMu.Lock()
 	defer s.mergeMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
@@ -121,10 +131,10 @@ func describeMergeFailure(err error) error {
 	message := strings.ToLower(err.Error())
 	guidance := ""
 	switch {
-	case strings.Contains(message, "your local changes") || strings.Contains(message, "would be overwritten"):
-		guidance = "source checkout has uncommitted changes to files this worktree also changes; commit or stash them, then retry the task"
 	case strings.Contains(message, "untracked working tree files"):
 		guidance = "source checkout has untracked files this worktree would overwrite; move or commit them, then retry the task"
+	case strings.Contains(message, "your local changes") || strings.Contains(message, "would be overwritten"):
+		guidance = "source checkout has uncommitted changes to files this worktree also changes; commit or stash them, then retry the task"
 	}
 	if guidance == "" {
 		return err
@@ -152,19 +162,9 @@ func validateMergeWorkspace(ctx context.Context, statePath string, t Task) (work
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return owner, "", errors.New("merge workspace reservation is not a regular directory")
 	}
-	ownerInfo, err := os.Lstat(filepath.Join(reservation, "owner.json"))
-	if err != nil || !ownerInfo.Mode().IsRegular() {
-		return owner, "", errors.New("merge workspace reservation has no valid ownership record")
-	}
-	b, err := os.ReadFile(filepath.Join(reservation, "owner.json"))
+	owner, err = readWorkspaceOwner(reservation, t.ID)
 	if err != nil {
 		return owner, "", err
-	}
-	if err = json.Unmarshal(b, &owner); err != nil {
-		return owner, "", fmt.Errorf("merge workspace ownership: %w", err)
-	}
-	if owner.TaskID != t.ID || owner.Source == "" || owner.CommonDir == "" || owner.Commit == "" {
-		return owner, "", errors.New("merge workspace ownership does not match task")
 	}
 
 	tree := filepath.Join(reservation, "tree")
@@ -191,44 +191,32 @@ func validateMergeWorkspace(ctx context.Context, statePath string, t Task) (work
 		return owner, "", errors.New("execution workspace is not inside the reserved worktree")
 	}
 
-	common, err := gitOutput(ctx, tree, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return owner, "", err
-	}
-	common, err = filepath.EvalSymlinks(common)
+	common, err := gitPath(ctx, tree, "--git-common-dir")
 	if err != nil {
 		return owner, "", err
 	}
 	if common != owner.CommonDir {
 		return owner, "", errors.New("worktree belongs to a different repository")
 	}
-	sourceRoot, err := gitOutput(ctx, owner.Source, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return owner, "", err
-	}
-	sourceRoot, err = filepath.EvalSymlinks(sourceRoot)
+	sourceRoot, err := gitPath(ctx, owner.Source, "--show-toplevel")
 	if err != nil {
 		return owner, "", err
 	}
 	if sourceRoot != owner.Source {
 		return owner, "", errors.New("source repository no longer matches the workspace reservation")
 	}
-	sourceCommon, err := gitOutput(ctx, owner.Source, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return owner, "", err
-	}
-	sourceCommon, err = filepath.EvalSymlinks(sourceCommon)
+	sourceCommon, err := gitPath(ctx, owner.Source, "--git-common-dir")
 	if err != nil {
 		return owner, "", err
 	}
 	if sourceCommon != owner.CommonDir {
 		return owner, "", errors.New("source repository no longer matches the worktree")
 	}
-	if root, err := gitOutput(ctx, tree, "rev-parse", "--show-toplevel"); err != nil {
+	root, err := gitPath(ctx, tree, "--show-toplevel")
+	if err != nil {
 		return owner, "", err
-	} else if root, err = filepath.EvalSymlinks(root); err != nil {
-		return owner, "", err
-	} else if root != treeAbs {
+	}
+	if root != treeAbs {
 		return owner, "", errors.New("merge path is not the reserved worktree")
 	}
 	if _, err = gitOutput(ctx, tree, "merge-base", "--is-ancestor", owner.Commit, "HEAD"); err != nil {

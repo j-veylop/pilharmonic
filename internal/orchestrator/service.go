@@ -76,6 +76,7 @@ type Attempt struct {
 }
 
 type Task struct {
+	DiscardPending     bool           `json:"discard_pending,omitempty"`
 	Isolated           bool           `json:"isolated,omitempty"`
 	ExecutionWorkspace string         `json:"execution_workspace,omitempty"`
 	IsolationCommit    string         `json:"isolation_commit,omitempty"`
@@ -116,6 +117,7 @@ type Task struct {
 
 	// Control credentials are process-local: they are never written to the state
 	// file and are cleared when the attempt ends.
+	integrating     bool // guards this retained worktree while Git runs outside mu
 	controlSocket   string
 	controlToken    string
 	controlGuidance string
@@ -137,20 +139,21 @@ type LiveRunner interface {
 }
 
 type Service struct {
-	mu         sync.Mutex
-	mergeMu    sync.Mutex
-	path       string
-	data       state
-	runners    map[string]Runner
-	cancel     map[string]context.CancelFunc
-	discarding map[string]bool
-	wg         sync.WaitGroup
-	closing    bool
-	persistErr error
-	limit      int
-	live       map[string]chan Trigger
-	pending    map[string]*pendingRequest
-	policies   map[string]Policy
+	mu                sync.Mutex
+	mergeMu           sync.Mutex
+	path              string
+	data              state
+	runners           map[string]Runner
+	agentDescriptions map[string]string
+	cancel            map[string]context.CancelFunc
+	discarding        map[string]bool
+	wg                sync.WaitGroup
+	closing           bool
+	persistErr        error
+	limit             int
+	live              map[string]chan Trigger
+	pending           map[string]*pendingRequest
+	policies          map[string]Policy
 
 	defaultIsolation bool
 
@@ -158,7 +161,6 @@ type Service struct {
 	subagentMaxChildren int
 	controlPath         string
 	controlListener     net.Listener
-	controlCtx          context.Context
 	controlCancel       context.CancelFunc
 	controlConns        map[net.Conn]struct{}
 	controlWG           sync.WaitGroup
@@ -168,7 +170,24 @@ func Open(path string) (*Service, error) {
 	if path == "" {
 		return nil, errors.New("state path is required")
 	}
-	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, discarding: map[string]bool{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}, defaultIsolation: true, policies: map[string]Policy{LocalPolicySource: localPolicy{}, SubagentPolicySource: subagentPolicy{}}, subagentMaxDepth: DefaultMaxSubagentDepth, subagentMaxChildren: DefaultMaxSubagents, controlConns: map[net.Conn]struct{}{}}
+	s := &Service{
+		path:              path,
+		agentDescriptions: map[string]string{DefaultRouteAgent: "General-purpose coding agent."},
+		runners:           map[string]Runner{DefaultRouteAgent: PiRunner{}},
+		cancel:            make(map[string]context.CancelFunc),
+		discarding:        make(map[string]bool),
+		limit:             defaultConcurrency,
+		live:              make(map[string]chan Trigger),
+		pending:           make(map[string]*pendingRequest),
+		defaultIsolation:  true,
+		policies: map[string]Policy{
+			LocalPolicySource:    localPolicy{},
+			SubagentPolicySource: subagentPolicy{},
+		},
+		subagentMaxDepth:    DefaultMaxSubagentDepth,
+		subagentMaxChildren: DefaultMaxSubagents,
+		controlConns:        make(map[net.Conn]struct{}),
+	}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -181,14 +200,19 @@ func Open(path string) (*Service, error) {
 	changed := false
 	for i := range s.data.Tasks {
 		t := &s.data.Tasks[i]
+		if t.DiscardPending {
+			gone, err := reconcileDiscard(path, *t)
+			if err != nil {
+				return nil, fmt.Errorf("recover worktree discard for task %s: %w", t.ID, err)
+			}
+			t.finishDiscard(gone, "Interrupted discard; worktree retained")
+			changed = true
+		}
 		if t.settleAllPendingDeliveries("orchestrator stopped before acknowledgement", time.Now().UTC()) {
 			changed = true
 		}
 		if t.ThreadID == "" {
-			id, idErr := newID()
-			if idErr != nil {
-				return nil, idErr
-			}
+			id := newID()
 			t.ThreadID = id
 			s.data.Threads = append(s.data.Threads, Thread{ID: id, Triggers: []Trigger{t.Trigger}, Decisions: []Decision{t.Decision}})
 			changed = true
@@ -196,10 +220,7 @@ func Open(path string) (*Service, error) {
 		if len(t.Attempts) == 0 {
 			for _, event := range t.Events {
 				if event.Kind == "started" {
-					id, idErr := newID()
-					if idErr != nil {
-						return nil, idErr
-					}
+					id := newID()
 					attempt := Attempt{ID: id, Agent: t.Agent, Status: t.Status, StartedAt: event.Time, Output: t.Output, Error: t.Error}
 					if t.Status != Running {
 						attempt.FinishedAt = t.UpdatedAt
@@ -237,12 +258,10 @@ func (s *Service) RegisterRunner(name string, runner Runner) {
 	defer s.mu.Unlock()
 	s.runners[name] = runner
 }
-func newID() (string, error) {
+func newID() string {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b[:]), nil
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 func (s *Service) save() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
@@ -325,19 +344,15 @@ func (s *Service) defaultTaskIsolation(workspace string) bool {
 
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.
 func (s *Service) CreateTask(title, prompt, workspace string) (Task, error) {
-	return s.createTask(title, prompt, workspace, AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual})
-}
-
-// createTask persists an accepted request with the default workspace choice.
-func (s *Service) createTask(title, prompt, workspace string, auth AuthorizationRequest, routedMessages ...string) (Task, error) {
-	return s.createTaskWithIsolation(title, prompt, workspace, s.defaultTaskIsolation(workspace), auth, routedMessages...)
+	return s.createTaskWithIsolation(title, prompt, workspace, s.defaultTaskIsolation(workspace),
+		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual}, s.selectAgent(prompt))
 }
 
 // createTaskWithIsolation persists an accepted request after the source's
 // authorization policy approves it. Routing details are optional so the
 // deterministic router can record its assignment events in the same write as
 // the decision.
-func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isolated bool, auth AuthorizationRequest, routedMessages ...string) (Task, error) {
+func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isolated bool, auth AuthorizationRequest, agent string, routedMessages ...string) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if title == "" || prompt == "" {
@@ -354,18 +369,9 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	if !info.IsDir() {
 		return Task{}, errors.New("workspace must be a directory")
 	}
-	id, err := newID()
-	if err != nil {
-		return Task{}, err
-	}
-	triggerID, err := newID()
-	if err != nil {
-		return Task{}, err
-	}
-	threadID, err := newID()
-	if err != nil {
-		return Task{}, err
-	}
+	id := newID()
+	triggerID := newID()
+	threadID := newID()
 	now := time.Now().UTC()
 	auth.TriggerID, auth.ThreadID, auth.Text, auth.Workspace = triggerID, threadID, prompt, abs
 	decision, err := s.authorize(auth)
@@ -380,7 +386,7 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	if isolated {
 		events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
 	}
-	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: "pi", CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now}, Decision: decision, Events: events}
+	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: agent, CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now}, Decision: decision, Events: events}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data.Tasks = append(s.data.Tasks, t)
@@ -409,7 +415,7 @@ func (s *Service) Start(ctx context.Context, id string) error {
 		if t.ID != id {
 			continue
 		}
-		if s.discarding[id] {
+		if t.DiscardPending {
 			return errors.New("worktree is being discarded; wait before starting the task")
 		}
 		if t.Status != Queued {
@@ -446,52 +452,85 @@ func (s *Service) Start(ctx context.Context, id string) error {
 const maxOutput = 256 * 1024
 
 type outputWriter struct {
-	s  *Service
-	id string
+	s         *Service
+	taskID    string
+	attemptID string
+}
+
+// taskLocked resolves the attempt that owns this sink. An adapter retaining a
+// callback after Run returns must never be able to modify a later attempt.
+func (w outputWriter) taskLocked() (*Task, error) {
+	for i := range w.s.data.Tasks {
+		t := &w.s.data.Tasks[i]
+		if t.ID != w.taskID {
+			continue
+		}
+		if t.Status != Running || len(t.Attempts) == 0 || t.currentAttemptID() != w.attemptID {
+			return nil, errors.New("execution attempt is no longer running")
+		}
+		return t, nil
+	}
+	return nil, errors.New("task not found")
 }
 
 func (w outputWriter) Write(p []byte) (int, error) {
 	w.s.mu.Lock()
 	defer w.s.mu.Unlock()
-	for i := range w.s.data.Tasks {
-		t := &w.s.data.Tasks[i]
-		if t.ID == w.id {
-			t.Output += string(p)
-			if len(t.Output) > maxOutput {
-				t.Output = t.Output[len(t.Output)-maxOutput:]
-			}
-			t.UpdatedAt = time.Now().UTC()
-			if len(t.Attempts) > 0 {
-				t.Attempts[len(t.Attempts)-1].Output = t.Output
-			}
-			if err := w.s.save(); err != nil {
-				return 0, err
-			}
-			break
-		}
+	t, err := w.taskLocked()
+	if err != nil {
+		return 0, err
+	}
+	attempt := &t.Attempts[len(t.Attempts)-1]
+	oldOutput, oldAttemptOutput, oldUpdatedAt := t.Output, attempt.Output, t.UpdatedAt
+	t.Output += string(p)
+	if len(t.Output) > maxOutput {
+		t.Output = t.Output[len(t.Output)-maxOutput:]
+	}
+	t.UpdatedAt = time.Now().UTC()
+	attempt.Output = t.Output
+	if err := w.s.save(); err != nil {
+		t.Output, attempt.Output, t.UpdatedAt = oldOutput, oldAttemptOutput, oldUpdatedAt
+		return 0, err
 	}
 	return len(p), nil
 }
+
 func (s *Service) run(ctx context.Context, t Task, r Runner) {
 	defer s.wg.Done()
 	var err error
 	t, err = s.prepareExecution(ctx, t)
 	if err == nil {
+		writer := outputWriter{s: s, taskID: t.ID, attemptID: t.currentAttemptID()}
 		if lr, ok := r.(LiveRunner); ok {
 			s.mu.Lock()
 			live := s.live[t.ID]
 			s.mu.Unlock()
-			err = lr.RunLive(ctx, t, outputWriter{s, t.ID}, live, func(id string, accepted bool, reason string) { s.contextAck(t.ID, id, accepted, reason) })
+			err = lr.RunLive(ctx, t, writer, live, writer.contextAck)
 		} else {
-			err = r.Run(ctx, t, outputWriter{s, t.ID})
+			err = r.Run(ctx, t, writer)
 		}
 	}
+	s.mu.Lock()
 	merge := mergeOutcome{}
 	if err == nil && ctx.Err() == nil && t.Isolated {
-		merge = s.autoMergeIsolated(t)
+		for i := range s.data.Tasks {
+			owner := &s.data.Tasks[i]
+			if owner.ID != t.ID {
+				continue
+			}
+			if s.hasInheritedWorkspaceLocked(*owner, true) {
+				merge.Status = MergeWaiting
+			} else {
+				owner.integrating = true
+				s.mu.Unlock()
+				merge = s.autoMergeIsolated(t)
+				s.mu.Lock()
+			}
+			break
+		}
 	}
-	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.cancel[t.ID]()
 	delete(s.cancel, t.ID)
 	delete(s.live, t.ID)
 	for i := range s.data.Tasks {
@@ -521,37 +560,9 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 			a.Error = task.Error
 		}
 		task.Events = append(task.Events, Event{task.UpdatedAt, string(task.Status), task.Error})
+		task.integrating = false
 		if merge.Status != "" {
-			task.MergeStatus = merge.Status
-			task.MergeError = merge.Error
-			task.MergeCommit = merge.MergeCommit
-			task.WorktreeCommit = merge.WorktreeCommit
-			task.MergedAt = time.Time{}
-			eventKind, message := "merge_"+merge.Status, ""
-			switch merge.Status {
-			case MergeMerged:
-				eventKind = "merged"
-				task.MergedAt = task.UpdatedAt
-				message = "Merged worktree commit " + merge.WorktreeCommit + " into source (merge commit " + merge.MergeCommit + ")"
-			case MergeUpToDate:
-				eventKind = "merge_up_to_date"
-				task.MergedAt = task.UpdatedAt
-				message = "No unmerged isolated worktree changes"
-			case MergeFailed:
-				eventKind = "merge_failed"
-				message = "Automatic isolated workspace merge failed: " + merge.Error
-			}
-			task.Events = append(task.Events, Event{task.UpdatedAt, eventKind, message})
-		}
-		// Prepared isolated work is recorded for review separately from the merge
-		// outcome. An up-to-date completion has no new commit to review, and a
-		// merge that failed before committing has nothing reviewable yet.
-		if task.Isolated && merge.WorktreeCommit != "" && merge.Status != MergeUpToDate {
-			if reviewErr := task.beginReview(merge.WorktreeCommit); reviewErr != nil {
-				task.Events = append(task.Events, Event{task.UpdatedAt, "review_error", "Could not open review: " + reviewErr.Error()})
-			} else {
-				task.Events = append(task.Events, Event{task.UpdatedAt, "review_pending", "Prepared worktree commit " + merge.WorktreeCommit + " awaits review"})
-			}
+			task.recordMerge(merge)
 		}
 		if err := s.save(); err != nil {
 			s.persistErr = err
@@ -580,6 +591,7 @@ func (s *Service) Cancel(id string) error {
 				return err
 			}
 			s.removePendingLocked(id)
+			s.resumeMergesLocked()
 			return nil
 		}
 		if cancel, ok := s.cancel[id]; ok {
@@ -627,82 +639,83 @@ func (s *Service) AddContext(taskID, triggerID, text string) error {
 // addContextLocked records one context input for a queued or running task.
 // Caller holds mu and has validated triggerID and text.
 func (s *Service) addContextLocked(taskID, triggerID, text string) error {
-	for ti := range s.data.Threads {
-		thread := &s.data.Threads[ti]
-		for _, existing := range thread.Triggers {
-			if existing.ID == triggerID {
-				if existing.Text == text && thread.ID != "" {
-					for _, task := range s.data.Tasks {
-						if task.ID == taskID && task.ThreadID == thread.ID {
-							return nil
-						}
-					}
-				}
-				return errors.New("trigger ID already exists")
-			}
+	var task *Task
+	for i := range s.data.Tasks {
+		if s.data.Tasks[i].ID == taskID {
+			task = &s.data.Tasks[i]
+			break
 		}
 	}
-	for i := range s.data.Tasks {
-		task := &s.data.Tasks[i]
-		if task.ID != taskID {
-			continue
-		}
-		if task.Status != Queued && task.Status != Running {
-			return fmt.Errorf("context can only be added to queued or running tasks; task is %s", task.Status)
-		}
-		var live chan Trigger
-		if task.Status == Running {
-			live = s.live[task.ID]
-			if live == nil {
-				return errors.New("agent does not support live context")
-			}
-			if len(live) == cap(live) {
-				return errors.New("live context queue is full")
-			}
-		}
-		for j := range s.data.Threads {
-			thread := &s.data.Threads[j]
-			if thread.ID != task.ThreadID {
+	if task == nil {
+		return errors.New("task not found")
+	}
+	// A retry must name the same recipient. A mandate or a thread-wide
+	// trigger can have the same text, but came through a different route.
+	for _, thread := range s.data.Threads {
+		for _, existing := range thread.Triggers {
+			if existing.ID != triggerID {
 				continue
 			}
-			now := time.Now().UTC()
-			trigger := Trigger{ID: triggerID, Source: "manual", Text: text, CreatedAt: now}
-			decision := Decision{TriggerID: triggerID, Outcome: "context", Reason: "manual follow-up; does not expand mandate", CreatedAt: now}
-			old := clone(*task)
-			if live != nil {
-				trigger.Delivery = DeliveryPending
-				task.appendDelivery(triggerID, task.currentAttemptID(), DeliveryPending, "", now)
-			} else {
-				trigger.Delivery = DeliveryAtStart
+			if thread.ID == task.ThreadID && existing.Text == text && !thread.isThreadContext(triggerID) {
+				for _, c := range task.Context {
+					if c.ID == triggerID {
+						return nil
+					}
+				}
 			}
-			task.Context = append(task.Context, trigger)
-			task.UpdatedAt = now
-			task.Events = append(task.Events, Event{now, "context", "Manual context added"})
-			thread.Triggers = append(thread.Triggers, trigger)
-			thread.Decisions = append(thread.Decisions, decision)
-			if err := s.save(); err != nil {
-				*task = old
-				thread.Triggers = thread.Triggers[:len(thread.Triggers)-1]
-				thread.Decisions = thread.Decisions[:len(thread.Decisions)-1]
-				return err
-			}
-			if live != nil {
-				live <- trigger
-			}
-			return nil
+			return errors.New("trigger ID already exists")
 		}
-		return errors.New("task thread not found")
 	}
-	return errors.New("task not found")
+	if task.Status != Queued && task.Status != Running {
+		return fmt.Errorf("context can only be added to queued or running tasks; task is %s", task.Status)
+	}
+	var live chan Trigger
+	if task.Status == Running {
+		live = s.live[task.ID]
+		if live == nil {
+			return errors.New("agent does not support live context")
+		}
+		if len(live) == cap(live) {
+			return errors.New("live context queue is full")
+		}
+	}
+	for j := range s.data.Threads {
+		thread := &s.data.Threads[j]
+		if thread.ID != task.ThreadID {
+			continue
+		}
+		now := time.Now().UTC()
+		trigger := Trigger{ID: triggerID, Source: "manual", Text: text, CreatedAt: now}
+		decision := Decision{TriggerID: triggerID, Outcome: "context", Reason: "manual follow-up; does not expand mandate", CreatedAt: now}
+		old := clone(*task)
+		if live != nil {
+			trigger.Delivery = DeliveryPending
+			task.appendDelivery(triggerID, task.currentAttemptID(), DeliveryPending, "", now)
+		} else {
+			trigger.Delivery = DeliveryAtStart
+		}
+		task.Context = append(task.Context, trigger)
+		task.UpdatedAt = now
+		task.Events = append(task.Events, Event{now, "context", "Manual context added"})
+		thread.Triggers = append(thread.Triggers, trigger)
+		thread.Decisions = append(thread.Decisions, decision)
+		if err := s.save(); err != nil {
+			*task = old
+			thread.Triggers = thread.Triggers[:len(thread.Triggers)-1]
+			thread.Decisions = thread.Decisions[:len(thread.Decisions)-1]
+			return err
+		}
+		if live != nil {
+			live <- trigger
+		}
+		return nil
+	}
+	return errors.New("task thread not found")
 }
 
 // AddManualContext creates a unique trigger for a local follow-up.
 func (s *Service) AddManualContext(taskID, text string) error {
-	id, err := newID()
-	if err != nil {
-		return err
-	}
-	return s.AddContext(taskID, id, text)
+	return s.AddContext(taskID, newID(), text)
 }
 
 // Retry returns an unsuccessful task to the queue without changing its mandate.
@@ -717,8 +730,11 @@ func (s *Service) Retry(id string) error {
 		if t.ID != id {
 			continue
 		}
-		if s.discarding[id] {
+		if t.DiscardPending {
 			return errors.New("worktree is being discarded; wait before retrying the task")
+		}
+		if err := s.checkRequeueIntegrationLocked(*t); err != nil {
+			return err
 		}
 		mergeFailed := t.Status == Completed && t.MergeStatus == MergeFailed
 		if t.Status != Failed && t.Status != Interrupted && t.Status != Canceled && !mergeFailed {
@@ -745,36 +761,33 @@ func (s *Service) Retry(id string) error {
 	return errors.New("task not found")
 }
 
-func (s *Service) contextAck(taskID, triggerID string, accepted bool, reason string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.data.Tasks {
-		task := &s.data.Tasks[i]
-		if task.ID != taskID {
+func (w outputWriter) contextAck(triggerID string, accepted bool, reason string) {
+	w.s.mu.Lock()
+	defer w.s.mu.Unlock()
+	task, err := w.taskLocked()
+	if err != nil {
+		return
+	}
+	for i := range task.Context {
+		trigger := &task.Context[i]
+		if trigger.ID != triggerID || trigger.Delivery != DeliveryPending {
 			continue
 		}
-		for _, trigger := range task.Context {
-			if trigger.ID != triggerID || trigger.Delivery != DeliveryPending {
-				continue
-			}
-			state, deliveryError := DeliveryRejected, reason
-			if accepted {
-				state, deliveryError = DeliveryAccepted, ""
-			}
-			old := clone(*task)
-			now := time.Now().UTC()
-			task.setContextDelivery(triggerID, state, deliveryError)
-			if !task.updatePendingDelivery(triggerID, task.currentAttemptID(), state, deliveryError, now) {
-				// State written before delivery records existed still gets a
-				// truthful record for the current attempt.
-				task.appendDelivery(triggerID, task.currentAttemptID(), state, deliveryError, now)
-			}
-			task.Events = append(task.Events, Event{now, "context_" + state, "Context " + triggerID + ": " + reason})
-			if err := s.save(); err != nil {
-				*task = old
-				s.persistErr = err
-			}
-			return
+		state, deliveryError := DeliveryRejected, reason
+		if accepted {
+			state, deliveryError = DeliveryAccepted, ""
 		}
+		old := clone(*task)
+		now := time.Now().UTC()
+		trigger.Delivery, trigger.DeliveryError = state, deliveryError
+		if !task.updatePendingDelivery(triggerID, w.attemptID, state, deliveryError, now) {
+			task.appendDelivery(triggerID, w.attemptID, state, deliveryError, now)
+		}
+		task.Events = append(task.Events, Event{now, "context_" + state, "Context " + triggerID + ": " + reason})
+		if err := w.s.save(); err != nil {
+			*task = old
+			w.s.persistErr = err
+		}
+		return
 	}
 }

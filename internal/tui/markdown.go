@@ -115,12 +115,6 @@ func renderedOutputWithThinking(text string, width int, glyph string, showThinki
 	return result
 }
 
-// renderTranscript keeps the historical hidden-thinking behavior for callers
-// that only need the default transcript.
-func renderTranscript(text string, width int) []string {
-	return renderTranscriptWithThinking(text, width, false)
-}
-
 // renderTranscriptWithThinking keeps assistant prose, thinking and tool
 // activity as separate visual blocks: prose goes through Markdown, tool markers
 // become compact status rows, and thinking is either collapsed or shown.

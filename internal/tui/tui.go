@@ -3,10 +3,7 @@ package tui
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -45,14 +42,7 @@ type model struct {
 	routerFocus      int
 	routerSelected   int
 	width, height    int
-	input            bool
-	draft            string
-	contextTask      string
-	relatedTask      string
-	subagentTask     string
-	reportTask       string
-	reviewTask       string
-	followUpTask     string
+	input            composer
 	historyOffset    int
 	notice           string
 	history          bool
@@ -62,14 +52,8 @@ type model struct {
 	helpPage         int
 	helpScroll       int
 	isolationBusy    bool
-	deleteTaskID     string
-	deleteTaskTitle  string
-	deleteCompleted  bool
-	deleteCount      int
-	discardTaskID    string
-	discardTaskTitle string
-	discardMerged    bool
-	discardCount     int
+	cleanup          cleanupRequest
+	cleanupBusy      bool
 	spinner          spinner.Model
 }
 
@@ -90,6 +74,20 @@ func tick() tea.Cmd           { return tea.Tick(time.Second, func(t time.Time) t
 func (m model) Init() tea.Cmd { return tea.Batch(tick(), m.spinner.Tick) }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case cleanupResultMsg:
+		m.cleanupBusy = false
+		m.notice = string(msg)
+		selected := m.selectedID()
+		m.tasks = m.service.ListTasks()
+		for i, task := range m.tasks {
+			if task.ID == selected {
+				m.selected = i
+				break
+			}
+		}
+		m.clamp()
+		m.clampScroll()
+		return m, nil
 	case isolationResultMsg:
 		m.isolationBusy = false
 		if msg.err != nil {
@@ -135,7 +133,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if !m.input && !m.router && m.deleteTaskID == "" && m.discardTaskID == "" && m.agentTask == "" && !m.deleteCompleted && !m.discardMerged {
+		if m.input.kind == "" && !m.router && m.cleanup.kind == "" && m.agentTask == "" {
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
 				m.scrollDetail(3)
@@ -167,95 +165,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.helpPage = 0
 				m.helpScroll = 0
 			case "end", "G":
-				m.helpPage = 10000
-				m.scrollHelp(0)
+				m.helpPage = len(helpTopics) - 1
+				m.helpScroll = 0
 			}
 			return m, nil
 		}
 		if m.router {
-			var cmd tea.Cmd
-			m, cmd = m.routerKey(msg)
-			return m, cmd
+			return m.routerKey(msg)
 		}
-		if m.deleteTaskID != "" {
-			switch msg.String() {
-			case "y":
-				err := m.service.DeleteTask(m.deleteTaskID)
-				if err != nil {
-					m.notice = err.Error()
-				} else {
-					m.notice = "Task deleted with history and worktree."
-				}
-				m.deleteTaskID, m.deleteTaskTitle = "", ""
-				m.tasks = m.service.ListTasks()
-				m.clamp()
-			case "n", "esc":
-				m.deleteTaskID, m.deleteTaskTitle = "", ""
-				m.notice = "Deletion canceled."
-			case "ctrl+c":
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-		if m.discardTaskID != "" {
-			switch msg.String() {
-			case "y":
-				err := m.service.DiscardWorktree(m.discardTaskID)
-				if err != nil {
-					m.notice = err.Error()
-				} else {
-					m.notice = "Worktree discarded; task history kept."
-				}
-				m.discardTaskID, m.discardTaskTitle = "", ""
-				m.tasks = m.service.ListTasks()
-				m.clamp()
-			case "n", "esc":
-				m.discardTaskID, m.discardTaskTitle = "", ""
-				m.notice = "Discard canceled."
-			case "ctrl+c":
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-		if m.discardMerged {
-			switch msg.String() {
-			case "y":
-				count, err := m.service.DiscardMergedWorktrees()
-				if err != nil {
-					m.notice = fmt.Sprintf("Discarded %d merged worktree(s); %s", count, err.Error())
-				} else {
-					m.notice = fmt.Sprintf("Discarded %d merged worktree(s).", count)
-				}
-				m.discardMerged, m.discardCount = false, 0
-				m.tasks = m.service.ListTasks()
-				m.clamp()
-			case "n", "esc":
-				m.discardMerged, m.discardCount = false, 0
-				m.notice = "Discard canceled."
-			case "ctrl+c":
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-		if m.deleteCompleted {
-			switch msg.String() {
-			case "y":
-				count, err := m.service.DeleteCompletedTasks()
-				if err != nil {
-					m.notice = err.Error()
-				} else {
-					m.notice = fmt.Sprintf("Deleted %d completed task(s) and their history.", count)
-				}
-				m.deleteCompleted, m.deleteCount = false, 0
-				m.tasks = m.service.ListTasks()
-				m.clamp()
-			case "n", "esc":
-				m.deleteCompleted, m.deleteCount = false, 0
-				m.notice = "Deletion canceled."
-			case "ctrl+c":
-				return m, tea.Quit
-			}
-			return m, nil
+		if m.cleanup.kind != "" {
+			return m.cleanupKey(msg.String())
 		}
 		if m.agentTask != "" {
 			switch msg.String() {
@@ -288,99 +207,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.input {
-			switch msg.Type {
-			case tea.KeyEsc:
-				m.input = false
-				m.contextTask = ""
-				m.relatedTask = ""
-				m.subagentTask = ""
-				m.reportTask = ""
-				m.reviewTask = ""
-				m.followUpTask = ""
-				m.draft = ""
-			case tea.KeyEnter:
-				prompt := strings.TrimSpace(m.draft)
-				if prompt == "" {
-					m.notice = "Enter a task first."
-					break
-				}
-				if m.reviewTask != "" {
-					if err := m.service.RejectReview(m.reviewTask, prompt); err != nil {
-						m.notice = err.Error()
-					} else {
-						m.notice = "Review rejected; worktree unchanged."
-					}
-					m.reviewTask = ""
-				} else if m.reportTask != "" {
-					kind, message, _ := strings.Cut(prompt, " ")
-					err := m.service.RecordReport(m.reportTask, kind, message)
-					if err != nil {
-						m.notice = err.Error()
-					} else {
-						m.notice = "Report recorded."
-					}
-					m.reportTask = ""
-				} else if m.contextTask != "" {
-					err := m.service.AddManualThreadContext(m.contextTask, prompt)
-					if err != nil {
-						m.notice = err.Error()
-					} else {
-						m.notice = "Context recorded; delivery status is in history."
-					}
-					m.contextTask = ""
-				} else if m.followUpTask != "" {
-					requeued, err := m.service.FollowUp(m.followUpTask, prompt)
-					if err != nil {
-						m.notice = err.Error()
-					} else if requeued {
-						m.notice = "Follow-up recorded; requeued. Press r to start."
-					} else {
-						m.notice = "Follow-up recorded; delivery status is in history."
-					}
-					m.followUpTask = ""
-				} else if m.subagentTask != "" {
-					task, err := m.service.SpawnSubagent(m.subagentTask, "", prompt, "")
-					if err != nil {
-						m.notice = err.Error()
-					} else {
-						m.notice = "Subagent started: " + task.ID
-					}
-					m.subagentTask = ""
-				} else {
-					title := prompt
-					if len([]rune(title)) > 60 {
-						title = string([]rune(title)[:57]) + "..."
-					}
-					var task orchestrator.Task
-					var err error
-					if m.relatedTask != "" {
-						task, err = m.service.CreateRelatedTask(m.relatedTask, title, prompt, m.workspace)
-					} else {
-						task, err = m.service.CreateTask(title, prompt, m.workspace)
-					}
-					m.relatedTask = ""
-					if err != nil {
-						m.notice = err.Error()
-					} else {
-						m.notice = "Task queued: " + task.ID
-					}
-				}
-				m.tasks = m.service.ListTasks()
-				m.input = false
-				m.draft = ""
-				m.clamp()
-			case tea.KeyBackspace, tea.KeyCtrlH:
-				if len(m.draft) > 0 {
-					_, n := utf8.DecodeLastRuneInString(m.draft)
-					m.draft = m.draft[:len(m.draft)-n]
-				}
-			case tea.KeyRunes:
-				m.draft += string(msg.Runes)
-			case tea.KeySpace:
-				m.draft += " "
-			}
-			return m, nil
+		if m.input.kind != "" {
+			return m.composerKey(msg)
 		}
 		if m.activityKey(msg.String()) {
 			return m, nil
@@ -459,12 +287,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = ""
 			m.clampRouter()
 		case "n":
-			m.input = true
+			m.input = composer{kind: newTaskInput}
 			m.notice = ""
 		case "a":
 			if len(m.tasks) > 0 {
-				m.relatedTask = m.tasks[m.selected].ID
-				m.input = true
+				m.input = composer{kind: relatedTaskInput, target: m.tasks[m.selected].ID}
 				m.notice = ""
 			}
 		case "b":
@@ -473,15 +300,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if t.Status != orchestrator.Running {
 					m.notice = "Spawn subagents only from a running task."
 				} else {
-					m.subagentTask = t.ID
-					m.input = true
+					m.input = composer{kind: subagentInput, target: t.ID}
 					m.notice = "Enter a self-contained mandate for the subagent."
 				}
 			}
-		case "pgup":
-			m.scrollDetail(m.detailPage())
-		case "pgdown":
-			m.scrollDetail(-m.detailPage())
 		case "[":
 			m.scrollDetail(1)
 		case "]":
@@ -492,15 +314,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyOffset = 0
 		case "f":
 			if len(m.tasks) > 0 {
-				m.contextTask = m.tasks[m.selected].ID
-				m.input = true
+				m.input = composer{kind: threadInput, target: m.tasks[m.selected].ID}
 				m.notice = ""
 			}
 		case "F":
 			if len(m.tasks) > 0 {
 				t := m.tasks[m.selected]
-				m.followUpTask = t.ID
-				m.input = true
+				m.input = composer{kind: followUpInput, target: t.ID}
 				m.notice = ""
 				if t.Status == orchestrator.Queued || t.Status == orchestrator.Running {
 					m.notice = "Context does not expand the mandate."
@@ -508,28 +328,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice = "Follow-up requeues the task; press r to start."
 				}
 			}
-		case "up", "k":
-			if m.detailFocus || m.fullscreen {
-				m.scrollDetail(1)
-				return m, nil
-			}
-			m.historyOffset = 0
-			if m.selected > 0 {
-				m.selected--
-			}
-		case "down", "j":
-			if m.detailFocus || m.fullscreen {
-				m.scrollDetail(-1)
-				return m, nil
-			}
-			m.historyOffset = 0
-			if m.selected < len(m.tasks)-1 {
-				m.selected++
-			}
 		case "p":
 			if len(m.tasks) > 0 {
-				m.reportTask = m.tasks[m.selected].ID
-				m.input = true
+				m.input = composer{kind: reportInput, target: m.tasks[m.selected].ID}
 				m.notice = "Report: kind and message (progress, waiting, blocked, ready, failed)"
 			}
 		case "s":
@@ -575,7 +376,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t := m.tasks[m.selected]
 				if !t.AwaitingReview() {
 					m.notice = "No worktree commit awaits review."
-				} else if err := m.service.ApproveReview(t.ID, ""); err != nil {
+				} else if err := m.service.ApproveReview(t.ID, t.ReviewCommit, ""); err != nil {
 					m.notice = err.Error()
 				} else {
 					m.notice = "Review approved for commit " + t.ReviewCommit + "."
@@ -587,49 +388,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !t.AwaitingReview() {
 					m.notice = "No worktree commit awaits review."
 				} else {
-					m.reviewTask = t.ID
-					m.input = true
+					m.input = composer{kind: rejectReviewInput, target: t.ID, reviewCommit: t.ReviewCommit}
 					m.notice = "Enter a reason to reject the review."
 				}
 			}
-		case "d":
-			if len(m.tasks) > 0 {
-				task := m.tasks[m.selected]
-				if task.Status == orchestrator.Running {
-					m.notice = "Cancel and stop the running task before deleting."
-				} else {
-					m.deleteTaskID, m.deleteTaskTitle = task.ID, task.Title
-					m.notice = ""
-				}
-			}
-		case "D":
-			count := m.service.DeletableCompletedTasks()
-			if count == 0 {
-				m.notice = "No completed tasks to delete."
-			} else {
-				m.deleteCompleted, m.deleteCount = true, count
-				m.notice = ""
-			}
-		case "x":
-			if len(m.tasks) > 0 {
-				task := m.tasks[m.selected]
-				if !task.Isolated || task.ExecutionWorkspace == "" {
-					m.notice = "Selected task has no retained worktree."
-				} else if task.Status == orchestrator.Running {
-					m.notice = "Cancel and stop the running task before discarding its worktree."
-				} else {
-					m.discardTaskID, m.discardTaskTitle = task.ID, task.Title
-					m.notice = ""
-				}
-			}
-		case "X":
-			count := m.service.DeletableWorktrees()
-			if count == 0 {
-				m.notice = "No merged worktrees to discard."
-			} else {
-				m.discardMerged, m.discardCount = true, count
-				m.notice = ""
-			}
+		case "d", "D", "x", "X":
+			m.prepareCleanup(msg.String())
 		case "c":
 			if len(m.tasks) > 0 {
 				err := m.service.Cancel(m.tasks[m.selected].ID)

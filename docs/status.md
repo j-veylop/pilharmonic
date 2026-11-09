@@ -5,38 +5,14 @@ parts easy to see at once. It describes implemented behavior only. The design
 intent and the forward-looking invariants are in `design.md` and
 `routing-spec.md`; where those documents describe future work, this one says so.
 
-## In one paragraph
-
-Orchestrator is a local, single-machine Go application with a Bubble Tea
-terminal UI. A person submits a task in the UI, explicitly starts it, and a
-scheduler launches at most a configured number of Pi (or configured command)
-subprocesses at a time. Requests, decisions, threads, tasks, execution attempts,
-events, reports, tool activity and captured output are stored in one JSON state
-file that is rewritten atomically. Related tasks, thread follow-ups, operator and
-adapter status reports, retries, deletion and default Git-worktree isolation with
-automatic merging of successful isolated work are supported locally. The UI opens on a deterministic router that accepts work,
-assigns Pi and starts it; the task board exposes a tool-activity view, a
-shortcut-help popup and an agent chooser. Assistant output is rendered as
-Markdown. Authorization is an explicit compiled-in policy gate with audit
-evidence, but there is no external input source, configurable policy engine or
-GitHub integration. New tasks use a dedicated Git worktree when their source
-workspace is a Git repository with a committed `HEAD`; otherwise they share
-their source workspace.
-
-## Repository status (2026-11-09)
-
-- The history contains the baseline plus the router, tool-activity and staged lifecycle work on `main`.
-- `go test ./...` and `go vet ./...` pass.
-- Roughly 5.7k lines of implementation and 3.9k lines of tests. Dependencies
-  are Bubble Tea, Lip Gloss, Glamour and `charmbracelet/x/ansi`; everything else
-  is the Go standard library.
-- Packages: the module root (entry point), `internal/orchestrator` (state,
-  scheduling, routing, workspace preparation and Pi adapters) and `internal/tui`
-  (view and controls).
+The CLI opens on a deterministic router that accepts a local request, assigns
+a specialist or the fallback Pi executor and requests execution. The task board also supports manual drafts that
+wait for an explicit start. The service persists threads, tasks and attempts
+in one JSON file. The terminal UI reads snapshots from the service.
 
 ## Startup
 
-`go run .` parses nine flags:
+`go run .` supports these flags:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -76,7 +52,7 @@ The primary path starts at the router. Pressing Enter on the router screen calls
 from its first line, and persists it through the same path as a manual draft.
 The decision records the local policy ID/version (`local` / `local-1`), the
 trusted local source and actor, and a versioned digest of the policy input. A
-`routed` event records the assignment (Pi, an isolated worktree or shared
+`routed` event records the assignment (selected executor, an isolated worktree or shared
 workspace as applicable, execution requested). The router then calls `Start`
 immediately. The same screen lists tasks whose stage
 needs a person and recent routes. One request becomes one task: the router does
@@ -90,8 +66,8 @@ not decompose requests or evaluate them with a model.
    trigger, decision and event. All of it is persisted before the call returns;
    a save failure rolls the slices back. A manual draft is `queued` but
    deliberately not started.
-2. **Explicit start.** `r` (or the router after routing) calls `Start`. If a
-   slot is free and an executor is registered, the task starts immediately. Otherwise the start request is
+2. **Explicit start.** `r` (or the router after routing) calls `Start`. An unavailable executor causes a start error. If a
+   slot is free the task starts immediately. Otherwise the start request is
    marked `ScheduleRequested` with a timestamp and a persisted `scheduled`
    event, and the task waits in FIFO order by `ScheduledAt`.
 3. **Attempt creation.** `startLocked` (`scheduler.go`) persists a new attempt
@@ -154,7 +130,7 @@ not decompose requests or evaluate them with a model.
    parent, and enforces depth and per-parent child limits. It persists a new
    task with its own thread, trigger, `subagent-1` decision, mandate, parent ID
    and depth, records an event on both tasks, then starts the child. The child
-   inherits the parent's executor by default and its execution workspace
+   uses the parent's executor as fallback and its execution workspace
    (including a prepared worktree), but not its context. Control credentials and prompt guidance are
    process-local and are cleared when the attempt ends. If capacity is
    unavailable, `subagent` reports the child as queued after a short start
@@ -257,8 +233,8 @@ time and optional note. Review opens when a successful isolated attempt
 produces a worktree commit that was merged or whose merge failed; an up-to-date
 completion opens no review. The local UI approves with `v` and rejects with `V`
 plus a required reason, and the service methods `ApproveReview` and
-`RejectReview` perform the same transition. A decision must match the pending
-commit, is persisted with a `review_approved` or `review_rejected` event before
+`RejectReview` perform the same transition. The commit displayed when the operator opens the review must match the pending
+commit. Each decision is persisted with a `review_approved` or `review_rejected` event before
 it is acknowledged, and a new attempt clears it. Review status does not gate
 automatic merging: merge outcome continues to be recorded separately, and a
 rejection neither undoes a merge nor removes the retained worktree.
@@ -301,8 +277,8 @@ rejection neither undoes a merge nor removes the retained worktree.
 - A subagent is a new task with its own mandate, thread, decision and attempt;
   it is never a mutation of the parent's mandate. Spawn records are persisted
   before the child starts, and a failed start remains visible as a queued task
-  with an event. Only a running parent with valid attempt credentials can
-  delegate, and depth and child limits bound fan-out.
+  with an event. Agent-initiated requests require a running parent and valid attempt
+  credentials, and depth and child limits bound fan-out.
 - Subagent control credentials exist only in process memory and the child
   process's environment. The control socket is owner-only and never writes
   agent output as commands.
@@ -353,8 +329,8 @@ rejection neither undoes a merge nor removes the retained worktree.
   run behind `Runner`/`LiveRunner`. Only Pi supports live follow-ups and
   structured tool activity.
 - The router is deterministic and creates one task per request. It does not
-  interpret or decompose requests with a model or choose among agents; it
-  assigns Pi, applies the default workspace choice, and starts the task. Manual
+  interpret or decompose requests with a model. It
+  selects a registered specialist or falls back to Pi, applies the default workspace choice, and starts the task. Manual
   drafts remain for other executors, per-task isolation changes and other
   pre-start changes.
 - Subagent delegation is bounded but not sandboxed: a child has the same host
@@ -366,57 +342,18 @@ rejection neither undoes a merge nor removes the retained worktree.
 - The control socket uses a Unix socket, so agent-driven delegation is not
   available on platforms without Unix-domain sockets.
 
-## Tests
+## Persistence benchmark
 
-Tests use fake runners and temporary state files; none needs model credentials.
+Run `go test ./internal/orchestrator -run '^$' -bench BenchmarkStreamingPersistence -benchmem`.
+The benchmark starts a fake runner and writes 1 KiB chunks through its real
+output sink while a goroutine requests task snapshots at 10 Hz. The two
+fixtures contain zero or 32 completed tasks, each with 64 KiB of output
+mirrored in its attempt. The active transcript grows until it reaches its cap.
 
-- `service_test.go`: accept/run/reload, persistence rollback, cancellation,
-  interruption on reopen, context idempotency and mandate isolation.
-- `scheduler_test.go`: concurrency bound under race, FIFO scheduling, persisted
-  waiting requests and cancellation while waiting.
-- `thread_test.go`: related tasks, thread follow-up fan-out, task-level
-  follow-up for running and terminal tasks, subscription pause/resume,
-  idempotent retries, delivery outcomes.
-- `delivery_test.go`: per-attempt delivery records for queued and live context,
-  acknowledgement and unknown outcomes, retry scoping, attention stages and
-  recovery of pending hand-offs.
-- `report_test.go`: report validation, current-attempt scoping, adapter reports
-  and stages.
-- `activity_test.go`: tool-activity persistence, snapshot copying and payload
-  truncation.
-- `agents_test.go`: agent configuration validation, selection, declared
-  capabilities and command-runner stdin composition.
-- `subagent_test.go`: independent child mandates, parent/child persistence,
-  running-parent checks, depth and child limits, control credentials, the CLI
-  round trip, process-local environment and non-persistence of tokens.
-- `delete_test.go`: deletion of tasks and orphaned thread history, refusal while
-  running and while a spawned subagent exists, bulk deletion of completed tasks
-  with child-link safety, and persistence rollback.
-- `discard_test.go`: discard of a merged worktree with history kept, refusal of
-  dirty, unmerged and running worktrees, and bulk discard that skips refused
-  worktrees.
-- `router_test.go`: deterministic acceptance, title derivation, durable policy
-  version and routed event, automatic assignment/start, default isolated routing,
-  FIFO scheduling at capacity and rejection of invalid requests.
-- `policy_test.go`: policy registration, audit evidence and digest durability,
-  rejection without task creation, canonical input digests and the built-in
-  local policy's source/empty-mandate checks.
-- `workspace_test.go`: isolated worktree preparation from committed `HEAD`,
-  default isolation for new tasks, shared-workspace fallback and override,
-  subdirectory workspaces, retry reuse, ownership and symlink rejection,
-  non-repository failure, retention after cancellation, cleanup with single
-  and bulk deletion, and toggle rules.
-- `merge_test.go`: automatic merge of worktree changes, no merge for failed
-  attempts, up-to-date no-change completion, conflict abort with retained
-  worktree and serialized concurrent merges.
-- `review_test.go`: review transition validation, commit/actor checks,
-  opening a review for merged and failed-merge worktree commits, skipping
-  up-to-date and shared completions, service-level approval/rejection audit
-  and persistence across reopen, and clearing on start or retry.
-- `pi_test.go`, `pi_rpc_test.go`: event-stream translation, structured adapter
-  reports, prompt composition,
-  acknowledgement, failure and shutdown paths using fake commands.
-- `internal/tui/*_test.go`: scrolling, layout, Markdown rendering, help
-  navigation, agent picker, activity filters, isolation controls, review badges,
-  details and approve/reject controls, deletion flow, thread controls, the
-  subagent composer and the router composer/attention surface.
+On a Linux amd64 i7-10610U, one local run measured 1.47 ms and 1.48 MB
+allocated per write with no history, versus 14.17 ms and 17.90 MB with 32
+completed tasks. These figures include JSON encoding and replacing the state
+file on local temp storage. Disk type, history size and stream length affect
+the result. Output and lifecycle updates still save synchronously. A future
+batching proposal should specify the maximum output loss on a crash and keep
+lifecycle decisions durable before acknowledgement.

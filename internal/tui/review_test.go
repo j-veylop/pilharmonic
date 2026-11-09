@@ -108,7 +108,7 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	selectTask(t, &m, rejected.ID)
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("V")})
 	m = next.(model)
-	if !m.input || m.reviewTask != rejected.ID {
+	if m.input.kind != rejectReviewInput || m.input.target != rejected.ID {
 		t.Fatalf("rejection key did not open a reason input: %+v", m)
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("not needed")})
@@ -119,8 +119,38 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	if got.ReviewStatus != orchestrator.ReviewRejected || got.ReviewNote != "not needed" {
 		t.Fatalf("rejection key did not record a decision: %+v", got)
 	}
-	if m.input || !strings.Contains(m.notice, "Review rejected") {
+	if m.input.kind != "" || !strings.Contains(m.notice, "Review rejected") {
 		t.Fatalf("rejection not acknowledged: input=%v notice=%q", m.input, m.notice)
+	}
+}
+
+func TestReviewKeysRefuseStaleCommit(t *testing.T) {
+	repo := reviewRepo(t)
+	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	s.RegisterRunner("pi", reviewChangeRunner{})
+	task := startIsolatedReviewTask(t, s, repo, "updated review")
+	for _, key := range []string{"v", "V"} {
+		m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
+		selectTask(t, &m, task.ID)
+		// The screen still shows the commit from an earlier attempt.
+		m.tasks[m.selected].ReviewCommit = "earlier-commit"
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		m = next.(model)
+		if key == "V" {
+			// The task list refreshes while the rejection composer is open.
+			m.tasks = s.ListTasks()
+			m.input.text = "reviewed the earlier commit"
+			next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = next.(model)
+		}
+		got, _ := s.GetTask(task.ID)
+		if !got.AwaitingReview() || got.ReviewCommit != task.ReviewCommit || !strings.Contains(m.notice, "does not match") {
+			t.Fatalf("key %s: review %s for %s, notice %q", key, got.ReviewStatus, got.ReviewCommit, m.notice)
+		}
 	}
 }
 
@@ -139,7 +169,7 @@ func TestReviewKeysRequirePreparedWork(t *testing.T) {
 	for _, key := range []string{"v", "V"} {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 		m = next.(model)
-		if m.input || !strings.Contains(m.notice, "No worktree commit") {
+		if m.input.kind != "" || !strings.Contains(m.notice, "No worktree commit") {
 			t.Fatalf("%s: input=%v notice=%q", key, m.input, m.notice)
 		}
 	}

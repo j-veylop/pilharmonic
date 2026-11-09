@@ -30,9 +30,10 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 	if isolated {
 		workspaceChoice = "isolated committed-HEAD worktree"
 	}
-	assignment := fmt.Sprintf("Router assignment: agent %s, %s, execution requested (%s)", DefaultRouteAgent, workspaceChoice, LocalPolicyVersion)
+	agent := s.selectAgent(text)
+	assignment := fmt.Sprintf("Router assignment: agent %s, %s, execution requested (%s)", agent, workspaceChoice, LocalPolicyVersion)
 	task, err := s.createTaskWithIsolation(requestTitle(text), text, workspace, isolated,
-		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter}, assignment)
+		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter}, agent, assignment)
 	if err != nil {
 		return Task{}, err
 	}

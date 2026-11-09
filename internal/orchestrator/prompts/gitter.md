@@ -1,0 +1,1 @@
+Inspect status, diffs, branch history, and worktree ownership first. Preserve unrelated staged and unstaged changes. Perform mutations only within the delegated mandate. Report affected refs, commits, or unresolved conflicts.

@@ -66,6 +66,10 @@ type model struct {
 	deleteTaskTitle  string
 	deleteCompleted  bool
 	deleteCount      int
+	discardTaskID    string
+	discardTaskTitle string
+	discardMerged    bool
+	discardCount     int
 	spinner          spinner.Model
 }
 
@@ -131,7 +135,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if !m.input && !m.router && m.deleteTaskID == "" && m.agentTask == "" && !m.deleteCompleted {
+		if !m.input && !m.router && m.deleteTaskID == "" && m.discardTaskID == "" && m.agentTask == "" && !m.deleteCompleted && !m.discardMerged {
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
 				m.scrollDetail(3)
@@ -180,7 +184,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					m.notice = err.Error()
 				} else {
-					m.notice = "Task and its history deleted."
+					m.notice = "Task, history and retained worktree deleted."
 				}
 				m.deleteTaskID, m.deleteTaskTitle = "", ""
 				m.tasks = m.service.ListTasks()
@@ -188,6 +192,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "n", "esc":
 				m.deleteTaskID, m.deleteTaskTitle = "", ""
 				m.notice = "Deletion canceled."
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+		if m.discardTaskID != "" {
+			switch msg.String() {
+			case "y":
+				err := m.service.DiscardWorktree(m.discardTaskID)
+				if err != nil {
+					m.notice = err.Error()
+				} else {
+					m.notice = "Retained worktree discarded; task history kept."
+				}
+				m.discardTaskID, m.discardTaskTitle = "", ""
+				m.tasks = m.service.ListTasks()
+				m.clamp()
+			case "n", "esc":
+				m.discardTaskID, m.discardTaskTitle = "", ""
+				m.notice = "Discard canceled."
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+		if m.discardMerged {
+			switch msg.String() {
+			case "y":
+				count, err := m.service.DiscardMergedWorktrees()
+				if err != nil {
+					m.notice = fmt.Sprintf("Discarded %d merged worktree(s); %s", count, err.Error())
+				} else {
+					m.notice = fmt.Sprintf("Discarded %d merged worktree(s).", count)
+				}
+				m.discardMerged, m.discardCount = false, 0
+				m.tasks = m.service.ListTasks()
+				m.clamp()
+			case "n", "esc":
+				m.discardMerged, m.discardCount = false, 0
+				m.notice = "Discard canceled."
 			case "ctrl+c":
 				return m, tea.Quit
 			}
@@ -564,6 +608,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.notice = "No completed tasks to delete."
 			} else {
 				m.deleteCompleted, m.deleteCount = true, count
+				m.notice = ""
+			}
+		case "x":
+			if len(m.tasks) > 0 {
+				task := m.tasks[m.selected]
+				if !task.Isolated || task.ExecutionWorkspace == "" {
+					m.notice = "Selected task has no retained worktree."
+				} else if task.Status == orchestrator.Running {
+					m.notice = "Cancel the running task and wait before discarding its worktree."
+				} else {
+					m.discardTaskID, m.discardTaskTitle = task.ID, task.Title
+					m.notice = ""
+				}
+			}
+		case "X":
+			count := m.service.DeletableWorktrees()
+			if count == 0 {
+				m.notice = "No merged worktrees to discard."
+			} else {
+				m.discardMerged, m.discardCount = true, count
 				m.notice = ""
 			}
 		case "c":

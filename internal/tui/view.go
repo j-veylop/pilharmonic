@@ -514,6 +514,12 @@ func (m model) footer(w int) string {
 	if m.deleteCompleted {
 		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", m.deleteCount)) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept. Retained worktrees are removed.")
 	}
+	if m.discardTaskID != "" {
+		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+strings.ReplaceAll(terminalText(m.discardTaskTitle), "\n", " ")) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Uncommitted or unmerged work is refused. Task history is kept.")
+	}
+	if m.discardMerged {
+		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", m.discardCount)) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Worktrees with uncommitted or unmerged work are kept. Task history is kept.")
+	}
 	if m.input {
 		label := "NEW TASK"
 		if m.reportTask != "" {

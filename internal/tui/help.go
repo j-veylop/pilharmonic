@@ -33,6 +33,8 @@ v / V          Approve / reject prepared worktree commit
 c              Cancel task
 d              Delete inactive task and worktree (confirm y)
 D              Delete completed tasks and worktrees (confirm y)
+x              Discard selected merged worktree (confirm y)
+X              Discard all merged worktrees (confirm y)
 f              Send context to thread subscribers
 F              Follow up selected task
 s              Pause / resume thread subscription

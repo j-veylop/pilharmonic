@@ -143,6 +143,7 @@ type Service struct {
 	data       state
 	runners    map[string]Runner
 	cancel     map[string]context.CancelFunc
+	discarding map[string]bool
 	wg         sync.WaitGroup
 	closing    bool
 	persistErr error
@@ -167,7 +168,7 @@ func Open(path string) (*Service, error) {
 	if path == "" {
 		return nil, errors.New("state path is required")
 	}
-	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}, defaultIsolation: true, policies: map[string]Policy{LocalPolicySource: localPolicy{}, SubagentPolicySource: subagentPolicy{}}, subagentMaxDepth: DefaultMaxSubagentDepth, subagentMaxChildren: DefaultMaxSubagents, controlConns: map[net.Conn]struct{}{}}
+	s := &Service{path: path, runners: map[string]Runner{"pi": PiRunner{}}, cancel: map[string]context.CancelFunc{}, discarding: map[string]bool{}, limit: defaultConcurrency, live: map[string]chan Trigger{}, pending: map[string]*pendingRequest{}, defaultIsolation: true, policies: map[string]Policy{LocalPolicySource: localPolicy{}, SubagentPolicySource: subagentPolicy{}}, subagentMaxDepth: DefaultMaxSubagentDepth, subagentMaxChildren: DefaultMaxSubagents, controlConns: map[net.Conn]struct{}{}}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -407,6 +408,9 @@ func (s *Service) Start(ctx context.Context, id string) error {
 		t := &s.data.Tasks[i]
 		if t.ID != id {
 			continue
+		}
+		if s.discarding[id] {
+			return errors.New("worktree is being discarded; wait before starting the task")
 		}
 		if t.Status != Queued {
 			return fmt.Errorf("task is %s, not queued", t.Status)
@@ -712,6 +716,9 @@ func (s *Service) Retry(id string) error {
 		t := &s.data.Tasks[i]
 		if t.ID != id {
 			continue
+		}
+		if s.discarding[id] {
+			return errors.New("worktree is being discarded; wait before retrying the task")
 		}
 		mergeFailed := t.Status == Completed && t.MergeStatus == MergeFailed
 		if t.Status != Failed && t.Status != Interrupted && t.Status != Canceled && !mergeFailed {

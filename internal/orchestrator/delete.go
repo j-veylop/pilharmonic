@@ -20,6 +20,10 @@ func (s *Service) DeleteTask(id string) error {
 		if t.ID != id {
 			continue
 		}
+		if s.discarding[id] {
+			s.mu.Unlock()
+			return errors.New("worktree is being discarded; wait before deleting")
+		}
 		if t.Status == Running {
 			s.mu.Unlock()
 			return fmt.Errorf("task is running; cancel it and wait before deleting")
@@ -149,7 +153,7 @@ func (s *Service) deletableCompletedLocked() map[string]bool {
 		if task.Status != Completed {
 			continue
 		}
-		if _, stopping := s.cancel[task.ID]; !stopping {
+		if _, stopping := s.cancel[task.ID]; !stopping && !s.discarding[task.ID] {
 			eligible[task.ID] = true
 		}
 	}

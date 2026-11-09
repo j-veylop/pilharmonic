@@ -177,7 +177,7 @@ not decompose requests or evaluate them with a model.
     a clean merge records the worktree and merge commits; a conflict or Git
     failure aborts the source merge and records `merge_failed` separately from
     the successful attempt. The worktree is retained in every case until the
-    task is deleted. A merged
+    task is deleted or its worktree is explicitly discarded. A merged
     commit, or a worktree commit whose merge failed, is then recorded as
     `pending` review with its commit; an up-to-date completion has no new
     commit and is not opened for review. The latest attempt is finalized,
@@ -197,7 +197,12 @@ not decompose requests or evaluate them with a model.
     and removes threads no remaining task uses. Both deletion paths remove the
     tasks' retained worktrees and reservations after the state change is
     durable. The source workspace is never touched. A canceled task keeps its
-    worktree until deletion so a retry can reuse it.
+    worktree until deletion so a retry can reuse it. `x` then `y` discards the
+    selected task's retained worktree without deleting the task, and `X` then
+    `y` discards every task worktree recorded as merged or up to date. Discard
+    refuses a running task, uncommitted changes and an unmerged worktree
+    commit, removes the reservation, clears the task's recorded execution path
+    and appends a `worktree_discarded` event; task history is kept.
 
 ## Data model
 
@@ -229,6 +234,8 @@ not decompose requests or evaluate them with a model.
   exists, including after an automatic merge failure, so retries and review
   can use it. Deleting the task removes the reservation; if cleanup fails, the
   deletion remains durable and the reservation is left in place with an error.
+  An explicit discard removes the reservation while keeping the task, using the
+  same ownership validation but refusing dirty or unmerged worktrees.
 
 Statuses: `queued`, `running`, `completed`, `failed`, `canceled`,
 `interrupted`. A `completed` task means the process exited successfully (for
@@ -313,11 +320,11 @@ rejection neither undoes a merge nor removes the retained worktree.
   cannot be isolated, and the `git` executable is required. Successful isolated
   tasks merge automatically, but that is integration, not review: review is a
   recorded approve/reject decision on a prepared commit and does not gate
-  merging. There is no in-app diff, conflict resolution or discard action that
-  keeps the task, and a conflicting merge must be resolved outside the
-  application. Worktrees for
-  retained tasks accumulate beside the state file; deleting a task cleans up
-  its worktree, but there is no separate discard action. A dirty source checkout can make an
+  merging. There is no in-app diff or conflict resolution, and a conflicting
+  merge must be resolved outside the application. Worktrees for retained tasks
+  accumulate beside the state file; deleting a task cleans up its worktree, and
+  `x`/`X` discard merged worktrees while keeping the task, refusing dirty or
+  unmerged worktrees. A dirty source checkout can make an
   otherwise clean worktree merge fail without changing the worktree. Tasks in
   workspaces that cannot be isolated, or that are explicitly opted out, share
   their workspace.
@@ -378,6 +385,9 @@ Tests use fake runners and temporary state files; none needs model credentials.
 - `delete_test.go`: deletion of tasks and orphaned thread history, refusal while
   running and while a spawned subagent exists, bulk deletion of completed tasks
   with child-link safety, and persistence rollback.
+- `discard_test.go`: discard of a merged worktree with history kept, refusal of
+  dirty, unmerged and running worktrees, and bulk discard that skips refused
+  worktrees.
 - `router_test.go`: deterministic acceptance, title derivation, durable policy
   version and routed event, automatic assignment/start, default isolated routing,
   FIFO scheduling at capacity and rejection of invalid requests.

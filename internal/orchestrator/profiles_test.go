@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // supportingRunner is a fake adapter that can translate profile parameters.
@@ -109,6 +110,50 @@ func TestProfileCatalogSnapshotAndSelection(t *testing.T) {
 	}
 	if _, ok := restored.GetProfile("reviewer"); !ok {
 		t.Fatal("profile catalog did not reload")
+	}
+}
+
+func TestRelatedTaskRunsWithAcceptedProfile(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	if err := s.RegisterProfile(Profile{Name: "review", Model: "test/review"}); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	parent, err := s.CreateTask("parent", "parent mandate", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetRoutingProfile("review"); err != nil {
+		t.Fatal(err)
+	}
+	child, err := s.CreateRelatedTask(parent.ID, "related", "separate mandate", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ProfileName != "review" || child.ProfileSpec == nil || child.ProfileSpec.Model != "test/review" {
+		t.Fatalf("related task did not snapshot current routing default: %+v", child)
+	}
+	if err = s.SetRoutingProfile(DefaultProfileName); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RegisterProfile(Profile{Name: "review", Model: "test/changed"}); err != nil {
+		t.Fatal(err)
+	}
+	run := make(chan Task, 1)
+	s.RegisterRunner("pi", supportingRunner{runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		run <- task
+		return nil
+	})})
+	if err = s.Start(context.Background(), child.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case executed := <-run:
+		if executed.ProfileSpec == nil || executed.ProfileSpec.Model != "test/review" {
+			t.Fatalf("runner received changed profile instead of accepted snapshot: %+v", executed.ProfileSpec)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fake runner did not receive related task")
 	}
 }
 

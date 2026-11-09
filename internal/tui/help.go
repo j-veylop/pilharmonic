@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -26,7 +27,7 @@ Esc            Return / close expanded activity`},
 a              Related task in selected thread
 b              Spawn subagent from running task
 A              Choose executor before scheduling
-P              Choose profile (role, model, tools) before scheduling
+P              Choose execution profile (model, tools) before scheduling
 w              Toggle worktree isolation (default on when possible)
 r / R          Start / requeue task
 v / V          Approve / reject prepared worktree commit
@@ -57,6 +58,32 @@ Enter          Submit input / confirm agent or profile
 Esc            Cancel input / close picker
 j / k          Select in executor or profile picker
 Typing         Text in composers`},
+}
+
+func (m model) helpKey(key string) (model, tea.Cmd) {
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "?", "esc", "q":
+		m.help = false
+	case "l", "right", " ", "tab":
+		m.scrollHelp(1)
+	case "h", "left", "shift+tab":
+		m.scrollHelp(-1)
+	case "j", "down", "ctrl+e":
+		m.scrollHelpBody(1)
+	case "k", "up", "ctrl+y":
+		m.scrollHelpBody(-1)
+	case "pgdown", "ctrl+f", "ctrl+d":
+		m.scrollHelpBody(8)
+	case "pgup", "ctrl+b", "ctrl+u":
+		m.scrollHelpBody(-8)
+	case "home", "g":
+		m.helpPage, m.helpScroll = 0, 0
+	case "end", "G":
+		m.helpPage, m.helpScroll = len(helpTopics)-1, 0
+	}
+	return m, nil
 }
 
 func (m model) helpLines(width int) []string {

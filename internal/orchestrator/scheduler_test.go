@@ -111,29 +111,51 @@ func TestScheduledRequestSurvivesShutdown(t *testing.T) {
 	}
 }
 
-func TestCancelScheduledContext(t *testing.T) {
-	s, _ := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err := s.SetConcurrencyLimit(1); err != nil {
-		t.Fatal(err)
-	}
-	entered := make(chan struct{})
-	s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(entered); <-ctx.Done(); return ctx.Err() }))
-	first, _ := s.CreateTask("first", "one", t.TempDir())
-	second, _ := s.CreateTask("second", "two", t.TempDir())
-	if err := s.Start(context.Background(), first.ID); err != nil {
-		t.Fatal(err)
-	}
-	<-entered
-	ctx, cancel := context.WithCancel(context.Background())
-	if err := s.Start(ctx, second.ID); err != nil {
-		t.Fatal(err)
-	}
-	cancel()
-	canceled := await(t, s, second.ID, Canceled)
-	if canceled.ScheduleRequested || len(canceled.Attempts) != 0 {
-		t.Fatalf("bad cancellation: %+v", canceled)
-	}
-	if err := s.Shutdown(); err != nil {
-		t.Fatal(err)
+func TestCancelScheduledRequest(t *testing.T) {
+	for _, method := range []string{"operator", "context"} {
+		t.Run(method, func(t *testing.T) {
+			workspace := t.TempDir()
+			path := filepath.Join(workspace, "state.json")
+			s := openTestService(t, path)
+			s.RegisterRunner("pi", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
+				<-ctx.Done()
+				return ctx.Err()
+			}))
+			if err := s.SetConcurrencyLimit(1); err != nil {
+				t.Fatal(err)
+			}
+			first, err := s.CreateTask("first", "one", workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Start(context.Background(), first.ID); err != nil {
+				t.Fatal(err)
+			}
+			second, err := s.CreateTask("second", "two", workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := s.Start(ctx, second.ID); err != nil {
+				t.Fatal(err)
+			}
+			if method == "operator" {
+				if err := s.Cancel(second.ID); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				cancel()
+			}
+			await(t, s, second.ID, Canceled)
+			if err := s.Shutdown(); err != nil {
+				t.Fatal(err)
+			}
+			reopened := openTestService(t, path)
+			task, ok := reopened.GetTask(second.ID)
+			if !ok || task.Status != Canceled || task.ScheduleRequested || !task.ScheduledAt.IsZero() || len(task.Attempts) != 0 {
+				t.Fatalf("unexpected persisted cancellation: %+v", task)
+			}
+		})
 	}
 }

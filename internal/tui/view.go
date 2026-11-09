@@ -288,7 +288,11 @@ func (m model) detailContent(width int) []string {
 	add(terminalText(t.Prompt))
 	add(mutedStyle.Render("Agent: " + terminalText(t.Agent) + " · A to change"))
 	if t.ProfileName != "" {
-		add(mutedStyle.Render("Profile: " + terminalText(t.ProfileName) + " · P to change"))
+		label := t.ProfileName
+		if t.ProfileSpec != nil {
+			label = profileLabel(*t.ProfileSpec)
+		}
+		add(mutedStyle.Render("Profile: " + terminalText(label) + " · P to change"))
 	}
 	if t.ParentID != "" {
 		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
@@ -447,10 +451,10 @@ func (m model) detailTabRow(t orchestrator.Task, width int) string {
 }
 
 func (m model) detailPanel(width, height int) string {
-	if m.agentTask != "" {
+	if m.agentPicker.target != "" {
 		return m.agentPanel(width, height)
 	}
-	if m.profileTask != "" {
+	if m.profilePicker.target != "" {
 		return m.profilePanel(width, height)
 	}
 	inner := width - 4
@@ -535,10 +539,10 @@ func (m model) footer(w int) string {
 		}
 		footer = accentStyle.Render(label+"  › ") + draft + "▏\n" + mutedStyle.Render("enter submit  ·  esc cancel")
 	}
-	if m.agentTask != "" {
+	if m.agentPicker.target != "" {
 		footer = mutedStyle.Render("↑↓ choose agent · enter select · esc cancel")
 	}
-	if m.profileTask != "" {
+	if m.profilePicker.target != "" {
 		footer = mutedStyle.Render("↑↓ choose profile · enter select · esc cancel")
 	}
 	return ansi.Hardwrap(footer, w, true)
@@ -546,27 +550,34 @@ func (m model) footer(w int) string {
 
 // executorLabel shows the executor and, when chosen, its profile.
 func executorLabel(t orchestrator.Task) string {
-	if t.ProfileName == "" {
+	if t.ProfileName == "" || (t.ProfileSpec != nil && t.ProfileSpec.UsesExecutorDefaults()) {
 		return t.Agent
 	}
-	return t.Agent + " · " + t.ProfileName
+	return t.Agent + " · profile " + t.ProfileName
+}
+
+func profileLabel(p orchestrator.Profile) string {
+	if p.UsesExecutorDefaults() {
+		return "Executor defaults"
+	}
+	return p.Name
 }
 
 func (m model) profilePanel(width, height int) string {
 	lines := []string{titleStyle.Render("SELECT PROFILE"), mutedStyle.Render("Queued task only"), ""}
 	slots := max(1, (height-7)/2)
-	start := max(0, m.profileIndex-slots+1)
-	for i := start; i < len(m.profileChoices) && i < start+slots; i++ {
-		profile := m.profileChoices[i]
+	start := max(0, m.profilePicker.index-slots+1)
+	for i := start; i < len(m.profilePicker.choices) && i < start+slots; i++ {
+		profile := m.profilePicker.choices[i]
 		prefix := "  "
 		style := titleStyle
-		if i == m.profileIndex {
+		if i == m.profilePicker.index {
 			prefix = ""
 			style = accentStyle
 		}
-		row := style.Render(prefix + terminalText(profile.Name))
-		if i == m.profileIndex {
-			row = selectionRow(terminalText(profile.Name), width-4)
+		row := style.Render(prefix + terminalText(profileLabel(profile)))
+		if i == m.profilePicker.index {
+			row = selectionRow(terminalText(profileLabel(profile)), width-4)
 		}
 		details := profile.Description
 		if profile.Model != "" {
@@ -583,7 +594,7 @@ func (m model) profilePanel(width, height int) string {
 		}
 		lines = append(lines, row, mutedStyle.Render("  "+terminalText(strings.TrimPrefix(details, " · "))))
 	}
-	if len(m.profileChoices) == 0 {
+	if len(m.profilePicker.choices) == 0 {
 		lines = append(lines, mutedStyle.Render("No registered profiles."))
 	}
 	return panel(strings.Join(lines, "\n"), width, height)
@@ -592,12 +603,12 @@ func (m model) profilePanel(width, height int) string {
 func (m model) agentPanel(width, height int) string {
 	lines := []string{titleStyle.Render("SELECT AGENT"), mutedStyle.Render("Queued task only"), ""}
 	slots := max(1, (height-7)/2)
-	start := max(0, m.agentIndex-slots+1)
-	for i := start; i < len(m.agentChoices) && i < start+slots; i++ {
-		agent := m.agentChoices[i]
+	start := max(0, m.agentPicker.index-slots+1)
+	for i := start; i < len(m.agentPicker.choices) && i < start+slots; i++ {
+		agent := m.agentPicker.choices[i]
 		prefix := "  "
 		style := titleStyle
-		if i == m.agentIndex {
+		if i == m.agentPicker.index {
 			prefix = ""
 			style = accentStyle
 		}
@@ -616,12 +627,12 @@ func (m model) agentPanel(width, height int) string {
 			label += " · " + terminalText(agent.Description)
 		}
 		row := style.Render(prefix + label)
-		if i == m.agentIndex {
+		if i == m.agentPicker.index {
 			row = selectionRow(label, width-4)
 		}
 		lines = append(lines, row, mutedStyle.Render("  "+capability))
 	}
-	if len(m.agentChoices) == 0 {
+	if len(m.agentPicker.choices) == 0 {
 		lines = append(lines, mutedStyle.Render("No registered agents."))
 	}
 	return panel(strings.Join(lines, "\n"), width, height)

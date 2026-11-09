@@ -142,7 +142,7 @@ func (s *Service) scheduleLocked() error {
 			ctx = request.ctx
 		}
 		if ctx.Err() != nil {
-			if err := s.cancelPendingLocked(task, ctx.Err()); err != nil {
+			if err := s.cancelQueuedLocked(task, ctx.Err()); err != nil {
 				s.persistErr = err
 				return err
 			}
@@ -150,7 +150,7 @@ func (s *Service) scheduleLocked() error {
 		}
 		if err := s.startLocked(ctx, task); err != nil {
 			if ctx.Err() != nil {
-				if err := s.cancelPendingLocked(task, ctx.Err()); err != nil {
+				if err := s.cancelQueuedLocked(task, ctx.Err()); err != nil {
 					s.persistErr = err
 					return err
 				}
@@ -201,14 +201,18 @@ func (s *Service) failIneligibleLocked(t *Task, cause error) error {
 	return nil
 }
 
-func (s *Service) cancelPendingLocked(t *Task, cause error) error {
+func (s *Service) cancelQueuedLocked(t *Task, cause error) error {
 	old := clone(*t)
 	t.Status = Canceled
 	t.ScheduleRequested = false
 	t.ScheduledAt = time.Time{}
 	t.UpdatedAt = time.Now().UTC()
-	t.Error = cause.Error()
-	t.Events = append(t.Events, Event{t.UpdatedAt, "canceled", "Scheduled request canceled: " + cause.Error()})
+	message := "Canceled before start"
+	if cause != nil {
+		t.Error = cause.Error()
+		message = "Scheduled request canceled: " + t.Error
+	}
+	t.Events = append(t.Events, Event{t.UpdatedAt, "canceled", message})
 	if err := s.save(); err != nil {
 		*t = old
 		return err
@@ -216,6 +220,7 @@ func (s *Service) cancelPendingLocked(t *Task, cause error) error {
 	s.removePendingLocked(t.ID)
 	return nil
 }
+
 func (s *Service) watchPending(id string, request *pendingRequest) {
 	select {
 	case <-request.ctx.Done():
@@ -230,7 +235,7 @@ func (s *Service) watchPending(id string, request *pendingRequest) {
 	for i := range s.data.Tasks {
 		t := &s.data.Tasks[i]
 		if t.ID == id && t.Status == Queued && t.ScheduleRequested {
-			if err := s.cancelPendingLocked(t, request.ctx.Err()); err != nil {
+			if err := s.cancelQueuedLocked(t, request.ctx.Err()); err != nil {
 				s.persistErr = err
 			} else {
 				_ = s.scheduleLocked()

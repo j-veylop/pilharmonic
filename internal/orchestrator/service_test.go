@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -89,6 +90,42 @@ func TestCancelAndRecovery(t *testing.T) {
 	}
 	await(t, s, task.ID, Canceled)
 }
+
+func TestLegacyRunningTaskMigrationThenRecovery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	fixture := `{"tasks":[{"id":"legacy-task","title":"old task","prompt":"old mandate","workspace":"/workspace","status":"running","agent":"pi","created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:06Z","events":[{"time":"2026-01-02T03:04:06Z","kind":"started","message":"Started"}]}]}`
+	if err := os.WriteFile(path, []byte(fixture), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := s.GetTask("legacy-task")
+	if !ok || got.Status != Interrupted {
+		t.Fatalf("legacy task status = %q, found=%t", got.Status, ok)
+	}
+	if len(got.Attempts) != 1 {
+		t.Fatalf("legacy task attempts = %+v, want reconstructed attempt", got.Attempts)
+	}
+	attempt := got.Attempts[0]
+	if attempt.ID == "" || attempt.Status != Interrupted || attempt.FinishedAt.IsZero() || attempt.Error != got.Error {
+		t.Fatalf("reconstructed attempt not interrupted: %+v; task error=%q", attempt, got.Error)
+	}
+
+	// Migration and recovery are persisted together, so another open preserves
+	// the reconstructed attempt rather than inventing a second one.
+	reloaded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, _ := reloaded.GetTask("legacy-task")
+	if len(again.Attempts) != 1 || again.Attempts[0].ID != attempt.ID || again.Attempts[0].Status != Interrupted {
+		t.Fatalf("reloaded legacy attempt changed: %+v", again.Attempts)
+	}
+}
+
 func TestValidationAndFailure(t *testing.T) {
 	s, _ := Open(filepath.Join(t.TempDir(), "state.json"))
 	if _, err := s.CreateTask("", "x", t.TempDir()); err == nil {

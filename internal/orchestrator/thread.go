@@ -29,7 +29,6 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 		return Task{}, errors.New("workspace must be a directory")
 	}
 	isolated := s.defaultTaskIsolation(abs)
-	id := newID()
 	triggerID := newID()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -67,11 +66,19 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 			return Task{}, err
 		}
 		decision.CreatedAt = now
-		events := []Event{{now, "accepted", "Manual request accepted in existing thread"}}
-		if isolated {
-			events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
+		task, err := s.newAcceptedTaskLocked(acceptedTaskInput{
+			threadID:        threadID,
+			title:           title,
+			workspace:       abs,
+			isolated:        isolated,
+			agent:           s.selectAgentLocked(prompt, DefaultRouteAgent),
+			trigger:         trigger,
+			decision:        decision,
+			acceptedMessage: "Manual request accepted in existing thread",
+		})
+		if err != nil {
+			return Task{}, err
 		}
-		task := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: s.selectAgentLocked(prompt, DefaultRouteAgent), CreatedAt: now, UpdatedAt: now, Trigger: trigger, Decision: decision, Events: events}
 		task.SpecialistTools = s.specialistTools[task.Agent]
 		s.data.Tasks = append(s.data.Tasks, task)
 		thread.Triggers = append(thread.Triggers, trigger)

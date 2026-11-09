@@ -30,12 +30,8 @@ type model struct {
 	activityExpanded bool
 	vimG             bool
 	vimCount         int
-	agentTask        string
-	agentChoices     []orchestrator.AgentInfo
-	agentIndex       int
-	profileTask      string
-	profileChoices   []orchestrator.Profile
-	profileIndex     int
+	agentPicker      pickerState[orchestrator.AgentInfo]
+	profilePicker    pickerState[orchestrator.Profile]
 	service          *orchestrator.Service
 	workspace        string
 	tasks            []orchestrator.Task
@@ -75,6 +71,7 @@ func Run(service *orchestrator.Service, workspace string) error {
 
 func tick() tea.Cmd           { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 func (m model) Init() tea.Cmd { return tea.Batch(tick(), m.spinner.Tick) }
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case cleanupResultMsg:
@@ -136,7 +133,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.input.kind == "" && !m.router && m.cleanup.kind == "" && m.agentTask == "" && m.profileTask == "" {
+		if m.input.kind == "" && !m.router && m.cleanup.kind == "" && m.agentPicker.target == "" && m.profilePicker.target == "" {
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
 				m.scrollDetail(3)
@@ -147,31 +144,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		if m.help {
-			switch msg.String() {
-			case "?", "esc", "q":
-				m.help = false
-			case "ctrl+c":
-				return m, tea.Quit
-			case "l", "right", " ", "tab":
-				m.scrollHelp(1)
-			case "h", "left", "shift+tab":
-				m.scrollHelp(-1)
-			case "j", "down", "ctrl+e":
-				m.scrollHelpBody(1)
-			case "k", "up", "ctrl+y":
-				m.scrollHelpBody(-1)
-			case "pgdown", "ctrl+f", "ctrl+d":
-				m.scrollHelpBody(8)
-			case "pgup", "ctrl+b", "ctrl+u":
-				m.scrollHelpBody(-8)
-			case "home", "g":
-				m.helpPage = 0
-				m.helpScroll = 0
-			case "end", "G":
-				m.helpPage = len(helpTopics) - 1
-				m.helpScroll = 0
-			}
-			return m, nil
+			return m.helpKey(msg.String())
 		}
 		if m.router {
 			return m.routerKey(msg)
@@ -179,67 +152,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cleanup.kind != "" {
 			return m.cleanupKey(msg.String())
 		}
-		if m.profileTask != "" {
-			switch msg.String() {
-			case "esc":
-				m.profileTask = ""
-				m.profileChoices = nil
-			case "ctrl+c":
-				return m, tea.Quit
-			case "up", "k":
-				if m.profileIndex > 0 {
-					m.profileIndex--
-				}
-			case "down", "j":
-				if m.profileIndex < len(m.profileChoices)-1 {
-					m.profileIndex++
-				}
-			case "enter":
-				if len(m.profileChoices) > 0 {
-					name := m.profileChoices[m.profileIndex].Name
-					if err := m.service.SetTaskProfile(m.profileTask, name); err != nil {
-						m.notice = err.Error()
-					} else {
-						m.notice = "Profile selected: " + name
-					}
-					m.tasks = m.service.ListTasks()
-					m.clamp()
-				}
-				m.profileTask = ""
-				m.profileChoices = nil
-			}
-			return m, nil
+		if m.profilePicker.target != "" {
+			return m.profilePickerKey(msg.String())
 		}
-		if m.agentTask != "" {
-			switch msg.String() {
-			case "esc":
-				m.agentTask = ""
-				m.agentChoices = nil
-			case "ctrl+c":
-				return m, tea.Quit
-			case "up", "k":
-				if m.agentIndex > 0 {
-					m.agentIndex--
-				}
-			case "down", "j":
-				if m.agentIndex < len(m.agentChoices)-1 {
-					m.agentIndex++
-				}
-			case "enter":
-				if len(m.agentChoices) > 0 {
-					name := m.agentChoices[m.agentIndex].Name
-					if err := m.service.SetTaskAgent(m.agentTask, name); err != nil {
-						m.notice = err.Error()
-					} else {
-						m.notice = "Agent selected: " + name
-					}
-					m.tasks = m.service.ListTasks()
-					m.clamp()
-				}
-				m.agentTask = ""
-				m.agentChoices = nil
-			}
-			return m, nil
+		if m.agentPicker.target != "" {
+			return m.agentPickerKey(msg.String())
 		}
 		if m.input.kind != "" {
 			return m.composerKey(msg)
@@ -303,12 +220,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if task.Status != orchestrator.Queued || task.ScheduleRequested {
 					m.notice = "Choose an agent before starting."
 				} else {
-					m.agentTask = task.ID
-					m.agentChoices = m.service.ListAgents()
-					m.agentIndex = 0
-					for i, agent := range m.agentChoices {
+					m.agentPicker.target = task.ID
+					m.agentPicker.choices = m.service.ListAgents()
+					m.agentPicker.index = 0
+					for i, agent := range m.agentPicker.choices {
 						if agent.Name == task.Agent {
-							m.agentIndex = i
+							m.agentPicker.index = i
 						}
 					}
 					m.notice = ""
@@ -320,12 +237,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if task.Status != orchestrator.Queued || task.ScheduleRequested {
 					m.notice = "Choose a profile before starting."
 				} else {
-					m.profileTask = task.ID
-					m.profileChoices = m.service.ListProfiles()
-					m.profileIndex = 0
-					for i, profile := range m.profileChoices {
+					m.profilePicker.target = task.ID
+					m.profilePicker.choices = m.service.ListProfiles()
+					m.profilePicker.index = 0
+					for i, profile := range m.profilePicker.choices {
 						if profile.Name == task.ProfileName {
-							m.profileIndex = i
+							m.profilePicker.index = i
 						}
 					}
 					m.notice = ""

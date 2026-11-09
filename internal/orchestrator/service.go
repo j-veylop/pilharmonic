@@ -214,62 +214,19 @@ func Open(path string) (*Service, error) {
 			return nil, fmt.Errorf("read state: %w", err)
 		}
 	}
-	changed := false
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.DiscardPending {
-			gone, err := reconcileDiscard(path, *t)
-			if err != nil {
-				return nil, fmt.Errorf("recover worktree discard for task %s: %w", t.ID, err)
-			}
-			t.finishDiscard(gone, "Interrupted discard; worktree retained")
-			changed = true
-		}
-		if t.settleAllPendingDeliveries("orchestrator stopped before acknowledgement", time.Now().UTC()) {
-			changed = true
-		}
-		if t.ThreadID == "" {
-			id := newID()
-			t.ThreadID = id
-			s.data.Threads = append(s.data.Threads, Thread{ID: id, Triggers: []Trigger{t.Trigger}, Decisions: []Decision{t.Decision}})
-			changed = true
-		}
-		if len(t.Attempts) == 0 {
-			for _, event := range t.Events {
-				if event.Kind == "started" {
-					id := newID()
-					attempt := Attempt{ID: id, Agent: t.Agent, Status: t.Status, StartedAt: event.Time, Output: t.Output, Error: t.Error}
-					if t.Status != Running {
-						attempt.FinishedAt = t.UpdatedAt
-					}
-					t.Attempts = append(t.Attempts, attempt)
-					changed = true
-					break
-				}
-			}
-		}
-		if t.Status == Running {
-			if len(t.Attempts) > 0 {
-				a := &t.Attempts[len(t.Attempts)-1]
-				a.Status = Interrupted
-				a.FinishedAt = time.Now().UTC()
-				a.Error = "orchestrator stopped while task was running"
-			}
-			interruptActivities(t)
-			t.Status = Interrupted
-			t.UpdatedAt = time.Now().UTC()
-			t.Error = "orchestrator stopped while task was running"
-			t.Events = append(t.Events, Event{t.UpdatedAt, "interrupted", t.Error})
-			changed = true
-		}
+	migrated := migrateStartupState(&s.data)
+	recovered, err := recoverStartupState(s)
+	if err != nil {
+		return nil, err
 	}
-	if changed {
+	if migrated || recovered {
 		if err = s.save(); err != nil {
 			return nil, err
 		}
 	}
 	return s, nil
 }
+
 func (s *Service) RegisterRunner(name string, runner Runner) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -398,7 +355,6 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	if !info.IsDir() {
 		return Task{}, errors.New("workspace must be a directory")
 	}
-	id := newID()
 	triggerID := newID()
 	threadID := newID()
 	now := time.Now().UTC()
@@ -407,23 +363,24 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	if err != nil {
 		return Task{}, err
 	}
+	decision.CreatedAt = now
 	s.mu.Lock()
-	profileName, profileSpec, err := s.resolveProfileLocked(profile)
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	t, err := s.newAcceptedTaskLocked(acceptedTaskInput{
+		threadID:        threadID,
+		title:           title,
+		workspace:       abs,
+		isolated:        isolated,
+		agent:           agent,
+		profile:         profile,
+		trigger:         Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now},
+		decision:        decision,
+		acceptedMessage: "Manual request accepted",
+		routedMessages:  routedMessages,
+	})
 	if err != nil {
 		return Task{}, err
 	}
-	decision.CreatedAt = now
-	events := []Event{{now, "accepted", "Manual request accepted"}}
-	for _, message := range routedMessages {
-		events = append(events, Event{now, "routed", message})
-	}
-	if isolated {
-		events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
-	}
-	t := Task{Isolated: isolated, ID: id, ThreadID: threadID, Title: title, Prompt: prompt, Workspace: abs, Status: Queued, Agent: agent, ProfileName: profileName, ProfileSpec: profileSpec, CreatedAt: now, UpdatedAt: now, Trigger: Trigger{ID: triggerID, Source: auth.Source, Text: prompt, CreatedAt: now}, Decision: decision, Events: events}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	t.SpecialistTools = s.specialistTools[t.Agent]
 	s.data.Tasks = append(s.data.Tasks, t)
 	s.data.Threads = append(s.data.Threads, Thread{ID: threadID, Triggers: []Trigger{t.Trigger}, Decisions: []Decision{t.Decision}})
@@ -434,6 +391,55 @@ func (s *Service) createTaskWithIsolation(title, prompt, workspace string, isola
 	}
 	return clone(t), nil
 }
+
+// acceptedTaskInput names the fields needed to construct an authorized task.
+// Callers retain responsibility for authorization and hold s.mu while calling
+// newAcceptedTaskLocked so the profile snapshot matches the accepted task.
+type acceptedTaskInput struct {
+	threadID        string
+	title           string
+	workspace       string
+	isolated        bool
+	agent           string
+	profile         string
+	trigger         Trigger
+	decision        Decision
+	acceptedMessage string
+	routedMessages  []string
+}
+
+func (s *Service) newAcceptedTaskLocked(input acceptedTaskInput) (Task, error) {
+	profileName, profileSpec, err := s.resolveProfileLocked(input.profile)
+	if err != nil {
+		return Task{}, err
+	}
+	now := input.trigger.CreatedAt
+	events := []Event{{now, "accepted", input.acceptedMessage}}
+	for _, message := range input.routedMessages {
+		events = append(events, Event{now, "routed", message})
+	}
+	if input.isolated {
+		events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
+	}
+	return Task{
+		ID:          newID(),
+		ThreadID:    input.threadID,
+		Title:       input.title,
+		Prompt:      input.trigger.Text,
+		Workspace:   input.workspace,
+		Isolated:    input.isolated,
+		Status:      Queued,
+		Agent:       input.agent,
+		ProfileName: profileName,
+		ProfileSpec: profileSpec,
+		Trigger:     input.trigger,
+		Decision:    input.decision,
+		Events:      events,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, nil
+}
+
 func (s *Service) Start(ctx context.Context, id string) error {
 	if ctx == nil {
 		return errors.New("context is required")
@@ -632,16 +638,9 @@ func (s *Service) Cancel(id string) error {
 			continue
 		}
 		if t.Status == Queued {
-			old := clone(*t)
-			t.ScheduleRequested = false
-			t.Status = Canceled
-			t.UpdatedAt = time.Now().UTC()
-			t.Events = append(t.Events, Event{t.UpdatedAt, "canceled", "Canceled before start"})
-			if err := s.save(); err != nil {
-				*t = old
+			if err := s.cancelQueuedLocked(t, nil); err != nil {
 				return err
 			}
-			s.removePendingLocked(id)
 			s.resumeMergesLocked()
 			return nil
 		}

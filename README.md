@@ -19,7 +19,7 @@ Use `go run . -help` for all startup flags. Common options are `-workspace` for 
 | Action | Keys and behavior |
 | --- | --- |
 | Draft and run | `n` creates a queued draft. Use `A` to choose its executor or `w` to toggle isolation before requesting a start with `r`. |
-| Share context | `a` creates a related task with its own mandate. `f` sends context to subscribed queued and running tasks in the thread. `s` pauses or resumes the selected task's subscription. |
+| Share context | `a` creates a related task with its own mandate and the default profile in effect when accepted. `f` sends context to subscribed queued and running tasks in the thread. `s` pauses or resumes the selected task's subscription. |
 | Follow up on one task | `F` sends context to that task. For a finished task it also requeues it. Press `r` to start a fresh attempt with its mandate and context. |
 | Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `v` filters calls and Enter in the detail pane expands arguments and results. |
 | Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `z` expands details. |
@@ -92,28 +92,32 @@ The command receives the mandate and queued context on stdin. Its stdout and std
 
 ## Profiles
 
-A profile is a role the orchestrator assigns to a task: tool palette, model,
-trusted instructions, whether prepared isolated work is merged automatically and
-whether the task may delegate. Profiles are configuration; the service snapshots
-the one a task was accepted with and records it on every attempt. Press `P` on a
+A subagent is a child task. Like its parent, it runs with an executor and a
+profile. The executor (for example, `implementer`) does the work. The profile
+configures tools, model, extra instructions, automatic integration and delegation.
+A child inherits its parent's profile unless a narrower one is requested.
+The service snapshots the profile at acceptance and records it on each attempt.
+Press `P` on a
 queued task to choose one, or pass `-profiles profiles.json`:
 
 ```json
 {
   "profiles": [
-    {"name": "explorer", "description": "Read-only reconnaissance",
+    {"name": "inspect-only", "description": "Read-only reconnaissance",
      "tools": ["read", "grep", "find", "ls"], "no_integrate": true,
      "instructions": "Inspect and report; do not change files."},
     {"name": "implementer", "model": "provider/model-id"},
-    {"name": "reviewer", "tools": ["read", "grep", "find", "ls", "bash"],
+    {"name": "manual-review", "tools": ["read", "grep", "find", "ls", "bash"],
      "no_integrate": true, "no_subagents": true}
   ]
 }
 ```
 
-The built-in `implementer` profile reproduces the default behavior and is used
-when no profile is chosen; declaring a profile with that name replaces it. Tool
-names are the executor's own, so `explorer` above is meaningful for Pi. An
+The terminal displays the built-in profile as **Executor defaults**. Its
+configuration key is `implementer` for compatibility. Overriding that key
+changes the default settings for every executor, including delegated runs that
+inherit them. Tool names are executor-specific, so `inspect-only` above is
+meaningful for Pi. An
 executor that cannot honor a profile's tools or model fails the start rather than
 silently ignoring them. A profile is not a sandbox: agents keep the host user's
 permissions.

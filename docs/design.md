@@ -19,7 +19,8 @@ See the [executor contract](executors.md).
   evaluates the normalized request. An accepted task records its mandate,
   trigger, decision, policy identity and input digest. The local router selects
   an executor from the opening action of the mandate and requests a start. A manual draft waits for the operator.
-- A related task in the same thread has its own mandate and decision. A thread
+- A related task in the same thread has its own mandate and decision. It records
+  the current default profile at acceptance, just like a new manual task. A thread
   follow-up records the subscribed queued and running recipients at submission.
   Pausing a subscription affects future inputs. Resuming it does not replay
   missed inputs.
@@ -107,7 +108,7 @@ thinking-end events. Agent output is untrusted display data.
 For a walkthrough of startup, state migration, request routing, execution and
 cleanup, see the [implementation notes](status.md).
 
-The CLI registers the bundled specialists before resuming scheduled tasks. Each uses the Pi adapter with role-specific system instructions. Explicit command definitions take precedence over bundled names.
+The CLI registers the bundled specialists before resuming scheduled tasks. A specialist selects the executor instructions. A profile configures execution settings and can apply to any compatible executor. The terminal omits the built-in profile from summaries when it supplies no overrides. Each bundled specialist uses the Pi adapter with role-specific system instructions. Explicit command definitions take precedence over bundled names.
 
 An optional `-specialist-tools` JSON file can configure nonempty Pi tool
 allowlists for bundled specialists, for example

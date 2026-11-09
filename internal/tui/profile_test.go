@@ -24,17 +24,17 @@ func TestProfilePickerSelectAndCancel(t *testing.T) {
 	}
 	m := model{service: s, tasks: s.ListTasks(), width: 80, height: 24}
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
-	if m.profileTask != task.ID || !strings.Contains(m.View(), "SELECT PROFILE") {
+	if m.profilePicker.target != task.ID || !strings.Contains(m.View(), "SELECT PROFILE") {
 		t.Fatal("picker not opened")
 	}
-	for i, profile := range m.profileChoices {
+	for i, profile := range m.profilePicker.choices {
 		if profile.Name == "reviewer" {
-			m.profileIndex = i
+			m.profilePicker.index = i
 		}
 	}
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	got, _ := s.GetTask(task.ID)
-	if got.ProfileName != "reviewer" || m.profileTask != "" {
+	if got.ProfileName != "reviewer" || m.profilePicker.target != "" {
 		t.Fatalf("selection failed: %+v", got)
 	}
 	if view := m.View(); !strings.Contains(view, "reviewer") {
@@ -43,7 +43,19 @@ func TestProfilePickerSelectAndCancel(t *testing.T) {
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
 	got, _ = s.GetTask(task.ID)
-	if m.profileTask != "" || got.ProfileName != "reviewer" {
+	if m.profilePicker.target != "" || got.ProfileName != "reviewer" {
 		t.Fatal("cancel changed selection")
+	}
+}
+
+func TestImplementerSummaryDistinguishesExecutorFromProfile(t *testing.T) {
+	p := orchestrator.Profile{Name: orchestrator.DefaultProfileName}
+	task := orchestrator.Task{Agent: "implementer", ProfileName: p.Name, ProfileSpec: &p}
+	if got := executorLabel(task); got != "implementer" || profileLabel(p) != "Executor defaults" {
+		t.Fatalf("built-in profile: summary %q, picker %q", got, profileLabel(p))
+	}
+	p.NoSubagents = true
+	if got := executorLabel(task); got != "implementer · profile implementer" || profileLabel(p) != p.Name {
+		t.Fatalf("configured profile: summary %q, picker %q", got, profileLabel(p))
 	}
 }

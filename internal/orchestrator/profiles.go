@@ -45,6 +45,13 @@ type Profile struct {
 	NoSubagents bool `json:"no_subagents,omitempty"`
 }
 
+// UsesExecutorDefaults reports whether the built-in profile name carries no
+// execution overrides. Check the snapshot because operators can redefine it.
+func (p Profile) UsesExecutorDefaults() bool {
+	return p.Name == DefaultProfileName && len(p.Tools) == 0 && p.Model == "" &&
+		p.Instructions == "" && !p.NoIntegrate && !p.NoSubagents
+}
+
 // ProfileSupport is an optional adapter interface. The service validates a
 // profile against the executor that will run it, so parameters the adapter
 // cannot translate fail visibly instead of being silently ignored. A runner

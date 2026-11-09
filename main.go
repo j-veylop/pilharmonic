@@ -29,7 +29,7 @@ func run() (err error) {
 	agents := flag.String("agents", "", "path to optional agent command configuration JSON")
 	profiles := flag.String("profiles", "", "profile and specialist settings (default: profiles.json in the current directory, if present)")
 	profile := flag.String("profile", "", "default profile for routed and unchosen tasks (built-in profile uses executor defaults)")
-	maxConcurrent := flag.Int("max-concurrent", 2, "maximum simultaneous agent processes")
+	maxConcurrent := flag.Int("max-concurrent", 4, "maximum simultaneous agent processes")
 	isolation := flag.Bool("isolation", true, "default change tasks to an isolated Git worktree when possible")
 	subagents := flag.Bool("subagents", true, "allow running agents to spawn child tasks")
 	subagentSocket := flag.String("subagent-socket", "", "path to the local subagent control socket (default: beside the state file)")

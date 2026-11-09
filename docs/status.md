@@ -178,7 +178,10 @@ not decompose requests or evaluate them with a model.
     Merges are serialized. A no-change completion is recorded as `up_to_date`;
     a clean merge records the worktree and merge commits; a conflict or Git
     failure aborts the source merge and records `merge_failed` separately from
-    the successful attempt. The worktree is retained in every case until the
+    the successful attempt. A dirty source checkout whose changes overlap the
+    worktree blocks the merge instead of being overwritten or stashed: Git
+    aborts, the error names the files and asks the operator to commit or stash
+    them, and a retry after the source is clean merges the retained worktree. The worktree is retained in every case until the
     task is deleted or its worktree is explicitly discarded. A merged
     commit, or a worktree commit whose merge failed, is then recorded as
     `pending` review with its commit; an up-to-date completion has no new
@@ -327,7 +330,9 @@ rejection neither undoes a merge nor removes the retained worktree.
   accumulate beside the state file; deleting a task cleans up its worktree, and
   `x`/`X` discard merged worktrees while keeping the task, refusing dirty or
   unmerged worktrees. A dirty source checkout can make an
-  otherwise clean worktree merge fail without changing the worktree. Tasks in
+  otherwise clean worktree merge fail without changing the worktree; the
+  failure names the overlapping files and the worktree is kept for retry after
+  the source is cleaned. Tasks in
   workspaces that cannot be isolated, or that are explicitly opted out, share
   their workspace.
 - There is no Pi session continuity across restarts or retries; every attempt is

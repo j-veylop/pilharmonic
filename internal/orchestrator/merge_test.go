@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestIsolatedCompletionAutoMergesChanges(t *testing.T) {
@@ -239,5 +240,70 @@ func TestCanceledIsolatedAttemptIsNotMerged(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(repo, "canceled.txt")); !os.IsNotExist(err) {
 		t.Fatalf("canceled attempt was merged: %v", err)
+	}
+}
+
+// A dirty source checkout blocks a merge that overlaps those files. Git aborts
+// without touching the operator's changes, the worktree is retained, and the
+// failure explains what to do; after resolving the source, the task merges on
+// retry.
+func TestMergeBlockedByDirtySourceExplainsAndRetries(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	s.RegisterRunner("pi", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		started <- struct{}{}
+		<-release
+		return os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("worktree change\n"), 0600)
+	}))
+	task, err := s.CreateTask("blocked", "change the tracked file", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("runner did not start")
+	}
+	if err = os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("local edit\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	done := await(t, s, task.ID, Completed)
+	if done.MergeStatus != MergeFailed {
+		t.Fatalf("merge status = %s, want failed: %+v", done.MergeStatus, done)
+	}
+	for _, want := range []string{"uncommitted changes", "commit or stash", "retry the task"} {
+		if !strings.Contains(done.MergeError, want) {
+			t.Fatalf("merge error %q does not mention %q", done.MergeError, want)
+		}
+	}
+	if b, readErr := os.ReadFile(filepath.Join(repo, "tracked.txt")); readErr != nil || string(b) != "local edit\n" {
+		t.Fatalf("source edit was not preserved: %q, %v", b, readErr)
+	}
+	if _, statErr := os.Stat(done.ExecutionWorkspace); statErr != nil {
+		t.Fatalf("blocked merge removed the worktree: %v", statErr)
+	}
+
+	testGit(t, repo, "checkout", "--", "tracked.txt")
+	if err = s.Retry(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	merged := await(t, s, task.ID, Completed)
+	if merged.MergeStatus != MergeMerged {
+		t.Fatalf("retry merge status = %s (%s), want merged", merged.MergeStatus, merged.MergeError)
+	}
+	if b, readErr := os.ReadFile(filepath.Join(repo, "tracked.txt")); readErr != nil || string(b) != "worktree change\n" {
+		t.Fatalf("worktree change was not merged on retry: %q, %v", b, readErr)
 	}
 }

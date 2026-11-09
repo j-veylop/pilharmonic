@@ -101,7 +101,7 @@ func mergeIsolatedWorkspace(ctx context.Context, statePath string, t Task) (merg
 			_, _ = gitOutput(abortCtx, owner.Source, "merge", "--abort")
 		}
 		cancel()
-		return outcome, fmt.Errorf("merge isolated worktree: %w", err)
+		return outcome, fmt.Errorf("merge isolated worktree: %w", describeMergeFailure(err))
 	}
 	mergeCommit, err := gitOutput(ctx, owner.Source, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
@@ -110,6 +110,26 @@ func mergeIsolatedWorkspace(ctx context.Context, statePath string, t Task) (merg
 	outcome.Status = MergeMerged
 	outcome.MergeCommit = mergeCommit
 	return outcome, nil
+}
+
+// describeMergeFailure turns Git's local-checkout refusals into actionable
+// guidance. Git aborts instead of overwriting uncommitted or untracked source
+// files, so an overlap with the worktree's changes blocks the merge until the
+// operator commits or stashes those files and retries the task. Other merge
+// failures are returned unchanged.
+func describeMergeFailure(err error) error {
+	message := strings.ToLower(err.Error())
+	guidance := ""
+	switch {
+	case strings.Contains(message, "your local changes") || strings.Contains(message, "would be overwritten"):
+		guidance = "source checkout has uncommitted changes to files this worktree also changes; commit or stash them, then retry the task"
+	case strings.Contains(message, "untracked working tree files"):
+		guidance = "source checkout has untracked files this worktree would overwrite; move or commit them, then retry the task"
+	}
+	if guidance == "" {
+		return err
+	}
+	return fmt.Errorf("%s: %w", guidance, err)
 }
 
 // validateMergeWorkspace repeats the ownership and repository checks made when

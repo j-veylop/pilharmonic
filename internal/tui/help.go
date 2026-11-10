@@ -22,7 +22,8 @@ Mouse wheel    Scroll details
 Enter          Toggle pane focus
 z              Expand details to full width
 Esc            Return / close expanded activity`},
-	{"Tasks", `n              New task draft
+	{"Tasks", `@executor      Prefix a router request; Tab completes names
+n              New task draft
 /              Route new work
 a              Related task in selected thread
 b              Spawn subagent from running task

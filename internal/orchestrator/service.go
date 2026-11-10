@@ -352,9 +352,12 @@ func (s *Service) CreateTask(title, prompt, workspace string) (Task, error) {
 // CreateTaskWithProfile creates a manual request assigned to a named profile. An
 // empty name uses the routing default. The resolved profile is snapshotted.
 func (s *Service) CreateTaskWithProfile(title, prompt, workspace, profile string) (Task, error) {
-	agent := s.selectAgent(prompt)
-	plan := s.defaultWorkspacePlan(workspace, prompt, agent)
-	return s.createTaskWithIsolation(title, prompt, workspace, plan,
+	agent, request, err := s.routeTopLevelRequest(prompt)
+	if err != nil {
+		return Task{}, err
+	}
+	plan := s.defaultWorkspacePlan(workspace, request, agent)
+	return s.createTaskWithIsolation(title, request, workspace, plan,
 		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual}, agent, profile)
 }
 

@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -80,6 +82,12 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.clampScroll()
 		return m, nil
 	case "tab":
+		if m.routerFocus == 0 {
+			if query, ok := m.routerMentionQuery(); ok {
+				m.completeRouterMention(query)
+				return m, nil
+			}
+		}
 		m.routerFocus = 1 - m.routerFocus
 		m.clampRouter()
 		return m, nil
@@ -124,6 +132,14 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		task, err := m.service.SubmitRequest(text, m.workspace)
+		if task.ID == "" {
+			// Nothing was accepted, so the draft is still the operator's only
+			// copy of the request. Keep it, and the cursor, for correction.
+			if err != nil {
+				m.notice = err.Error()
+			}
+			return m, nil
+		}
 		if err != nil {
 			m.notice = err.Error()
 		} else {
@@ -148,6 +164,112 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.setRouterEditor(e)
 	}
 	return m, nil
+}
+
+// mentionQuery describes the leading @executor token being typed. Completion
+// and hints only apply to that first token so an @ inside prose stays data.
+type mentionQuery struct {
+	start  int
+	end    int
+	prefix string
+}
+
+func (m model) routerMentionQuery() (mentionQuery, bool) {
+	text := m.routerDraft
+	cursor := min(max(0, m.routerCursor), len(text))
+	if cursor == 0 {
+		return mentionQuery{}, false
+	}
+	start := cursor
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:start])
+		if unicode.IsSpace(r) {
+			break
+		}
+		start -= size
+	}
+	if start >= len(text) || text[start] != '@' || cursor <= start {
+		return mentionQuery{}, false
+	}
+	if strings.TrimSpace(text[:start]) != "" {
+		return mentionQuery{}, false
+	}
+	end := cursor
+	for end < len(text) {
+		r, size := utf8.DecodeRuneInString(text[end:])
+		if unicode.IsSpace(r) {
+			break
+		}
+		end += size
+	}
+	return mentionQuery{start: start, end: end, prefix: text[start+1 : cursor]}, true
+}
+
+// routerMatchingAgents lists registered executors matching the typed prefix.
+// general stays first so a bare @ completes predictably.
+func (m model) routerMatchingAgents(prefix string) []orchestrator.AgentInfo {
+	if m.service == nil {
+		return nil
+	}
+	agents := m.service.ListAgents()
+	prefix = strings.ToLower(prefix)
+	ordered := make([]orchestrator.AgentInfo, 0, len(agents))
+	for _, agent := range agents {
+		if agent.Name == orchestrator.DefaultRouteAgent {
+			ordered = append(ordered, agent)
+		}
+	}
+	for _, agent := range agents {
+		if agent.Name != orchestrator.DefaultRouteAgent {
+			ordered = append(ordered, agent)
+		}
+	}
+	matching := ordered[:0]
+	for _, agent := range ordered {
+		if strings.HasPrefix(strings.ToLower(agent.Name), prefix) {
+			matching = append(matching, agent)
+		}
+	}
+	return matching
+}
+
+func (m *model) completeRouterMention(query mentionQuery) {
+	agents := m.routerMatchingAgents(query.prefix)
+	if len(agents) == 0 {
+		m.notice = "No registered executor matches @" + query.prefix
+		return
+	}
+	replacement := "@" + agents[0].Name
+	m.routerDraft = m.routerDraft[:query.start] + replacement + m.routerDraft[query.end:]
+	cursor := query.start + len(replacement)
+	if cursor == len(m.routerDraft) {
+		m.routerDraft += " "
+		cursor++
+	} else if r, _ := utf8.DecodeRuneInString(m.routerDraft[cursor:]); !unicode.IsSpace(r) {
+		m.routerDraft = m.routerDraft[:cursor] + " " + m.routerDraft[cursor:]
+		cursor++
+	}
+	m.routerCursor = cursor
+	m.routerScroll = 0
+}
+
+// routerMentionHintLines shows available executors while the leading mention is
+// being edited. The composer keeps the first matching name for Tab completion.
+func (m model) routerMentionHintLines(width int) []string {
+	query, ok := m.routerMentionQuery()
+	if !ok {
+		return nil
+	}
+	agents := m.routerMatchingAgents(query.prefix)
+	if len(agents) == 0 {
+		return []string{fit(mutedStyle.Render("No registered executor matches @"+query.prefix), width, 1)}
+	}
+	names := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		names = append(names, "@"+agent.Name)
+	}
+	hint := "Executors: " + strings.Join(names, "  ") + "  ·  tab completes @" + agents[0].Name
+	return []string{fit(mutedStyle.Render(hint), width, 1)}
 }
 
 func (m model) routerEditor() editor {
@@ -223,7 +345,7 @@ func (m model) routerPanel(width, height int) string {
 	// Keep the composer at the bottom of the panel. Drop list rows first when
 	// the terminal is too short for both, then the header, so the composer and
 	// its cursor stay visible.
-	composer := m.routerComposerLines(inner)
+	composer := append(m.routerComposerLines(inner), m.routerMentionHintLines(inner)...)
 	contentHeight := max(1, height-2)
 	maxTop := max(0, contentHeight-len(composer)-3)
 	if len(top) > maxTop {
@@ -257,7 +379,7 @@ func (m model) routerComposerLines(width int) []string {
 		prefix = mutedStyle.Render("▸ ")
 	}
 	if m.routerDraft == "" && m.routerFocus == 0 {
-		return []string{prefix + mutedStyle.Render("Describe the work…") + "▏"}
+		return []string{prefix + mutedStyle.Render("Describe the work… type @ to choose an executor") + "▏"}
 	}
 	contentWidth := max(1, width-lipgloss.Width("▸ ")-1)
 	visible := m.routerEditor().viewLines(contentWidth, m.routerComposerHeight())

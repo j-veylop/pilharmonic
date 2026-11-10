@@ -76,11 +76,11 @@ func TestInspectionRequestsUseSharedWorkspace(t *testing.T) {
 		prompt string
 		agent  string
 	}{
-		{"review the parser", "reviewer"},
-		{"explain the parser", "explorer"},
-		{"run the tests", "tester"},
-		{"debug the failure", "debugger"},
-		{"git status", "gitter"},
+		{"@reviewer review the parser", "reviewer"},
+		{"@explorer explain the parser", "explorer"},
+		{"@tester run the tests", "tester"},
+		{"@debugger debug the failure", "debugger"},
+		{"@gitter git status", "gitter"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
@@ -158,9 +158,9 @@ func TestChangeRequestsRetainIsolation(t *testing.T) {
 		agent  string
 	}{
 		{"fix the parser", "general"},
-		{"review the parser and fix the bug", "reviewer"},
-		{"run tests then update the docs", "tester"},
-		{"git commit the changes", "gitter"},
+		{"@reviewer review the parser and fix the bug", "reviewer"},
+		{"@tester run tests then update the docs", "tester"},
+		{"@gitter git commit the changes", "gitter"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
@@ -315,7 +315,7 @@ func TestRelatedInspectionTaskUsesSharedWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.CreateRelatedTask(parent.ID, "review", "review the parser", repo)
+	task, err := s.CreateRelatedTask(parent.ID, "review", "@reviewer review the parser", repo)
 	if err != nil {
 		t.Fatal(err)
 	}

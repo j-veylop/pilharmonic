@@ -128,6 +128,9 @@ func (m model) submitInput(prompt string) (string, error) {
 		return "Subagent started: " + task.ID, err
 	case newTaskInput, relatedTaskInput:
 		title := prompt
+		if _, request, explicit := orchestrator.SplitAgentMention(prompt); explicit {
+			title = request
+		}
 		if runes := []rune(title); len(runes) > 60 {
 			title = string(runes[:57]) + "..."
 		}

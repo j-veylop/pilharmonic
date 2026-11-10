@@ -159,3 +159,88 @@ func TestRouterFitsTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestRouterMentionHintsAndCompletes(t *testing.T) {
+	dir := t.TempDir()
+	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	s.RegisterRunner("general", routerRunner{})
+	s.RegisterRunner("reviewer", routerRunner{})
+	m := model{service: s, workspace: dir, tasks: s.ListTasks(), router: true, width: 120, height: 35}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("@rev")})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Executors:") || !strings.Contains(view, "@reviewer") {
+		t.Fatalf("mention hint missing: %s", view)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.routerFocus != 0 || m.routerDraft != "@reviewer " {
+		t.Fatalf("tab did not complete the executor: focus=%d draft=%q", m.routerFocus, m.routerDraft)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("fix it")})
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(m.tasks) != 1 {
+		t.Fatalf("routed request did not create one task: %+v", m.tasks)
+	}
+	task := m.tasks[0]
+	if task.Agent != "reviewer" || task.Prompt != "fix it" {
+		t.Fatalf("mentioned executor was not routed: %+v", task)
+	}
+	if !strings.Contains(m.notice, "Routed to reviewer") {
+		t.Fatalf("routing notice missing the executor: %q", m.notice)
+	}
+}
+
+func TestRouterRejectedMentionPreservesDraftAndCursor(t *testing.T) {
+	cases := []struct {
+		name    string
+		draft   string
+		wantErr string
+	}{{
+		name:    "unknown executor",
+		draft:   "@missing do work",
+		wantErr: `agent "missing" unavailable`,
+	}, {
+		name:    "incomplete mention",
+		draft:   "@reviewer",
+		wantErr: "request text is required after the executor mention",
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Shutdown()
+			s.RegisterRunner("general", routerRunner{})
+			s.RegisterRunner("reviewer", routerRunner{})
+			m := model{service: s, workspace: dir, tasks: s.ListTasks(), router: true, width: 120, height: 35}
+			m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.draft)})
+			for i := 0; i < 3; i++ {
+				m = key(m, tea.KeyMsg{Type: tea.KeyLeft})
+			}
+			draft, cursor := m.routerDraft, m.routerCursor
+			m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+			if tasks := s.ListTasks(); len(tasks) != 0 {
+				t.Fatalf("rejected mention created tasks: %+v", tasks)
+			}
+			if len(m.tasks) != 0 {
+				t.Fatalf("rejected mention added tasks to the view: %+v", m.tasks)
+			}
+			if m.routerDraft != draft || m.routerCursor != cursor {
+				t.Fatalf("draft or cursor changed on rejection: draft=%q cursor=%d, want draft=%q cursor=%d", m.routerDraft, m.routerCursor, draft, cursor)
+			}
+			if !strings.Contains(m.notice, tc.wantErr) {
+				t.Fatalf("rejection notice missing %q: %q", tc.wantErr, m.notice)
+			}
+			view := ansi.Strip(m.View())
+			before, _, _ := strings.Cut(draft, " ")
+			if !strings.Contains(view, before) {
+				t.Fatalf("draft missing from router after rejection: %s", view)
+			}
+		})
+	}
+}

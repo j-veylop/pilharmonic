@@ -15,7 +15,7 @@ func TestAcceptedSpecialistCeilingSurvivesRestart(t *testing.T) {
 	if err := s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read"]}`)); err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.CreateTask("review", "review the parser", t.TempDir())
+	task, err := s.CreateTask("review", "@reviewer review the parser", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

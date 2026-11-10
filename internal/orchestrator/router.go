@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // LocalPolicyVersion identifies the deterministic routing policy used for the
@@ -15,6 +16,47 @@ const LocalPolicyVersion = "local-1"
 
 // DefaultRouteAgent is the executor assigned by the local routing policy.
 const DefaultRouteAgent = "general"
+
+// SplitAgentMention recognizes an explicit executor choice at the start of a
+// request. The leading @name token is routing metadata, not part of the
+// mandate: the returned request excludes it. The name is matched exactly
+// against registered executors by the caller.
+func SplitAgentMention(text string) (agent, request string, explicit bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "@") {
+		return "", trimmed, false
+	}
+	rest := trimmed[1:]
+	end := strings.IndexFunc(rest, unicode.IsSpace)
+	if end < 0 {
+		return rest, "", true
+	}
+	return rest[:end], strings.TrimSpace(rest[end:]), true
+}
+
+// routeTopLevelRequest resolves an explicit @executor mention or assigns the
+// general fallback. An unavailable or incomplete mention is rejected rather
+// than silently routed elsewhere.
+func (s *Service) routeTopLevelRequest(text string) (string, string, error) {
+	text = strings.TrimSpace(text)
+	agent, request, explicit := SplitAgentMention(text)
+	if !explicit {
+		return DefaultRouteAgent, text, nil
+	}
+	if agent == "" {
+		return "", "", errors.New("executor name is required after @")
+	}
+	if request == "" {
+		return "", "", errors.New("request text is required after the executor mention")
+	}
+	s.mu.Lock()
+	_, available := s.runners[agent]
+	s.mu.Unlock()
+	if !available {
+		return "", "", fmt.Errorf("agent %q unavailable", agent)
+	}
+	return agent, request, nil
+}
 
 // routingProfile returns the profile name the local router assigns.
 func (s *Service) routingProfile() (string, error) {
@@ -32,8 +74,11 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 	if text == "" {
 		return Task{}, errors.New("request text is required")
 	}
-	agent := s.selectAgent(text)
-	plan := s.defaultWorkspacePlan(workspace, text, agent)
+	agent, request, err := s.routeTopLevelRequest(text)
+	if err != nil {
+		return Task{}, err
+	}
+	plan := s.defaultWorkspacePlan(workspace, request, agent)
 	profile, err := s.routingProfile()
 	if err != nil {
 		return Task{}, err
@@ -43,7 +88,7 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 		workspaceChoice = "isolated committed-HEAD worktree"
 	}
 	assignment := fmt.Sprintf("Router assignment: agent %s, profile %s, %s, execution requested (%s)", agent, profile, workspaceChoice, LocalPolicyVersion)
-	task, err := s.createTaskWithIsolation(requestTitle(text), text, workspace, plan,
+	task, err := s.createTaskWithIsolation(requestTitle(request), request, workspace, plan,
 		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter}, agent, profile, assignment)
 	if err != nil {
 		return Task{}, err

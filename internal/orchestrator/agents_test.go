@@ -135,9 +135,10 @@ func TestSpecialistSelectionAndModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	for request, want := range map[string]string{
-		"Please add tests for the parser": "tester", "add a parser": "general",
-		"Review the diff": "reviewer", "Trace the call": "explorer", "Diagnose the timeout": "debugger",
-		"Rebase the branch": "gitter", "Something unexpected happened": "general",
+		"@tester Please add tests for the parser": "tester", "@general add a parser": "general",
+		"@reviewer Review the diff": "reviewer", "@explorer Trace the call": "explorer", "@debugger Diagnose the timeout": "debugger",
+		"@gitter Rebase the branch": "gitter", "Something unexpected happened": "general",
+		"Please add tests for the parser": "general",
 	} {
 		task, err := s.CreateTask("draft", request, t.TempDir())
 		if err != nil || task.Agent != want {

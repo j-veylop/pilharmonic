@@ -54,7 +54,7 @@ func TestSubmitRequestAcceptsAssignsAndStarts(t *testing.T) {
 	}
 }
 
-func TestTopLevelRoutingSkipsImplementer(t *testing.T) {
+func TestTopLevelRoutingDefaultsToGeneral(t *testing.T) {
 	dir := t.TempDir()
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	runs := make(chan Task, 4)
@@ -71,7 +71,7 @@ func TestTopLevelRoutingSkipsImplementer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if task.Agent != DefaultRouteAgent {
-		t.Fatalf("automatic top-level route selected %q, want %q", task.Agent, DefaultRouteAgent)
+		t.Fatalf("top-level request without a mention selected %q, want %q", task.Agent, DefaultRouteAgent)
 	}
 	await(t, s, task.ID, Completed)
 	if run := <-runs; run.ID != task.ID || run.Agent != DefaultRouteAgent {
@@ -83,7 +83,7 @@ func TestTopLevelRoutingSkipsImplementer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if related.Agent != DefaultRouteAgent {
-		t.Fatalf("related top-level route selected %q, want %q", related.Agent, DefaultRouteAgent)
+		t.Fatalf("related request without a mention selected %q, want %q", related.Agent, DefaultRouteAgent)
 	}
 
 	explicit, err := s.CreateTask("explicit", "add a parser", dir)
@@ -91,7 +91,7 @@ func TestTopLevelRoutingSkipsImplementer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if explicit.Agent != DefaultRouteAgent {
-		t.Fatalf("draft automatic route selected %q, want %q", explicit.Agent, DefaultRouteAgent)
+		t.Fatalf("draft without a mention selected %q, want %q", explicit.Agent, DefaultRouteAgent)
 	}
 	if err = s.SetTaskAgent(explicit.ID, "implementer"); err != nil {
 		t.Fatal(err)
@@ -209,5 +209,100 @@ func TestSubmitRequestDefaultsToIsolatedWorktree(t *testing.T) {
 	}
 	if run := <-seen; run.Workspace == repo || !strings.Contains(run.Workspace, filepath.Join("workspaces", task.ID, "tree")) {
 		t.Fatalf("routed request ran in %q instead of a worktree", run.Workspace)
+	}
+}
+
+func TestSubmitRequestUsesExplicitAgentMention(t *testing.T) {
+	dir := t.TempDir()
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	runs := make(chan Task, 4)
+	for _, name := range []string{DefaultRouteAgent, "reviewer"} {
+		s.RegisterRunner(name, runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+			runs <- task
+			return nil
+		}))
+	}
+	task, err := s.SubmitRequest("@reviewer review the parser", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Agent != "reviewer" || task.Prompt != "review the parser" || task.Title != "review the parser" {
+		t.Fatalf("explicit mention was not selected and removed from the mandate: %+v", task)
+	}
+	await(t, s, task.ID, Completed)
+	if run := <-runs; run.ID != task.ID || run.Agent != "reviewer" || run.Prompt != "review the parser" {
+		t.Fatalf("mentioned executor did not receive the request: %+v", run)
+	}
+
+	fallback, err := s.SubmitRequest("review the parser", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallback.Agent != DefaultRouteAgent || fallback.Prompt != "review the parser" {
+		t.Fatalf("request without a mention did not use general: %+v", fallback)
+	}
+	await(t, s, fallback.ID, Completed)
+	if run := <-runs; run.ID != fallback.ID || run.Agent != DefaultRouteAgent {
+		t.Fatalf("fallback executor did not receive the request: %+v", run)
+	}
+}
+
+func TestSubmitRequestRejectsInvalidAgentMention(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	dir := t.TempDir()
+	for _, text := range []string{"@missing do work", "@reviewer", "@"} {
+		if _, err := s.SubmitRequest(text, dir); err == nil {
+			t.Fatalf("accepted invalid explicit executor %q", text)
+		}
+	}
+	if tasks := s.ListTasks(); len(tasks) != 0 {
+		t.Fatalf("invalid mention created tasks: %+v", tasks)
+	}
+}
+
+func TestDraftAndRelatedRequestsUseAgentMention(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.LoadBuiltinSpecialists()
+	dir := t.TempDir()
+	parent, err := s.CreateTask("parent", "write a parser", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parent.Agent != DefaultRouteAgent {
+		t.Fatalf("unmentioned draft selected %q, want %q", parent.Agent, DefaultRouteAgent)
+	}
+	draft, err := s.CreateTask("draft", "@tester add regression tests", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.Agent != "tester" || draft.Prompt != "add regression tests" {
+		t.Fatalf("draft mention was not applied: %+v", draft)
+	}
+	related, err := s.CreateRelatedTask(parent.ID, "related", "@explorer trace the parser", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if related.Agent != "explorer" || related.Prompt != "trace the parser" {
+		t.Fatalf("related mention was not applied: %+v", related)
+	}
+}
+
+func TestSplitAgentMention(t *testing.T) {
+	cases := []struct {
+		text, agent, request string
+		explicit             bool
+	}{
+		{" @reviewer   review the parser ", "reviewer", "review the parser", true},
+		{"@tester\nadd tests", "tester", "add tests", true},
+		{"@general ", "general", "", true},
+		{"@", "", "", true},
+		{"review the parser", "", "review the parser", false},
+		{"please @reviewer review", "", "please @reviewer review", false},
+	}
+	for _, tc := range cases {
+		agent, request, explicit := SplitAgentMention(tc.text)
+		if agent != tc.agent || request != tc.request || explicit != tc.explicit {
+			t.Errorf("SplitAgentMention(%q) = %q, %q, %v; want %q, %q, %v", tc.text, agent, request, explicit, tc.agent, tc.request, tc.explicit)
+		}
 	}
 }

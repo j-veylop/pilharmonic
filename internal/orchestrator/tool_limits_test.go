@@ -61,7 +61,7 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if parent.Agent != DefaultRouteAgent {
-		t.Fatalf("automatic top-level route selected %q, want %q", parent.Agent, DefaultRouteAgent)
+		t.Fatalf("top-level request without a mention selected %q, want %q", parent.Agent, DefaultRouteAgent)
 	}
 	// This test exercises implementer limits, so select it explicitly.
 	if err := s.SetTaskAgent(parent.ID, "implementer"); err != nil {
@@ -92,7 +92,7 @@ func TestDisjointSpecialistToolsPreventLaunch(t *testing.T) {
 	if err := s.RegisterProfile(Profile{Name: "shell", Tools: []string{"bash"}}); err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.CreateTaskWithProfile("review", "review the changes", t.TempDir(), "shell")
+	task, err := s.CreateTaskWithProfile("review", "@reviewer review the changes", t.TempDir(), "shell")
 	if err != nil {
 		t.Fatal(err)
 	}

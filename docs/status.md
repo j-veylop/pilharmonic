@@ -6,10 +6,11 @@ intent and the forward-looking invariants are in `design.md` and
 `routing-spec.md`; where those documents describe future work, this one says so.
 
 The CLI opens on a deterministic router that accepts a local request, assigns
-a specialist or the fallback general executor and requests execution. Automatic
-top-level routing does not assign the implementer; explicit task choices and
-delegation can. The task board also supports manual drafts that
-wait for an explicit start. The service persists threads, tasks and attempts
+the executor named by a leading `@NAME` mention or the general fallback, and
+requests execution. Top-level routing does not infer an executor from the
+request text; explicit task choices and delegation can still select the
+implementer. The task board also supports manual drafts that wait for an
+explicit start. The service persists threads, tasks and attempts
 in one JSON file. The terminal UI reads snapshots from the service.
 
 ## Startup
@@ -52,10 +53,12 @@ reopening state after a crash or kill.
 ## Lifecycle of a request
 
 The primary path starts at the router. Pressing Enter on the router screen calls
-`SubmitRequest` (`router.go`), which trims the request, derives a display title
-from its first line, and persists it through the same path as a manual draft.
-The decision records the local policy ID/version (`local` / `local-1`), the
-trusted local source and actor, and a versioned digest of the policy input. A
+`SubmitRequest` (`router.go`), which resolves a leading `@NAME` executor mention,
+removes that token from the request, derives a display title from the first
+remaining line, and persists it through the same path as a manual draft. Without
+a mention it assigns `general`; an unavailable name or a missing request is
+rejected. The decision records the local policy ID/version (`local` / `local-1`),
+the trusted local source and actor, and a versioned digest of the policy input. A
 `routed` event records the assignment (selected executor, an isolated worktree or shared
 workspace as applicable, execution requested). The router then calls `Start`
 immediately. The same screen lists tasks whose stage
@@ -352,12 +355,12 @@ rejection neither undoes a merge nor removes the retained worktree.
   run behind `Runner`/`LiveRunner`. Only Pi supports live follow-ups and
   structured tool activity.
 - The router is deterministic and creates one task per request. It does not
-  interpret or decompose requests with a model. It selects a registered
-  specialist or falls back to general, but automatic top-level selection never
-  chooses the implementer. Explicit selection and delegation can still choose
-  it. The router applies the default workspace choice and starts the task.
-  Manual drafts remain for other executors, per-task isolation changes and
-  other pre-start changes.
+  interpret or decompose requests with a model. It uses a leading `@NAME` to
+  select a registered executor and otherwise falls back to general. An unknown
+  or incomplete mention is rejected. Explicit selection and delegation can still
+  choose the implementer. The router applies the default workspace choice and
+  starts the task. Manual drafts remain for other executors, per-task isolation
+  changes and other pre-start changes.
 - Subagent delegation is bounded but not sandboxed: a child has the same host
   permissions and shares the parent's workspace, so concurrent file edits are
   not coordinated. A child is not canceled when its parent ends, and the parent

@@ -10,7 +10,7 @@ Use Go 1.24 or newer and an interactive terminal. For the default executor, inst
 go run .
 ```
 
-On the router screen, type a request and press **Enter**. The local router accepts it, selects an executor and requests execution. By default two agents can run at once. Additional start requests wait in FIFO order. Press **Esc** for the task board, **/** to return to the router, or **?** for the keyboard reference.
+On the router screen, type a request and press **Enter**. The local router accepts it, selects an executor and requests execution. Start the request with `@NAME` to choose a registered executor, for example `@tester add regression tests`; without an explicit mention it uses `general`. Typing `@` shows the matching executors and **Tab** completes the first match. The mention is routing metadata and is not part of the recorded mandate. By default two agents can run at once. Additional start requests wait in FIFO order. Press **Esc** for the task board, **/** to return to the router, or **?** for the keyboard reference.
 
 Composers and the router input wrap long drafts and scroll as you move the cursor. Press **Ctrl-J** (or **Alt-Enter**) to insert a newline, then **Enter** to submit. Use **PgUp** and **PgDn** to move through long input.
 
@@ -61,13 +61,19 @@ Every launch registers six Pi specialists from `internal/orchestrator/specialist
 | `reviewer` | Inspect a proposed change for bugs and missing coverage. |
 | `gitter` | Inspect Git history or carry out delegated branch, commit, and merge work. |
 
-The router matches the opening action of the mandate. For example, “review the diff”
-selects `reviewer` and “add tests for parsing” selects `tester`. Automatic
-top-level routing never selects `implementer`: a request such as “add a parser”
-uses `general`. Select `implementer` explicitly on a draft, or let delegated
-work choose it automatically or by name. Unmatched requests use `general`. The
-executor appears on the task board and in task details. Drafts allow a manual
-override before starting.
+A request selects an executor only through a leading `@NAME` mention. For
+example, `@reviewer review the diff` selects `reviewer` and `@tester add tests
+for parsing` selects `tester`. Requests without a mention use `general`,
+including change requests such as “add a parser”; top-level routing never
+infers a specialist from the opening action. Select `implementer` with
+`@implementer`, with **A** on a draft, or let delegated work choose it
+automatically or by name. The mention must be the first token, uses the exact
+registered name and is removed from the mandate. An unknown or incomplete
+mention is rejected instead of falling back, and the router keeps the draft so
+it can be corrected. Router hints list matching names
+and **Tab** completes the first one. Draft and related-task composers accept the
+same leading mention. The executor appears on the task board and in task
+details.
 
 Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
 instructions. They are embedded at build time. Run `./orchestrator` from this directory to load the
@@ -102,7 +108,7 @@ Save the following as `agents.json` and run `go run . -agents agents.json`. On t
 }
 ```
 
-Each executor can have an optional `description`. Parents with delegation enabled see the registered names and descriptions and can pass `--agent NAME` to the subagent helper. Omitting the flag selects from the child mandate, with the parent’s executor as fallback.
+Each executor can have an optional `description`. Prefix a router request with `@echo-test` to select a configured command executor. Parents with delegation enabled see the registered names and descriptions and can pass `--agent NAME` to the subagent helper. Omitting the flag selects from the child mandate, with the parent’s executor as fallback.
 
 The command receives the mandate and queued context on stdin. Its stdout and stderr appear in the output view. Configure only trusted executables and supply the configuration again on later launches. Pi also supports live follow-ups, structured tool activity and reports. See the [executor contract](docs/executors.md).
 

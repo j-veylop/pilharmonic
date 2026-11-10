@@ -28,8 +28,11 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 	if !info.IsDir() {
 		return Task{}, errors.New("workspace must be a directory")
 	}
-	agent := s.selectAgent(prompt)
-	plan := s.defaultWorkspacePlan(abs, prompt, agent)
+	agent, request, err := s.routeTopLevelRequest(prompt)
+	if err != nil {
+		return Task{}, err
+	}
+	plan := s.defaultWorkspacePlan(abs, request, agent)
 	triggerID := newID()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -52,7 +55,7 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 			continue
 		}
 		now := time.Now().UTC()
-		trigger := Trigger{ID: triggerID, Source: LocalPolicySource, Text: prompt, CreatedAt: now}
+		trigger := Trigger{ID: triggerID, Source: LocalPolicySource, Text: request, CreatedAt: now}
 		decision, err := s.authorizeLocked(AuthorizationRequest{
 			Source:    LocalPolicySource,
 			Actor:     LocalActor,
@@ -60,7 +63,7 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 			TriggerID: triggerID,
 			ThreadID:  threadID,
 			ParentID:  parentID,
-			Text:      prompt,
+			Text:      request,
 			Workspace: abs,
 		})
 		if err != nil {

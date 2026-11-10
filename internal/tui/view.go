@@ -664,7 +664,11 @@ func (m model) footer(w int) string {
 	footerText := "n new · / route · r run · ? help · q quit"
 	switch {
 	case m.router:
-		footerText = "enter route · tab attention · esc tasks · ctrl+c quit"
+		if _, ok := m.routerMentionQuery(); ok {
+			footerText = "tab complete · enter route · esc tasks · ctrl+c quit"
+		} else {
+			footerText = "enter route · tab attention · esc tasks · ctrl+c quit"
+		}
 	case m.activity:
 		footerText = "t output · v filter · esc collapse · ? help · q quit"
 	case m.detailFocus || m.fullscreen:

@@ -74,12 +74,19 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	t.ScheduleRequested = false
 	t.ScheduledAt = time.Time{}
 	t.UpdatedAt = time.Now().UTC()
-	// The configured executor can change between acceptance and launch,
-	// including across a restart. Preserve explicit workspace choices.
-	if t.IsolationAuto && !t.Isolated && t.ExecutionWorkspace == "" &&
-		taskMakesChanges(t.Prompt, isInspectionSpecialist(t.Agent, runner)) {
-		t.Isolated = true
-		t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Isolated worktree selected for the configured executor"})
+	// Reconcile an automatic choice with the immutable mandate before any
+	// workspace is prepared. This also applies to state written by the previous
+	// role-based heuristic. Explicit operator choices are preserved.
+	if t.IsolationAuto && t.ExecutionWorkspace == "" {
+		isolated := taskMakesChanges(t.Prompt)
+		if isolated != t.Isolated {
+			t.Isolated = isolated
+			message := "Shared source workspace selected; no requested change detected"
+			if isolated {
+				message = "Isolated worktree selected for requested change"
+			}
+			t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
+		}
 	}
 	t.Output = ""
 	t.Error = ""

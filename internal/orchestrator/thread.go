@@ -32,7 +32,7 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 	if err != nil {
 		return Task{}, err
 	}
-	plan := s.defaultWorkspacePlan(abs, request, agent)
+	plan := s.defaultWorkspacePlan(abs, request)
 	triggerID := newID()
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -5,26 +5,7 @@ import (
 	"strings"
 )
 
-// Inspection roles are expected to inspect the repository without changing it.
-// Their bundled prompts leave the workspace unchanged unless the mandate asks
-// for edits. The check below still isolates an inspection role when the mandate
-// opens an edit action.
-var inspectionRoles = map[string]bool{
-	"debugger": true,
-	"explorer": true,
-	"gitter":   true,
-	"reviewer": true,
-	"tester":   true,
-}
-
-// A command can replace a bundled specialist under the same name. Only the
-// bundled Pi executor carries the inspection instructions for that role.
-func isInspectionSpecialist(name string, runner Runner) bool {
-	pi, ok := runner.(PiRunner)
-	return ok && pi.instructions != "" && inspectionRoles[name]
-}
-
-// changeVerbs are imperative actions that normally require a writable,
+// changeVerbs are imperative actions that normally request a writable,
 // isolated workspace. Only verbs in request position count, so inspecting an
 // existing change still stays in the source workspace.
 var changeVerbs = map[string]bool{
@@ -160,55 +141,6 @@ var requestPoliteness = []string{
 	"would you ",
 }
 
-var inspectionOpenings = []string{
-	"analyse",
-	"analyze",
-	"assess",
-	"audit",
-	"check",
-	"compare",
-	"debug",
-	"describe",
-	"determine",
-	"diagnose",
-	"evaluate",
-	"explain",
-	"explore",
-	"find",
-	"git",
-	"grep",
-	"how",
-	"identify",
-	"inspect",
-	"investigate",
-	"list",
-	"locate",
-	"look",
-	"read",
-	"reproduce",
-	"review",
-	"run a test",
-	"run test",
-	"run the test",
-	"run the tests",
-	"search",
-	"see",
-	"show",
-	"summarize",
-	"test",
-	"trace",
-	"understand",
-	"validate",
-	"verify",
-	"view",
-	"what",
-	"when",
-	"where",
-	"which",
-	"who",
-	"why",
-}
-
 func trimRequestPoliteness(text string) string {
 	text = strings.TrimSpace(text)
 	for {
@@ -225,50 +157,14 @@ func trimRequestPoliteness(text string) string {
 	}
 }
 
-// taskMakesChanges is the workspace classification used when default isolation
-// is enabled. It is deliberately conservative: inspection requests and known
-// inspection roles share the source workspace only when no edit action is
-// requested. Requests matching neither signal retain automatic isolation.
-//
-// This is a lexical role heuristic, not proof of what an agent will do. A
-// misleading mandate can
-// still write to the shared workspace. Operators can explicitly enable
-// isolation for any queued task.
-func taskMakesChanges(prompt string, inspectionRole bool) bool {
-	if mandateRequestsChanges(prompt) {
-		return true
-	}
-	if inspectionRequest(prompt) {
-		return false
-	}
-	return !inspectionRole
-}
-
-// inspectionRequest recognizes an inspection opening even when the selected
-// executor is the general-purpose fallback. The action rules use the same
-// kind of prefix matching as executor selection.
-func inspectionRequest(prompt string) bool {
-	opening := requestOpening(prompt)
-	for _, prefix := range inspectionOpenings {
-		if opening == prefix || strings.HasPrefix(opening, prefix+" ") {
-			return true
-		}
-	}
-	return false
-}
-
-func requestOpening(prompt string) string {
-	text := trimRequestPoliteness(strings.ToLower(prompt))
-	tokens := mandateTokenPattern.FindAllString(text, -1)
-	words := make([]string, 0, 4)
-	for _, token := range tokens {
-		switch token {
-		case ".", ";", ":", ",", "!", "?":
-			return strings.Join(words, " ")
-		}
-		words = append(words, token)
-	}
-	return strings.Join(words, " ")
+// taskMakesChanges reports whether the mandate explicitly requests a change.
+// Only that signal creates an automatic worktree. The selected executor is not
+// a mutation signal: read-only and ambiguous mandates share the source
+// workspace. This is a lexical heuristic, not proof of what an agent will do,
+// so a misleading mandate can still write to the shared workspace. Operators
+// can explicitly enable isolation for any queued task.
+func taskMakesChanges(prompt string) bool {
+	return mandateRequestsChanges(prompt)
 }
 
 // mandateRequestsChanges reports whether the mandate contains an imperative

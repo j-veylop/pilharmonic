@@ -31,7 +31,7 @@ func TestInheritedWorktreeWaitsForGrandchildAndSurvivesRestart(t *testing.T) {
 		}
 	}))
 	repo := committedRepo(t)
-	owner, err := s.CreateTask("parent", "delegate", repo)
+	owner, err := s.CreateTask("parent", "fix the inherited tree", repo)
 	if err != nil {
 		t.Fatal(err)
 	}

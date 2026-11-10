@@ -12,11 +12,11 @@ import (
 	"time"
 )
 
-// SetTaskIsolation changes the workspace choice for a queued task. New change
-// work defaults to an isolated worktree when its workspace supports one, while
-// read-only inspection work is classified before acceptance. An operator choice
-// is explicit and disables later automatic reclassification. Worktrees are
-// preserved while the task exists, including across retries and review.
+// SetTaskIsolation changes the workspace choice for a queued task. A worktree is
+// selected automatically only for mandates that explicitly request changes and
+// when the workspace supports isolation. Read-only and ambiguous work is shared.
+// An operator choice is explicit and disables later automatic changes. Worktrees
+// are preserved while the task exists, including across retries and review.
 func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -66,16 +66,19 @@ worker inputs must be independent copies wherever callers can mutate them.
 
 ## Workspaces and integration
 
-New change work defaults to a dedicated Git worktree when the source repository
-has a committed HEAD. Read-only inspection requests and tasks assigned to an
-inspection specialist provided by the bundled Pi adapter that request no edit keep the shared source workspace.
-The classification combines the request opening and selected role with
-imperative edit actions in the mandate; requests matching neither inspection
-signal default to isolation, and an explicit task choice overrides it. The
-scheduler checks an automatic shared choice against the configured executor
-before launch, including after a restart. The worker prepares the worktree before execution, checks the reservation before
-reuse and merging, and preserves it across retries. Shared workspaces are
-available by startup or task choice and are the fallback when isolation is
+Tasks run in the shared source workspace unless their mandate explicitly
+requests a change. When the source repository has a committed HEAD and startup
+isolation is enabled, an imperative edit action in the request starts the task
+in a dedicated Git worktree. Read-only inspection requests and requests with no
+detected edit action keep the shared workspace, so ambiguity does not reserve a
+tree. The classification is a lexical request-opening heuristic, not proof of
+what an executor will do; the selected executor does not establish change work
+by itself, and a later executor change does not alter the automatic choice. An
+explicit task choice overrides it. Before preparing a workspace, the scheduler
+reconciles a persisted automatic choice with the immutable mandate, so an
+ambiguous task cannot reserve a tree. The worker prepares the worktree before execution, checks the reservation before
+reuse and merging, and preserves it across retries. Shared workspaces are the
+default, available by startup or task choice, and the fallback when isolation is
 unavailable. Delegated children inherit the parent's execution workspace instead
 of being classified separately. Agents retain the host user's permissions.
 

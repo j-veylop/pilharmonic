@@ -78,7 +78,7 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	plan := s.defaultWorkspacePlan(workspace, request, agent)
+	plan := s.defaultWorkspacePlan(workspace, request)
 	profile, err := s.routingProfile()
 	if err != nil {
 		return Task{}, err

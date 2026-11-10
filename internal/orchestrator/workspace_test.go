@@ -393,7 +393,7 @@ func TestDeleteCompletedTasksCleansUpWorktrees(t *testing.T) {
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	var tasks []Task
 	for _, title := range []string{"first", "second"} {
-		task, err := s.CreateTask(title, "do work", repo)
+		task, err := s.CreateTask(title, "fix the parser", repo)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -510,7 +510,7 @@ func TestPreparedIsolatedWorkspaceCannotBeToggled(t *testing.T) {
 	}
 }
 
-func TestNewTasksDefaultToIsolationInCommittedRepository(t *testing.T) {
+func TestNewChangeTasksDefaultToIsolationInCommittedRepository(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	seen := make(chan Task, 1)
@@ -518,12 +518,12 @@ func TestNewTasksDefaultToIsolationInCommittedRepository(t *testing.T) {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("default isolated", "do work", repo)
+	task, err := s.CreateTask("default isolated", "fix the parser", repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !task.Isolated {
-		t.Fatal("new task did not default to isolation")
+		t.Fatal("new change task did not default to isolation")
 	}
 	foundEvent := false
 	for _, event := range task.Events {
@@ -581,7 +581,7 @@ func TestDefaultIsolationCanBeDisabled(t *testing.T) {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("shared", "do work", repo)
+	task, err := s.CreateTask("shared", "fix the parser", repo)
 	if err != nil {
 		t.Fatal(err)
 	}

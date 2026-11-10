@@ -178,7 +178,7 @@ func TestRequestTitle(t *testing.T) {
 	}
 }
 
-func TestSubmitRequestDefaultsToIsolatedWorktree(t *testing.T) {
+func TestSubmitRequestDefaultsToSharedWorkspace(t *testing.T) {
 	repo := committedRepo(t)
 	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
@@ -190,13 +190,47 @@ func TestSubmitRequestDefaultsToIsolatedWorktree(t *testing.T) {
 		seen <- task
 		return nil
 	}))
-	task, err := s.SubmitRequest("isolated request", repo)
+	task, err := s.SubmitRequest("do work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, task.ID, Completed)
+	if task.Isolated || done.Isolated || !task.IsolationAuto {
+		t.Fatalf("ambiguous routed request selected isolation: task=%+v done=%+v", task, done)
+	}
+	routed := false
+	for _, event := range done.Events {
+		if event.Kind == "routed" && strings.Contains(event.Message, "shared workspace") {
+			routed = true
+		}
+	}
+	if !routed {
+		t.Fatalf("routed assignment did not record the shared workspace: %+v", done.Events)
+	}
+	if run := <-seen; run.Workspace != repo {
+		t.Fatalf("routed request ran in %q instead of the source workspace", run.Workspace)
+	}
+}
+
+func TestSubmitRequestIsolatesChangeRequest(t *testing.T) {
+	repo := committedRepo(t)
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	seen := make(chan Task, 1)
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		seen <- task
+		return nil
+	}))
+	task, err := s.SubmitRequest("fix the parser", repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	done := await(t, s, task.ID, Completed)
 	if !task.Isolated || !done.Isolated {
-		t.Fatalf("routed request did not default to isolation: task=%+v done=%+v", task, done)
+		t.Fatalf("routed change request did not select isolation: task=%+v done=%+v", task, done)
 	}
 	routed := false
 	for _, event := range done.Events {
@@ -208,7 +242,7 @@ func TestSubmitRequestDefaultsToIsolatedWorktree(t *testing.T) {
 		t.Fatalf("routed assignment did not record isolation: %+v", done.Events)
 	}
 	if run := <-seen; run.Workspace == repo || !strings.Contains(run.Workspace, filepath.Join("workspaces", task.ID, "tree")) {
-		t.Fatalf("routed request ran in %q instead of a worktree", run.Workspace)
+		t.Fatalf("routed change request ran in %q instead of a worktree", run.Workspace)
 	}
 }
 

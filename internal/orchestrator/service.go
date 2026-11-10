@@ -81,8 +81,8 @@ type Attempt struct {
 type Task struct {
 	DiscardPending bool `json:"discard_pending,omitempty"`
 	// Isolated is the effective workspace choice. IsolationAuto records that the
-	// default policy made it, so an executor change can reclassify an unprepared
-	// task without overriding an explicit per-task choice.
+	// start-up policy made it, so an explicit operator choice can be
+	// distinguished from the automatic one.
 	Isolated           bool           `json:"isolated,omitempty"`
 	IsolationAuto      bool           `json:"isolation_auto,omitempty"`
 	ExecutionWorkspace string         `json:"execution_workspace,omitempty"`
@@ -307,10 +307,10 @@ func (s *Service) GetTask(id string) (Task, bool) {
 	return Task{}, false
 }
 
-// SetDefaultIsolation controls whether newly accepted change work defaults to a
-// dedicated worktree when its workspace supports isolation. Read-only
-// inspection work keeps the shared workspace. It does not change tasks that
-// already exist or tasks whose workspace cannot be isolated.
+// SetDefaultIsolation controls whether mandates that explicitly request changes
+// default to a dedicated worktree when their workspace supports isolation.
+// Read-only and ambiguous work keeps the shared workspace. It does not change
+// tasks that already exist or tasks whose workspace cannot be isolated.
 func (s *Service) SetDefaultIsolation(enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -321,27 +321,26 @@ func (s *Service) SetDefaultIsolation(enabled bool) error {
 	return nil
 }
 
-// workspacePlan records the automatic workspace choice at acceptance. A task
-// with automatic isolation is eligible to be reclassified if its executor
-// changes before a workspace is prepared. An operator choice is not automatic.
+// workspacePlan records the automatic workspace choice at acceptance. An
+// automatic choice remains tied to the mandate classification. An operator
+// choice is not automatic.
 type workspacePlan struct {
 	isolated  bool
 	automatic bool
 }
 
 // defaultWorkspacePlan applies the startup isolation default only when the
-// workspace can be isolated. Read-only inspection work then shares the source
-// workspace; change work retains isolation. Unknown roles and mandates default
-// to isolation so ambiguity fails toward containment.
-func (s *Service) defaultWorkspacePlan(workspace, prompt, agent string) workspacePlan {
+// workspace can be isolated and the mandate explicitly requests changes.
+// Read-only and ambiguous work shares the source workspace. An explicit
+// per-task choice later overrides the automatic choice.
+func (s *Service) defaultWorkspacePlan(workspace, prompt string) workspacePlan {
 	s.mu.Lock()
 	enabled := s.defaultIsolation
-	inspection := isInspectionSpecialist(agent, s.runners[agent])
 	s.mu.Unlock()
 	if !enabled || !workspaceIsolatable(workspace) {
 		return workspacePlan{}
 	}
-	return workspacePlan{isolated: taskMakesChanges(prompt, inspection), automatic: true}
+	return workspacePlan{isolated: taskMakesChanges(prompt), automatic: true}
 }
 
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.
@@ -356,7 +355,7 @@ func (s *Service) CreateTaskWithProfile(title, prompt, workspace, profile string
 	if err != nil {
 		return Task{}, err
 	}
-	plan := s.defaultWorkspacePlan(workspace, request, agent)
+	plan := s.defaultWorkspacePlan(workspace, request)
 	return s.createTaskWithIsolation(title, request, workspace, plan,
 		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual}, agent, profile)
 }
@@ -450,7 +449,7 @@ func (s *Service) newAcceptedTaskLocked(input acceptedTaskInput) (Task, error) {
 	if input.isolated {
 		events = append(events, Event{now, "workspace", "Isolated committed-HEAD worktree selected by default; uncommitted files are excluded"})
 	} else if input.isolationAuto {
-		events = append(events, Event{now, "workspace", "Read-only inspection request keeps the source workspace; no managed worktree requested"})
+		events = append(events, Event{now, "workspace", "Automatic workspace choice: shared source workspace; no requested change detected"})
 	}
 	return Task{
 		ID:            newID(),

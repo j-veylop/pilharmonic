@@ -16,6 +16,7 @@ const (
 	colorAccent     = "#B7A6FF"
 	colorAccentDeep = "#7C6AE8"
 	colorCyan       = "#7BE0CF"
+	colorBlue       = "#7BA7FF"
 	colorGreen      = "#8FE3B0"
 	colorAmber      = "#F4C97A"
 	colorRed        = "#FF96A5"
@@ -28,6 +29,7 @@ var (
 	accent = lipgloss.Color(colorAccent)
 	border = lipgloss.Color(colorBorder)
 	cyan   = lipgloss.Color(colorCyan)
+	blue   = lipgloss.Color(colorBlue)
 	green  = lipgloss.Color(colorGreen)
 	amber  = lipgloss.Color(colorAmber)
 	red    = lipgloss.Color(colorRed)
@@ -37,7 +39,7 @@ var (
 // Semantic status colours keep process state, merge state and tool activity
 // consistent. They are intentionally separate from the accent used for focus.
 var (
-	statusRunning   = cyan
+	statusRunning   = blue
 	statusCompleted = green
 	statusWaiting   = amber
 	statusFailed    = red

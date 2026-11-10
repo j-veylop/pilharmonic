@@ -1,12 +1,28 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestRunningStatusUsesBlue(t *testing.T) {
+	hex := string(statusRunning)
+	value, err := strconv.ParseUint(strings.TrimPrefix(hex, "#"), 16, 32)
+	if err != nil || len(hex) != 7 || !strings.HasPrefix(hex, "#") {
+		t.Fatalf("running status is not a hex colour: %q (%v)", hex, err)
+	}
+	r, g, b := int(value>>16), int(value>>8&0xFF), int(value&0xFF)
+	if b <= g || b <= r {
+		t.Fatalf("running colour %q is not blue-dominant: r=%d g=%d b=%d", hex, r, g, b)
+	}
+	if statusRunning != blue {
+		t.Fatalf("running status %q does not use the blue palette entry %q", statusRunning, blue)
+	}
+}
 
 func TestGradientWordmarkPreservesTextAndWidth(t *testing.T) {
 	const wordmark = "◈ ORCHESTRATOR"

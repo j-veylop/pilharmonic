@@ -40,7 +40,9 @@ func terminalText(s string) string {
 
 // taskState gives each task one status word, glyph and semantic colour. The
 // task sidebar renders only the glyph, while other surfaces pair it with the
-// label so status stays readable without relying on colour alone.
+// label so status stays readable without relying on colour alone. This form
+// describes the task on its own; the terminal model adds waiting-for-subagents
+// when the task is running with active children.
 func taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
 	if task.Status == orchestrator.Queued && task.ScheduleRequested {
 		return "◷", "WAITING", statusWaiting
@@ -83,6 +85,45 @@ func taskLabel(task orchestrator.Task) string {
 func statusLabel(status orchestrator.Status) string {
 	_, label, color := statusState(status)
 	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + label)
+}
+
+// taskStateWithPeers derives the displayed state from the task list. A running
+// parent whose child is still queued, running or awaiting workspace integration
+// is waiting for that subagent, even though its own process has not exited.
+func taskStateWithPeers(task orchestrator.Task, tasks []orchestrator.Task) (glyph, label string, color lipgloss.Color) {
+	if task.Status == orchestrator.Running && task.Stage() == "working" && hasActiveChild(task, tasks) {
+		return "◷", "WAITING FOR SUBAGENTS", statusWaiting
+	}
+	return taskState(task)
+}
+
+func hasActiveChild(task orchestrator.Task, tasks []orchestrator.Task) bool {
+	if task.ID == "" {
+		return false
+	}
+	for _, child := range tasks {
+		if child.ParentID != task.ID {
+			continue
+		}
+		if child.Status == orchestrator.Queued || child.Status == orchestrator.Running || child.MergeStatus == orchestrator.MergeWaiting {
+			return true
+		}
+	}
+	return false
+}
+
+func (m model) taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
+	return taskStateWithPeers(task, m.tasks)
+}
+
+func (m model) taskLabel(task orchestrator.Task) string {
+	_, label, color := m.taskState(task)
+	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + label)
+}
+
+func (m model) taskStatusIcon(task orchestrator.Task) string {
+	glyph, _, color := m.taskState(task)
+	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(glyph)
 }
 
 // taskStatusIcon is the compact task-list status: a coloured glyph, with no
@@ -171,8 +212,15 @@ func taskChildIndent(task orchestrator.Task) string {
 // the same rail and body styles as other selectable rows while keeping the
 // status colour distinct.
 func taskTitleRow(task orchestrator.Task, width int, selected bool) string {
+	return taskTitleRowWithIcon(task, taskStatusIcon(task), width, selected)
+}
+
+func (m model) taskTitleRow(task orchestrator.Task, width int, selected bool) string {
+	return taskTitleRowWithIcon(task, m.taskStatusIcon(task), width, selected)
+}
+
+func taskTitleRowWithIcon(task orchestrator.Task, icon string, width int, selected bool) string {
 	text := strings.ReplaceAll(terminalText(task.Title), "\n", " ")
-	icon := taskStatusIcon(task)
 	indent := taskChildIndent(task)
 	if !selected {
 		return fit("  "+indent+icon+" "+titleStyle.Render(text), width, 1)
@@ -219,7 +267,7 @@ func (m model) runningGlyph() string {
 
 func (m model) toolStatusStyle(status string) (lipgloss.Style, string) {
 	if status == "running" {
-		return lipgloss.NewStyle().Foreground(cyan), m.runningGlyph()
+		return lipgloss.NewStyle().Foreground(statusRunning), m.runningGlyph()
 	}
 	return toolStatusStyle(status)
 }
@@ -359,7 +407,7 @@ func (m model) taskPanel(width, height int) string {
 		for i := start; i < len(rows) && i < start+slots; i++ {
 			row := rows[i]
 			lines = append(lines,
-				taskTitleRow(row.task, inner, row.index == m.selected),
+				m.taskTitleRow(row.task, inner, row.index == m.selected),
 				taskMetaLine(row.task, inner))
 		}
 	}
@@ -512,7 +560,7 @@ func (m model) detailContent(width int) []string {
 		if children := m.childrenOf(t.ID); len(children) > 0 {
 			add(accentStyle.Render("SUBAGENTS"))
 			for _, child := range children {
-				add(fmt.Sprintf("%s  %s  %s", child.CreatedAt.Local().Format("Jan 02 15:04"), statusLabel(child.Status), terminalText(child.Title)))
+				add(fmt.Sprintf("%s  %s  %s", child.CreatedAt.Local().Format("Jan 02 15:04"), m.taskLabel(child), terminalText(child.Title)))
 			}
 		}
 		if len(t.Attempts) > 0 {
@@ -581,7 +629,7 @@ func (m model) detailPanel(width, height int) string {
 		return panel(titleStyle.Render("TASK DETAILS")+"\n\n"+mutedStyle.Render("Select a task to view details."), width, height)
 	}
 	t := m.tasks[m.selected]
-	titleLine := titleStyle.Render(strings.ReplaceAll(terminalText(t.Title), "\n", " ")) + "  " + taskLabel(t)
+	titleLine := titleStyle.Render(strings.ReplaceAll(terminalText(t.Title), "\n", " ")) + "  " + m.taskLabel(t)
 	lines := []string{m.detailTabRow(t, inner), fit(titleLine, inner, 1)}
 	if action := m.currentAction(t); action != "" {
 		lines[1] = lipgloss.NewStyle().Foreground(cyan).Render(action)

@@ -152,7 +152,11 @@ not decompose requests or evaluate them with a model.
    error, without parsing assistant prose. Reports are
    separate from process status. `Task.Stage()` derives an attention stage from
    the latest current-attempt report, ignoring reports made before that attempt
-   and clearing `blocked`/`waiting`/`failed` once newer context arrives.
+   and clearing `blocked`/`waiting`/`failed` once newer context arrives. The
+   terminal additionally displays a running parent as `waiting for subagents`
+   while a child is queued, running or waiting for worktree integration. Running
+   indicators use a blue accent; waiting, completed and failed indicators keep
+   their distinct semantic colours and glyphs.
 10. **Finish and automatic merge.** When the runner returns, the worker records
     `canceled` if its context was canceled, `failed` on a non-nil error,
     otherwise `completed`. Before finalizing a successful isolated attempt, the

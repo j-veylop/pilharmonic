@@ -114,7 +114,11 @@ attempt.
 The terminal renders assistant prose as Markdown, collapses thinking by
 default and combines tool start and finish markers into status rows. Pi closes
 an open thinking block before emitting prose or tool activity to handle late
-thinking-end events. Agent output is untrusted display data.
+thinking-end events. Agent output is untrusted display data. Task status uses
+semantic colours and glyphs: running is blue, while a running parent whose child
+is still queued, running or integrating is displayed as waiting for subagents.
+This changes display state only; the parent process and its persisted status are
+unchanged.
 
 Mouse drag selection is limited to the detail content pane. Releasing a
 nonempty selection writes its plain text as an OSC 52 clipboard sequence,

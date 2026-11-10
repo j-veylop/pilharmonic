@@ -52,6 +52,67 @@ func TestTaskSidebarStatusIconsAndColors(t *testing.T) {
 	}
 }
 
+func TestTaskStateShowsRunningParentWaitingForSubagents(t *testing.T) {
+	parent := orchestrator.Task{ID: "parent", Title: "parent work", Status: orchestrator.Running}
+	cases := []struct {
+		name  string
+		child orchestrator.Task
+		label string
+		glyph string
+		color lipgloss.Color
+	}{
+		{name: "queued child", child: orchestrator.Task{ID: "child", ParentID: "parent", Status: orchestrator.Queued}, glyph: "◷", label: "WAITING FOR SUBAGENTS", color: statusWaiting},
+		{name: "running child", child: orchestrator.Task{ID: "child", ParentID: "parent", Status: orchestrator.Running}, glyph: "◷", label: "WAITING FOR SUBAGENTS", color: statusWaiting},
+		{name: "child waiting to integrate", child: orchestrator.Task{ID: "child", ParentID: "parent", Status: orchestrator.Completed, MergeStatus: orchestrator.MergeWaiting}, glyph: "◷", label: "WAITING FOR SUBAGENTS", color: statusWaiting},
+		{name: "finished child", child: orchestrator.Task{ID: "child", ParentID: "parent", Status: orchestrator.Completed}, glyph: "●", label: "RUNNING", color: statusRunning},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := model{tasks: []orchestrator.Task{parent, tc.child}}
+			glyph, label, color := m.taskState(parent)
+			if glyph != tc.glyph || label != tc.label || color != tc.color {
+				t.Fatalf("parent state = %q %q %q, want %q %q %q", glyph, label, color, tc.glyph, tc.label, tc.color)
+			}
+			if got := ansi.Strip(m.taskStatusIcon(parent)); got != tc.glyph {
+				t.Fatalf("parent icon = %q, want %q", got, tc.glyph)
+			}
+			if got := ansi.Strip(m.taskLabel(parent)); !strings.Contains(got, tc.label) {
+				t.Fatalf("parent label = %q, want %q", got, tc.label)
+			}
+			if tc.child.MergeStatus != orchestrator.MergeWaiting {
+				if got := ansi.Strip(m.taskLabel(tc.child)); strings.Contains(got, "WAITING FOR SUBAGENTS") {
+					t.Fatalf("child inherited the parent's waiting label: %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestTaskStateKeepsAttentionReportOverSubagentWait(t *testing.T) {
+	now := time.Now()
+	parent := orchestrator.Task{ID: "parent", Status: orchestrator.Running, Reports: []orchestrator.Report{{Kind: "blocked", Message: "need input", CreatedAt: now}}}
+	child := orchestrator.Task{ID: "child", ParentID: "parent", Status: orchestrator.Running}
+	m := model{tasks: []orchestrator.Task{parent, child}}
+	if _, label, _ := m.taskState(parent); label != "BLOCKED" {
+		t.Fatalf("blocked parent = %q, want BLOCKED", label)
+	}
+}
+
+func TestTaskPanelShowsParentWaitingForActiveSubagent(t *testing.T) {
+	tasks := []orchestrator.Task{
+		{ID: "child", ParentID: "parent", Depth: 1, Title: "child work", Agent: "tester", Status: orchestrator.Running},
+		{ID: "parent", Title: "parent work", Agent: "general", Status: orchestrator.Running},
+	}
+	m := model{tasks: tasks, selected: 1, width: 80, height: 24}
+	plain := ansi.Strip(m.taskPanel(60, 20))
+	if !strings.Contains(plain, "◷ parent work") || strings.Contains(plain, "● parent work") {
+		t.Fatalf("parent still looks running while its child is active: %q", plain)
+	}
+	if !strings.Contains(plain, "    ● child work") {
+		t.Fatalf("child lost its running state: %q", plain)
+	}
+}
+
 func TestTaskTitleRowShowsStatusFirstWithoutStatusText(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
@@ -144,7 +205,7 @@ func TestTaskPanelGroupsChildrenUnderParentByIndentation(t *testing.T) {
 		}
 		last = position
 	}
-	for _, want := range []string{"● parent work", "    ● second child", "    ● first child", "      ● grand child"} {
+	for _, want := range []string{"◷ parent work", "    ● second child", "    ◷ first child", "      ● grand child"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing indented layout %q in %q", want, plain)
 		}

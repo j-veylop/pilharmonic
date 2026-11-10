@@ -278,16 +278,13 @@ func (m model) routerAttentionRow(task orchestrator.Task, index, width int) stri
 	if m.routerFocus == 1 && index == m.routerSelected {
 		return selectionRow(plain, width)
 	}
-	return fit(taskLabel(task)+"  "+workspaceBadgeFor(task).glyphOnly()+"  "+titleStyle.Render(title), width, 1)
+	return fit(m.taskLabel(task)+"  "+workspaceBadgeFor(task).glyphOnly()+"  "+titleStyle.Render(title), width, 1)
 }
 
 func (m model) routerRecentRow(task orchestrator.Task, width int) string {
 	stamp := task.CreatedAt.Local().Format("15:04")
 	title := strings.ReplaceAll(terminalText(task.Title), "\n", " ")
-	status := statusLabel(task.Status)
-	if task.Status == orchestrator.Queued && task.ScheduleRequested {
-		status = taskLabel(task)
-	}
+	status := m.taskLabel(task)
 	row := mutedStyle.Render(stamp) + "  " + status + "  " +
 		titleStyle.Render(terminalText(executorLabel(task))) + mutedStyle.Render(" · ") + workspaceBadgeFor(task).render() + "  " + title
 	return fit(row, width, 1)

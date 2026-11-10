@@ -35,12 +35,60 @@ func hasEvent(t *testing.T, task Task, kind string) bool {
 	return false
 }
 
+func profileNamed(profiles []Profile, name string) (Profile, bool) {
+	for _, profile := range profiles {
+		if profile.Name == name {
+			return profile, true
+		}
+	}
+	return Profile{}, false
+}
+
+func TestBuiltinProfileDefaultsAndConfigOverlay(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	profiles := s.ListProfiles()
+	defaultProfile, ok := profileNamed(profiles, DefaultProfileName)
+	if !ok || !defaultProfile.UsesExecutorDefaults() {
+		t.Fatalf("missing built-in default profile: %+v", profiles)
+	}
+	coordinator, ok := profileNamed(profiles, CoordinatorProfileName)
+	if !ok || coordinator.CoordinatorInstructions != "" || len(coordinator.Tools) != 0 || coordinator.Model != "" {
+		t.Fatalf("bad built-in coordinator profile: %+v", coordinator)
+	}
+	config := `{"default_profile":"coordinator","profiles":[{"name":"coordinator","model":"provider/parent"}]}`
+	if err := s.LoadProfiles(writeProfileConfig(t, config)); err != nil {
+		t.Fatal(err)
+	}
+	overridden, _ := s.GetProfile(CoordinatorProfileName)
+	if overridden.Model != "provider/parent" || overridden.Description != coordinator.Description || overridden.CoordinatorInstructions != "" {
+		t.Fatalf("partial override lost built-in values: %+v", overridden)
+	}
+	task, err := s.CreateTask("routed", "route me", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ProfileName != CoordinatorProfileName || task.ProfileSpec == nil || task.ProfileSpec.Model != "provider/parent" {
+		t.Fatalf("configured default was not overlaid: %+v", task)
+	}
+	custom := `{"profiles":[{"name":"coordinator","coordinator_instructions":"Ask before delegating.","description":""}]}`
+	if err = s.LoadProfiles(writeProfileConfig(t, custom)); err != nil {
+		t.Fatal(err)
+	}
+	customized, _ := s.GetProfile(CoordinatorProfileName)
+	if customized.CoordinatorInstructions != "Ask before delegating." || customized.Description != "" || customized.Model != "" {
+		t.Fatalf("explicit overlay values were not applied: %+v", customized)
+	}
+}
+
 func TestProfileCatalogSnapshotAndSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, path)
 	profiles := s.ListProfiles()
-	if len(profiles) != 1 || profiles[0].Name != DefaultProfileName {
-		t.Fatalf("bad built-in catalog: %+v", profiles)
+	if _, ok := profileNamed(profiles, DefaultProfileName); !ok {
+		t.Fatalf("missing default in built-in catalog: %+v", profiles)
+	}
+	if _, ok := profileNamed(profiles, CoordinatorProfileName); !ok {
+		t.Fatalf("missing coordinator in built-in catalog: %+v", profiles)
 	}
 	config := `{"profiles":[
 		{"name":"reviewer","description":"Read-only review","tools":["read","grep","find","ls"],"model":"test/model","instructions":"Review only.","no_integrate":true,"no_subagents":true},
@@ -49,7 +97,7 @@ func TestProfileCatalogSnapshotAndSelection(t *testing.T) {
 	if err := s.LoadProfiles(writeProfileConfig(t, config)); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.ListProfiles(); len(got) != 3 {
+	if got := s.ListProfiles(); len(got) != 4 {
 		t.Fatalf("profiles not registered: %+v", got)
 	}
 	workspace := t.TempDir()

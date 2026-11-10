@@ -122,6 +122,14 @@ func TestComposerAltEnterInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestEmptyComposerDoesNotAssumeATaskDraft(t *testing.T) {
+	m := model{input: composer{kind: reportInput}}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.notice != "Enter text first." || m.input.kind != reportInput {
+		t.Fatalf("empty composer notice or draft changed: notice=%q input=%+v", m.notice, m.input)
+	}
+}
+
 func TestRouterComposerWrapsAndSubmitsMultilineRequest(t *testing.T) {
 	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {

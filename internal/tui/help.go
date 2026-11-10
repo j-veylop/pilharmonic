@@ -23,21 +23,22 @@ gg / G         First / last task or top / bottom
 Ctrl-u / d     Half page up / down
 Ctrl-b / f     Full page up / down
 Ctrl-y / e     One detail line up / down
+[ / ]          One detail line up / down
 PgUp / PgDn    Page details
 Home / End     Top / bottom of details
 Mouse wheel    Scroll details
-Enter          Toggle pane focus
-z              Expand details to full width
-Esc            Return / close expanded activity`},
+Enter          Toggle task/detail focus
+z              Toggle full-width details
+Esc            Return / collapse expanded call`},
 	{"Tasks", `@executor      Prefix a request; Tab completes names
 n              New task without routing
 /              New request; policy decides acceptance
 a              Related task in selected thread
 b              Spawn subagent from running task
-A              Choose executor before scheduling
-P              Choose execution profile (model, tools) before scheduling
-w              Toggle worktree isolation for this task
-r / R          Start / requeue task
+A              Choose executor before starting
+P              Choose profile (model, tools) before starting
+w              Toggle worktree isolation before start
+r / R          Start / retry task
 v / V          Approve / reject prepared worktree commit
 c              Cancel task
 d              Delete inactive task + worktree (confirm y)
@@ -64,15 +65,14 @@ Drag details   Select text; release copies via OSC 52
 Paste          Use the terminal shortcut in composers
 
 COMPOSERS & PICKERS
-Enter          Submit input / confirm agent or profile
+Enter          Submit input / select picker item
 Ctrl-j         Insert newline in composer
 Alt-enter      Insert newline in composer
 Arrows         Move cursor / wrapped line
 Home / End     Line start / end
 PgUp / PgDn    Move through long input
 Esc            Cancel input / close picker
-j / k          Select in executor or profile picker
-Typing         Text in composers`},
+j/k or ↑↓      Select in executor or profile picker`},
 }
 
 func (m model) helpKey(key string) (model, tea.Cmd) {

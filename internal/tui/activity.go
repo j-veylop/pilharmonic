@@ -117,7 +117,11 @@ func (m model) activityContent(width int) []string {
 	scope := []string{"all attempts", "latest attempt", "errors only"}[m.activityFilter]
 	add(mutedStyle.Render("Filter: " + scope + " (v)"))
 	if len(activities) == 0 {
-		add("No calls match. v changes the filter.")
+		if m.activityFilter == 0 {
+			add("No tool calls yet.")
+		} else {
+			add("No calls match this filter.")
+		}
 		return lines
 	}
 	selected, _, ok := m.selectedActivity()

@@ -16,7 +16,13 @@ const (
 	// DefaultProfileName is the built-in profile used by the local router and by
 	// tasks that did not choose one. It reproduces the executor's default
 	// behavior: no tool restriction, no model override, automatic integration.
+	// The name is retained for compatibility with persisted tasks.
 	DefaultProfileName = "implementer"
+
+	// CoordinatorProfileName is the built-in top-level coordinator profile. The
+	// shipped profiles file selects it as the routing default and overrides its
+	// model; its delegation workflow is compiled in.
+	CoordinatorProfileName = "coordinator"
 
 	// maxProfileInstructions bounds trusted profile text carried with a task.
 	maxProfileInstructions = 16 << 10
@@ -47,10 +53,11 @@ type Profile struct {
 	NoSubagents bool `json:"no_subagents,omitempty"`
 }
 
-// UsesExecutorDefaults reports whether the built-in profile name carries no
+// UsesExecutorDefaults reports whether a built-in profile name carries no
 // execution overrides. Check the snapshot because operators can redefine it.
 func (p Profile) UsesExecutorDefaults() bool {
-	return p.Name == DefaultProfileName && len(p.Tools) == 0 && p.Model == "" &&
+	builtin := p.Name == DefaultProfileName || p.Name == CoordinatorProfileName
+	return builtin && len(p.Tools) == 0 && p.Model == "" &&
 		p.Instructions == "" && p.CoordinatorInstructions == "" && !p.NoIntegrate && !p.NoSubagents
 }
 
@@ -82,7 +89,55 @@ func builtinProfiles() map[string]Profile {
 			Name:        DefaultProfileName,
 			Description: "Unrestricted local executor: inspects, edits and runs commands; prepared isolated work is integrated.",
 		},
+		CoordinatorProfileName: {
+			Name:        CoordinatorProfileName,
+			Description: "Top-level coordinator; canonical delegation guidance is compiled in.",
+		},
 	}
+}
+
+// profileConfig modifies an existing built-in profile, or defines a new one.
+// Pointer fields distinguish a JSON field that is absent (keep the built-in
+// value) from one that is explicitly empty (clear it).
+type profileConfig struct {
+	Name                    string    `json:"name"`
+	Description             *string   `json:"description,omitempty"`
+	Tools                   *[]string `json:"tools,omitempty"`
+	Model                   *string   `json:"model,omitempty"`
+	Instructions            *string   `json:"instructions,omitempty"`
+	CoordinatorInstructions *string   `json:"coordinator_instructions,omitempty"`
+	NoIntegrate             *bool     `json:"no_integrate,omitempty"`
+	NoSubagents             *bool     `json:"no_subagents,omitempty"`
+}
+
+// resolve overlays the configured fields on a built-in definition. New names
+// start from an empty profile, so JSON can extend the catalog as well as modify
+// compiled defaults.
+func (c profileConfig) resolve(base map[string]Profile) Profile {
+	p := cloneProfile(base[c.Name])
+	p.Name = c.Name
+	if c.Description != nil {
+		p.Description = *c.Description
+	}
+	if c.Tools != nil {
+		p.Tools = append([]string(nil), (*c.Tools)...)
+	}
+	if c.Model != nil {
+		p.Model = *c.Model
+	}
+	if c.Instructions != nil {
+		p.Instructions = *c.Instructions
+	}
+	if c.CoordinatorInstructions != nil {
+		p.CoordinatorInstructions = *c.CoordinatorInstructions
+	}
+	if c.NoIntegrate != nil {
+		p.NoIntegrate = *c.NoIntegrate
+	}
+	if c.NoSubagents != nil {
+		p.NoSubagents = *c.NoSubagents
+	}
+	return p
 }
 
 func validProfileName(name string) bool {
@@ -174,8 +229,10 @@ func (s *Service) RegisterProfile(p Profile) error {
 	return nil
 }
 
-// LoadProfiles loads trusted local profile definitions atomically. The built-in
-// default profile may be replaced; it may not be removed.
+// LoadProfiles loads trusted local profile definitions atomically. A JSON entry
+// overlays the matching built-in profile field by field, so operators can change
+// only what they need; a new name extends the catalog. Built-in profiles may be
+// redefined but not removed.
 func (s *Service) LoadProfiles(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -190,8 +247,8 @@ func (s *Service) LoadProfiles(path string) error {
 		return errors.New("profiles config exceeds 1 MiB")
 	}
 	var config struct {
-		Profiles       []Profile `json:"profiles"`
-		DefaultProfile string    `json:"default_profile"`
+		Profiles       []profileConfig `json:"profiles"`
+		DefaultProfile string          `json:"default_profile"`
 		Specialists    []struct {
 			Name  string   `json:"name"`
 			Model string   `json:"model,omitempty"`
@@ -209,15 +266,17 @@ func (s *Service) LoadProfiles(path string) error {
 	if len(config.Profiles) == 0 && len(config.Specialists) == 0 && config.DefaultProfile == "" {
 		return errors.New("profiles config defines no profiles")
 	}
+	builtins := builtinProfiles()
 	loaded := make(map[string]Profile, len(config.Profiles))
-	for _, p := range config.Profiles {
+	for _, entry := range config.Profiles {
+		p := entry.resolve(builtins)
 		if err := p.validate(); err != nil {
 			return err
 		}
 		if _, exists := loaded[p.Name]; exists {
 			return fmt.Errorf("duplicate profile %q", p.Name)
 		}
-		loaded[p.Name] = cloneProfile(p)
+		loaded[p.Name] = p
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -226,7 +285,9 @@ func (s *Service) LoadProfiles(path string) error {
 	}
 	if name := config.DefaultProfile; name != "" {
 		if _, exists := loaded[name]; !exists {
-			if _, registered := s.profiles[name]; !registered {
+			_, registered := s.profiles[name]
+			_, builtin := builtins[name]
+			if !registered && !builtin {
 				return fmt.Errorf("default profile %q unavailable", name)
 			}
 		}

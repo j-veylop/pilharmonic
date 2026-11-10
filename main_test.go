@@ -9,6 +9,25 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
+func TestShippedProfilesUseBuiltInCoordination(t *testing.T) {
+	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown()
+	s.LoadBuiltinSpecialists()
+	if err := loadStartupProfiles(s, "profiles.json"); err != nil {
+		t.Fatal(err)
+	}
+	profile, ok := s.GetProfile(orchestrator.CoordinatorProfileName)
+	if !ok || profile.Model == "" {
+		t.Fatalf("shipped coordinator profile not loaded: %+v", profile)
+	}
+	if profile.CoordinatorInstructions != "" {
+		t.Fatalf("shipped profile duplicates compiled coordination guidance: %q", profile.CoordinatorInstructions)
+	}
+}
+
 func TestStartupProfiles(t *testing.T) {
 	t.Chdir(t.TempDir())
 	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))

@@ -32,7 +32,7 @@ func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
 	m = next.(model)
 	m.scrollHelpBody(1000)
-	if !strings.Contains(m.View(), "Typing") {
+	if !strings.Contains(m.View(), "Select in executor") {
 		t.Fatal("help cannot reach last shortcut")
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -79,7 +79,7 @@ func TestHelpPagination(t *testing.T) {
 	if m.helpPage != last {
 		t.Fatal("wrapped past last page")
 	}
-	if !strings.Contains(m.View(), "Typing") {
+	if !strings.Contains(m.View(), "Select in executor") {
 		t.Fatal("final page lost final shortcut")
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})

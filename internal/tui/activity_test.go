@@ -68,6 +68,19 @@ func TestReadableToolTextResult(t *testing.T) {
 	}
 }
 
+func TestActivityEmptyStateMentionsFilterOnlyWhenFiltered(t *testing.T) {
+	m := model{activity: true, tasks: []orchestrator.Task{{ID: "task"}}}
+	empty := ansi.Strip(strings.Join(m.activityContent(80), "\n"))
+	if !strings.Contains(empty, "No tool calls yet.") || strings.Contains(empty, "No calls match") {
+		t.Fatalf("unfiltered empty state is misleading: %q", empty)
+	}
+	m.activityFilter = 2
+	filtered := ansi.Strip(strings.Join(m.activityContent(80), "\n"))
+	if !strings.Contains(filtered, "No calls match this filter.") || strings.Contains(filtered, "No tool calls yet.") {
+		t.Fatalf("filtered empty state is misleading: %q", filtered)
+	}
+}
+
 func TestActivityListDistinguishesStatuses(t *testing.T) {
 	view := ansi.Strip(activityModel().View())
 	for _, want := range []string{"✓", "finished", "⠋", "running", "main.go"} {

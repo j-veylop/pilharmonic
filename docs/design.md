@@ -171,7 +171,23 @@ pointer no longer covers.
 For a walkthrough of startup, state migration, request routing, execution and
 cleanup, see the [implementation notes](status.md).
 
-The CLI registers the bundled specialists before resuming scheduled tasks. A specialist selects the executor instructions. A profile configures execution settings and can apply to any compatible executor. The terminal omits the built-in profile from summaries when it supplies no overrides. Each bundled specialist uses the Pi adapter with role-specific system instructions. Explicit command definitions take precedence over bundled names.
+The CLI registers the bundled specialists before resuming scheduled tasks. A
+specialist selects the executor instructions. A profile configures execution
+settings and can apply to any compatible executor. The built-in profile catalog
+contains `implementer`, the routing default and compatibility key, and
+`coordinator`, the top-level coordination profile selected by the shipped
+configuration. Both start without tools, a model or instructions, so they
+inherit adapter defaults and the compiled coordinator guidance. The terminal
+omits a built-in profile name from summaries when its snapshot supplies no
+overrides. Each bundled specialist uses the Pi adapter with role-specific system
+instructions. Explicit command definitions take precedence over bundled names.
+
+A profiles JSON entry overlays the matching built-in definition field by field;
+an omitted field keeps the compiled value and an explicitly empty field clears
+it. A new name extends the catalog from an empty profile. `default_profile`
+selects the routing default. Validation covers the whole file before any entry
+is registered, and the service snapshots the resolved profile with the accepted
+task, so later configuration edits do not change existing tasks or attempts.
 
 An optional `-specialist-tools` JSON file can configure nonempty Pi tool
 allowlists for bundled specialists, for example
@@ -184,22 +200,26 @@ existing tool access behavior. Tasks snapshot the specialist ceiling when assign
 and attempts record the effective tools. A newly configured limit can further
 narrow a retry. Disjoint lists prevent the executor from starting.
 
-The profiles JSON can select the default profile and assign models and tools to
-bundled Pi specialists. Startup registers executors before validating these
-settings and resuming queued work. The Pi adapter passes the specialist model,
-or the task profile model when omitted, on each execution. The attempt records
-that selector independently of the inherited profile name.
+The profiles JSON can select the default profile, modify built-in profiles and
+assign models and tools to bundled Pi specialists. Startup registers executors
+before validating these settings and resuming queued work. The Pi adapter passes
+the specialist model, or the task profile model when omitted, on each execution.
+The attempt records that selector independently of the inherited profile name.
 
-A profile can supply coordinator instructions for the top-level general task. The
-scheduler adds compiled coordinator guidance, plus any profile instructions, when
-the attempt is top-level, uses the general executor, has delegation credentials
-and can use bash. Each attempt sees the child budget still remaining after
-children created by earlier attempts. The guidance asks the model to answer
-simple tasks directly; for complex or multi-concern work, to delegate multiple
+A profile may add coordinator instructions for the top-level general task. The
+canonical delegation workflow is compiled in, so the shipped profiles file does
+not repeat it. The scheduler adds that compiled guidance plus any additional
+profile instructions when the attempt is top-level, uses the general executor,
+has delegation credentials and can use bash. Each attempt sees the child budget
+still remaining after children created by earlier attempts. The guidance asks
+the model to answer simple tasks directly; for complex or multi-concern work, to
+delegate multiple
 focused, self-contained children when the remaining child budget permits; to run
 independent scopes in parallel and dependent or shared-file work sequentially;
 and to verify child evidence without assuming coordination. An exhausted child
 budget receives no delegation credentials or coordinator guidance. The guidance
 grants no authority beyond the original mandate, and the router does not split
 work automatically. Specialist and child prompts omit this guidance for the
-coordinator role. The model decides when to call the helper.
+coordinator role. The model decides when to call the helper. Profile instructions
+and tools remain bounded by the task snapshot and delegation containment; a
+child cannot widen the parent's tools, integration or delegation permissions.

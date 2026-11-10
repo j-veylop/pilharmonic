@@ -88,7 +88,7 @@ func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case "enter":
 		prompt := strings.TrimSpace(m.input.text)
 		if prompt == "" {
-			m.notice = "Enter a task first."
+			m.notice = "Enter text first."
 			return m, nil
 		}
 		notice, err := m.submitInput(prompt)

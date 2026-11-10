@@ -136,14 +136,30 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 
 	activity := base
 	activity.activity = true
-	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "v filter") || strings.Contains(footer, "c cancel") {
-		t.Fatalf("activity footer changed: %q", footer)
+	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "enter expand") || !strings.Contains(footer, "v filter") || strings.Contains(footer, "esc collapse") || strings.Contains(footer, "c cancel") {
+		t.Fatalf("activity list footer changed: %q", footer)
+	}
+	activity.activityExpanded = true
+	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "esc collapse") || strings.Contains(footer, "enter expand") {
+		t.Fatalf("expanded activity footer changed: %q", footer)
 	}
 
 	composerModel := base
 	composerModel.input = composer{kind: newTaskInput, text: "!keep this", cursor: len("!keep this")}
-	if footer := ansi.Strip(composerModel.footer(120)); !strings.Contains(footer, "!keep this") || !strings.Contains(footer, "enter submit") {
+	if footer := ansi.Strip(composerModel.footer(120)); !strings.Contains(footer, "!keep this") || !strings.Contains(footer, "enter submit") || !strings.Contains(footer, "ctrl+j/alt+enter newline") {
 		t.Fatalf("composer footer changed: %q", footer)
+	}
+
+	agentPicker := base
+	agentPicker.agentPicker.target = "task"
+	if footer := ansi.Strip(agentPicker.footer(120)); !strings.Contains(footer, "j/k choose agent") || !strings.Contains(footer, "enter select") {
+		t.Fatalf("agent picker footer changed: %q", footer)
+	}
+
+	profilePicker := base
+	profilePicker.profilePicker.target = "task"
+	if footer := ansi.Strip(profilePicker.footer(120)); !strings.Contains(footer, "j/k choose profile") || !strings.Contains(footer, "enter select") {
+		t.Fatalf("profile picker footer changed: %q", footer)
 	}
 
 	cleanup := base

@@ -45,7 +45,7 @@ No migration is required for the rename.
 | Share context | `a` creates a related task with its own mandate and the default profile in effect when accepted. `f` sends context to subscribed queued and running tasks in the thread. `s` pauses or resumes the selected task's subscription. |
 | Follow up on one task | `F` sends context to that task. For a finished task it also requeues it. Press `r` to start a fresh attempt with its mandate and context. |
 | Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `v` filters calls and Enter in the detail pane expands arguments and results. |
-| Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `!` on the task board selects the next task needing action in grouped display order, wrapping at the end. `z` expands details. The mouse wheel scrolls details. |
+| Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `!` on the task board selects the next task needing action in grouped display order, wrapping at the end. `z` toggles full-width details, and `[` / `]` scroll one detail line. The mouse wheel scrolls details. |
 | Copy output | Drag inside the details pane to select text. Releasing the mouse copies the selection through the terminal's OSC 52 clipboard support. Selection cannot start in or extend into the sidebar, header or footer. Terminals that block OSC 52 ignore the copy. Use the terminal's normal shortcut to paste into composers. |
 | Report or review | `p` records a status report. On a task awaiting review, `v` approves the prepared commit and `V` records a rejection reason. |
 | Cancel or retry | `c` cancels. `R` requeues a failed, interrupted or canceled task, or a completed task whose merge failed. Then `r` starts it. |
@@ -101,17 +101,19 @@ details.
 Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
 instructions. They are embedded at build time. Run `./pilharmonic` from this directory to load the
 [provided configuration](profiles.json). Startup reads `profiles.json` from
-the current directory if present. Use `-profiles PATH` to select another file. It selects Astra for the default
-profile and DeepSeek Flash for the explorer, implementer and tester. To
-coordinate a task with Astra, create a draft and select `general` with **A**.
-The bundled profile includes `coordinator_instructions` asking a top-level
-`general` task to delegate repository work and summarize the results. These
-instructions apply when delegation is enabled and the task can use bash. pilharmonic also adds compiled coordinator guidance to every top-level
-`general` attempt with delegation: answer simple tasks directly; for complex or
-multi-concern work, delegate multiple focused, self-contained subtasks when the
-child budget allows; run independent scopes in parallel and dependent or
-shared-file work sequentially. The guidance grants no authority beyond the
-mandate, and request handling does not split work automatically.
+the current directory if present. Use `-profiles PATH` to select another file. It selects the built-in
+`coordinator` profile as the routing default, applies Astra to it and sets
+DeepSeek Flash for the explorer, implementer and tester. To coordinate a task
+with Astra, create a draft and select `general` with **A**.
+The coordinator profile is built in, and its delegation guidance is compiled
+in. A top-level `general` attempt with delegation is asked to answer simple
+tasks directly; for complex or multi-concern work, to delegate multiple
+focused, self-contained subtasks when the child budget allows; to run
+independent scopes in parallel and dependent or shared-file work sequentially;
+and to verify child evidence. The guidance grants no authority beyond the
+mandate, and request handling does not split work automatically. A profile can
+add `coordinator_instructions` for extra trusted guidance, but the shipped
+`profiles.json` does not duplicate the compiled text.
 Child tasks appear beneath their parent on the board, labeled by specialist.
 Task details show the execution profile and the model requested for the latest
 attempt when the adapter recorded an explicit model.
@@ -163,14 +165,23 @@ queued task to choose one, or define profiles in `profiles.json`:
 }
 ```
 
-The terminal displays the built-in profile as **Executor defaults**. Its
-configuration key is `implementer` for compatibility. Overriding that key
-changes the default settings for every executor, including delegated runs that
-inherit them. Tool names are executor-specific, so `inspect-only` above is
-meaningful for Pi. An
-executor that cannot honor a profile's tools or model fails the start rather than
-silently ignoring them. A profile is not a sandbox: agents keep the host user's
-permissions.
+Built-in profiles are compiled in. `implementer` is the routing default when no
+profiles file selects another profile, and its name is retained as the
+compatibility key for executor defaults. `coordinator` is also built in for
+top-level coordination; the provided `profiles.json` selects it as the default
+and supplies its model. Both built-in definitions set no tools, model or
+instructions, so they inherit the executor defaults and the compiled
+coordinator guidance. The terminal displays a built-in profile with no
+overrides as **Executor defaults**.
+
+`profiles.json` modifies a built-in profile field by field or adds a new one.
+Omitted fields keep their built-in values; an explicitly empty value clears one.
+New names start empty. `default_profile` selects the routing default. Overriding
+the built-in profile changes the default settings for every executor, including
+delegated runs that inherit them. Tool names are executor-specific, so
+`inspect-only` above is meaningful for Pi. An executor that cannot honor a
+profile's tools or model fails the start rather than silently ignoring them. A
+profile is not a sandbox: agents keep the host user's permissions.
 
 To limit a specialist's tools in the same file, add an entry such as
 `{"name":"reviewer","tools":["read","grep","find","ls"]}` to `specialists`.

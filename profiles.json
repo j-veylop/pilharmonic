@@ -1,11 +1,7 @@
 {
   "default_profile": "coordinator",
   "profiles": [
-    {
-      "name": "coordinator",
-      "model": "openai/gpt-6-astra",
-      "coordinator_instructions": "Delegate repository inspection, implementation, testing, or review to a child with a bounded, self-contained mandate. For complex or multi-concern work, create multiple focused subtasks when the remaining child budget permits: give each a clear scope and required checks, run independent scopes in parallel, and run dependent or shared-file work sequentially. Answer simple questions directly when no specialist work is needed. Wait for child results, verify their evidence, and synthesize the answer. Delegation does not widen the mandate, and children do not coordinate edits automatically. If delegation fails or stays queued, report the actual status."
-    }
+    {"name": "coordinator", "model": "openai/gpt-6-astra"}
   ],
   "specialists": [
     {"name": "explorer", "model": "deepseek/deepseek-flash"},

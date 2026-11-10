@@ -443,7 +443,6 @@ func (m model) taskPanel(width, height int) string {
 	if len(m.tasks) == 0 {
 		lines = append(lines,
 			mutedStyle.Render("No tasks yet."),
-			mutedStyle.Render("Tasks hold work, status and history."),
 			mutedStyle.Render("n creates one."))
 	} else {
 		slots := (height - 4) / 2
@@ -528,9 +527,14 @@ func (m model) detailContent(width int) []string {
 	}
 	var lines []string
 	add := func(s string) { lines = append(lines, strings.Split(ansi.Hardwrap(s, width, true), "\n")...) }
+	configurable := t.Status == orchestrator.Queued && !t.ScheduleRequested
 	add(accentStyle.Render("MANDATE"))
 	add(terminalText(t.Prompt))
-	add(mutedStyle.Render("Agent: " + terminalText(t.Agent) + " · A to change"))
+	agentLine := "Agent: " + terminalText(t.Agent)
+	if configurable {
+		agentLine += " · A to change"
+	}
+	add(mutedStyle.Render(agentLine))
 	if n := len(t.Attempts); n > 0 && t.Attempts[n-1].RequestedModel != "" {
 		add(mutedStyle.Render("Last attempt model: " + terminalText(t.Attempts[n-1].RequestedModel)))
 	}
@@ -539,7 +543,11 @@ func (m model) detailContent(width int) []string {
 		if t.ProfileSpec != nil {
 			label = profileLabel(*t.ProfileSpec)
 		}
-		add(mutedStyle.Render("Profile: " + terminalText(label) + " · P to change"))
+		profileLine := "Profile: " + terminalText(label)
+		if configurable {
+			profileLine += " · P to change"
+		}
+		add(mutedStyle.Render(profileLine))
 	}
 	if t.ParentID != "" {
 		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
@@ -548,7 +556,11 @@ func (m model) detailContent(width int) []string {
 	worktreeGlyph := lipgloss.NewStyle().Foreground(cyan).Render(glyphWorktree)
 	if t.Isolated {
 		if t.ExecutionWorkspace == "" {
-			add(accentStyle.Render(worktreeGlyph + " Workspace: isolated worktree requested (w to change)"))
+			line := worktreeGlyph + " Workspace: isolated worktree requested"
+			if configurable {
+				line += " (w to change)"
+			}
+			add(accentStyle.Render(line))
 			add(mutedStyle.Render("Committed HEAD only; uncommitted files are excluded."))
 		} else {
 			add(accentStyle.Render(worktreeGlyph + " Execution: " + terminalText(t.ExecutionWorkspace)))
@@ -557,7 +569,11 @@ func (m model) detailContent(width int) []string {
 	} else if t.ParentID != "" {
 		add(mutedStyle.Render(glyphInherited + " Execution: inherited from parent task"))
 	} else {
-		add(mutedStyle.Render(glyphShared + " Execution: shared workspace (w to isolate before start)"))
+		line := glyphShared + " Execution: shared workspace"
+		if configurable {
+			line += " (w to isolate before start)"
+		}
+		add(mutedStyle.Render(line))
 	}
 	badge := workspaceBadgeFor(t)
 	switch t.MergeStatus {
@@ -731,12 +747,22 @@ func (m model) detailPanel(width, height int) string {
 	} else if m.history {
 		label = "HISTORY"
 	}
+	focused := m.detailFocus || m.fullscreen
 	focus := "l to focus · j/k scroll"
-	if m.detailFocus || m.fullscreen {
+	if focused {
 		focus = "j/k scroll · h tasks"
 	}
-	if m.activity && !m.activityExpanded {
-		focus = "j/k select · enter expand"
+	if m.activity {
+		switch {
+		case m.activityExpanded && focused:
+			focus = "j/k scroll · esc collapse"
+		case m.activityExpanded:
+			focus = "l to focus · esc collapse"
+		case focused:
+			focus = "j/k select · enter expand"
+		default:
+			focus = "l to focus · enter expand"
+		}
 	}
 	position := fmt.Sprintf("%s  %d–%d / %d  ·  %s", label, min(start+1, end), end, len(content), focus)
 	lines = append(lines, mutedStyle.Render(position))
@@ -836,7 +862,11 @@ func (m model) footer(w int) string {
 			footerText = "enter submit · tab actions · esc tasks · ctrl+c quit"
 		}
 	case m.activity:
-		footerText = "t output · v filter · esc collapse · ? help · q quit"
+		if m.activityExpanded {
+			footerText = "esc collapse · t output · v filter · ? help · q quit"
+		} else {
+			footerText = "enter expand · t output · v filter · ? help · q quit"
+		}
 	case m.detailFocus || m.fullscreen:
 		footerText = "j/k scroll · T thinking · h tasks · ? help · q quit"
 	}
@@ -878,13 +908,13 @@ func (m model) footer(w int) string {
 				draft = append(draft, pad+line)
 			}
 		}
-		footer = strings.Join(draft, "\n") + "\n" + mutedStyle.Render("enter submit  ·  ctrl+j newline  ·  esc cancel")
+		footer = strings.Join(draft, "\n") + "\n" + mutedStyle.Render("enter submit  ·  ctrl+j/alt+enter newline  ·  esc cancel")
 	}
 	if m.agentPicker.target != "" {
-		footer = mutedStyle.Render("↑↓ choose agent · enter select · esc cancel")
+		footer = mutedStyle.Render("↑↓/j/k choose agent · enter select · esc cancel")
 	}
 	if m.profilePicker.target != "" {
-		footer = mutedStyle.Render("↑↓ choose profile · enter select · esc cancel")
+		footer = mutedStyle.Render("↑↓/j/k choose profile · enter select · esc cancel")
 	}
 	return ansi.Hardwrap(footer, w, true)
 }

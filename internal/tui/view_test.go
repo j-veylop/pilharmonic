@@ -170,6 +170,39 @@ func TestThinkingToggleChangesOutputAndKeepsLayoutBounded(t *testing.T) {
 	}
 }
 
+func TestDetailConfigurationHintsOnlyBeforeStart(t *testing.T) {
+	cases := []struct {
+		name string
+		task orchestrator.Task
+		want bool
+	}{
+		{
+			name: "unscheduled draft",
+			task: orchestrator.Task{ID: "draft", Title: "draft", Prompt: "work", Agent: "general", ProfileName: "default", Status: orchestrator.Queued},
+			want: true,
+		},
+		{
+			name: "scheduled task",
+			task: orchestrator.Task{ID: "scheduled", Title: "scheduled", Prompt: "work", Agent: "general", ProfileName: "default", Status: orchestrator.Queued, ScheduleRequested: true},
+		},
+		{
+			name: "running task",
+			task: orchestrator.Task{ID: "running", Title: "running", Prompt: "work", Agent: "general", ProfileName: "default", Status: orchestrator.Running},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := model{width: 120, height: 30, tasks: []orchestrator.Task{tc.task}}
+			detail := ansi.Strip(strings.Join(m.detailContent(100), "\n"))
+			for _, hint := range []string{"A to change", "P to change", "w to isolate before start"} {
+				if got := strings.Contains(detail, hint); got != tc.want {
+					t.Fatalf("hint %q present=%v, want %v: %s", hint, got, tc.want, detail)
+				}
+			}
+		})
+	}
+}
+
 func TestTextUsesNoBackgroundColour(t *testing.T) {
 	m := model{width: 120, height: 30, tasks: []orchestrator.Task{{
 		ID: "task", Title: "work", Prompt: "do work", Agent: "general",

@@ -54,6 +54,57 @@ func TestSubmitRequestAcceptsAssignsAndStarts(t *testing.T) {
 	}
 }
 
+func TestTopLevelRoutingSkipsImplementer(t *testing.T) {
+	dir := t.TempDir()
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	runs := make(chan Task, 4)
+	fake := runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		runs <- task
+		return nil
+	})
+	for _, agent := range []string{DefaultRouteAgent, "implementer"} {
+		s.RegisterRunner(agent, fake)
+	}
+
+	task, err := s.SubmitRequest("add a parser", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Agent != DefaultRouteAgent {
+		t.Fatalf("automatic top-level route selected %q, want %q", task.Agent, DefaultRouteAgent)
+	}
+	await(t, s, task.ID, Completed)
+	if run := <-runs; run.ID != task.ID || run.Agent != DefaultRouteAgent {
+		t.Fatalf("top-level executor %q for task %q, want %q", run.Agent, run.ID, DefaultRouteAgent)
+	}
+
+	related, err := s.CreateRelatedTask(task.ID, "change", "fix the parser", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if related.Agent != DefaultRouteAgent {
+		t.Fatalf("related top-level route selected %q, want %q", related.Agent, DefaultRouteAgent)
+	}
+
+	explicit, err := s.CreateTask("explicit", "add a parser", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicit.Agent != DefaultRouteAgent {
+		t.Fatalf("draft automatic route selected %q, want %q", explicit.Agent, DefaultRouteAgent)
+	}
+	if err = s.SetTaskAgent(explicit.ID, "implementer"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), explicit.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, explicit.ID, Completed)
+	if run := <-runs; run.ID != explicit.ID || run.Agent != "implementer" {
+		t.Fatalf("explicit executor %q for task %q, want implementer", run.Agent, run.ID)
+	}
+}
+
 func TestSubmitRequestSchedulesAtCapacity(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(filepath.Join(t.TempDir(), "state.json"))

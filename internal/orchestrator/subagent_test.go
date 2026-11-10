@@ -89,6 +89,51 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 	}
 }
 
+func TestSubagentAutomaticSelectionCanChooseImplementer(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	started := make(chan Task, 2)
+	release := make(chan struct{})
+	s.RegisterRunner(DefaultRouteAgent, runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+		started <- task
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}))
+	s.RegisterRunner("implementer", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		started <- task
+		return nil
+	}))
+
+	parent, err := s.CreateTask("parent", "parent mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if run := <-started; run.ID != parent.ID || run.Agent != DefaultRouteAgent {
+		t.Fatalf("parent executor %q for task %q, want %q", run.Agent, run.ID, DefaultRouteAgent)
+	}
+
+	child, err := s.SpawnSubagent(parent.ID, "", "add a parser", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Agent != "implementer" {
+		t.Fatalf("delegated automatic route selected %q, want implementer", child.Agent)
+	}
+	await(t, s, child.ID, Completed)
+	if run := <-started; run.ID != child.ID || run.Agent != "implementer" {
+		t.Fatalf("delegated executor %q for task %q, want implementer", run.Agent, run.ID)
+	}
+
+	close(release)
+	await(t, s, parent.ID, Completed)
+}
+
 func TestSpawnSubagentDuringWorkspacePreparation(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {

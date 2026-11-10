@@ -60,6 +60,13 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if parent.Agent != DefaultRouteAgent {
+		t.Fatalf("automatic top-level route selected %q, want %q", parent.Agent, DefaultRouteAgent)
+	}
+	// This test exercises implementer limits, so select it explicitly.
+	if err := s.SetTaskAgent(parent.ID, "implementer"); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Start(context.Background(), parent.ID); err != nil {
 		t.Fatal(err)
 	}

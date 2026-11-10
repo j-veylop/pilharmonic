@@ -18,7 +18,11 @@ See the [executor contract](executors.md).
 - A trigger identifies an incoming request in a thread. A compiled-in policy
   evaluates the normalized request. An accepted task records its mandate,
   trigger, decision, policy identity and input digest. The local router selects
-  an executor from the opening action of the mandate and requests a start. A manual draft waits for the operator.
+  an executor from the opening action of the mandate and requests a start.
+  Automatic top-level selection never assigns the implementer: a matching change
+  action uses the general fallback instead. The implementer remains available
+  through an explicit task choice and through automatic or named delegated
+  selection. A manual draft waits for the operator.
 - A related task in the same thread has its own mandate and decision. It records
   the current default profile at acceptance, just like a new manual task. A thread
   follow-up records the subscribed queued and running recipients at submission.

@@ -73,8 +73,19 @@ func (s *Service) selectAgentLocked(text, fallback string) string {
 	return fallback
 }
 
+// selectTopLevelAgentLocked routes an automatic top-level request. The
+// implementer is reserved for explicit operator selection and delegated work,
+// so a matching change request uses the general fallback instead.
+func (s *Service) selectTopLevelAgentLocked(text string) string {
+	agent := s.selectAgentLocked(text, DefaultRouteAgent)
+	if agent == "implementer" {
+		return DefaultRouteAgent
+	}
+	return agent
+}
+
 func (s *Service) selectAgent(text string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.selectAgentLocked(text, DefaultRouteAgent)
+	return s.selectTopLevelAgentLocked(text)
 }

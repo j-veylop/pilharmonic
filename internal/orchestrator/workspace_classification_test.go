@@ -147,7 +147,7 @@ func TestChangeRequestsRetainIsolation(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	runs := make(chan Task, 8)
-	for _, agent := range []string{"implementer", "reviewer", "tester", "gitter"} {
+	for _, agent := range []string{"general", "implementer", "reviewer", "tester", "gitter"} {
 		s.RegisterRunner(agent, runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 			runs <- task
 			return nil
@@ -157,7 +157,7 @@ func TestChangeRequestsRetainIsolation(t *testing.T) {
 		prompt string
 		agent  string
 	}{
-		{"fix the parser", "implementer"},
+		{"fix the parser", "general"},
 		{"review the parser and fix the bug", "reviewer"},
 		{"run tests then update the docs", "tester"},
 		{"git commit the changes", "gitter"},

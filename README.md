@@ -62,9 +62,12 @@ Every launch registers six Pi specialists from `internal/orchestrator/specialist
 | `gitter` | Inspect Git history or carry out delegated branch, commit, and merge work. |
 
 The router matches the opening action of the mandate. For example, “review the diff”
-selects `reviewer`, “add tests for parsing” selects `tester`, and “add a parser”
-selects `implementer`. Unmatched requests use `general`. The executor appears on the
-task board and in task details. Drafts allow a manual override before starting.
+selects `reviewer` and “add tests for parsing” selects `tester`. Automatic
+top-level routing never selects `implementer`: a request such as “add a parser”
+uses `general`. Select `implementer` explicitly on a draft, or let delegated
+work choose it automatically or by name. Unmatched requests use `general`. The
+executor appears on the task board and in task details. Drafts allow a manual
+override before starting.
 
 Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
 instructions. They are embedded at build time. Run `./orchestrator` from this directory to load the

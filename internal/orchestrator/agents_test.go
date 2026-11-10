@@ -135,7 +135,7 @@ func TestSpecialistSelectionAndModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	for request, want := range map[string]string{
-		"Please add tests for the parser": "tester", "add a parser": "implementer",
+		"Please add tests for the parser": "tester", "add a parser": "general",
 		"Review the diff": "reviewer", "Trace the call": "explorer", "Diagnose the timeout": "debugger",
 		"Rebase the branch": "gitter", "Something unexpected happened": "general",
 	} {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 // terminalText makes untrusted task data safe to lay out in a terminal. Tabs
@@ -319,6 +319,10 @@ func (m model) headerCounts() (running, queued int) {
 func (m model) headerSummary(available int) string {
 	running, queued := m.headerCounts()
 	attention := m.attentionCount()
+	actionText := "need action"
+	if attention == 1 {
+		actionText = "needs action"
+	}
 	tasks := len(m.tasks)
 	format := func(taskText, runningText, queuedText, attentionText string) string {
 		return mutedStyle.Render(taskText) +
@@ -330,11 +334,11 @@ func (m model) headerSummary(available int) string {
 		format(fmt.Sprintf("  %d tasks", tasks),
 			fmt.Sprintf("  ● %d running", running),
 			fmt.Sprintf("  ◷ %d queued", queued),
-			fmt.Sprintf("  ◆ %d attention", attention)),
+			fmt.Sprintf("  ◆ %d %s", attention, actionText)),
 		format(fmt.Sprintf("  %d tasks", tasks),
 			fmt.Sprintf("  ● %d run", running),
 			fmt.Sprintf("  ◷ %d wait", queued),
-			fmt.Sprintf("  ◆ %d attn", attention)),
+			fmt.Sprintf("  ◆ %d action", attention)),
 		format(fmt.Sprintf("  %d tasks", tasks),
 			fmt.Sprintf("  ●%d", running),
 			fmt.Sprintf("  ◷%d", queued),
@@ -358,9 +362,9 @@ func (m model) View() string {
 		h = 24
 	}
 	if w < 30 || h < 10 {
-		return fit("ORCHESTRATOR\nResize terminal to at least 30 × 10\nq quit", w, h)
+		return fit("PILHARMONIC\nResize terminal to at least 30 × 10\nq quit", w, h)
 	}
-	header := gradientText("◈ ORCHESTRATOR")
+	header := gradientText("◈ PILHARMONIC")
 	mode, modeColor := " TASKS ", accent
 	if m.detailFocus || m.fullscreen {
 		mode, modeColor = " DETAILS ", cyan
@@ -369,7 +373,7 @@ func (m model) View() string {
 		mode, modeColor = " INSERT ", amber
 	}
 	if m.router {
-		mode, modeColor = " ROUTER ", accent
+		mode, modeColor = " REQUEST ", accent
 	}
 	mode = modeBadge(mode, modeColor)
 	summary := m.headerSummary(max(1, w-lipgloss.Width(header)-lipgloss.Width(mode)-1))
@@ -437,7 +441,10 @@ func (m model) taskPanel(width, height int) string {
 	lines = append(lines, accentStyle.Render("TASKS")+mutedStyle.Render(fmt.Sprintf("  / %02d", len(m.tasks))))
 	lines = append(lines, "")
 	if len(m.tasks) == 0 {
-		lines = append(lines, mutedStyle.Render("No tasks yet."), mutedStyle.Render("n creates one."))
+		lines = append(lines,
+			mutedStyle.Render("No tasks yet."),
+			mutedStyle.Render("Tasks hold work, status and history."),
+			mutedStyle.Render("n creates one."))
 	} else {
 		slots := (height - 4) / 2
 		if slots < 1 {
@@ -806,11 +813,11 @@ func (m model) boardFooter(w int) string {
 		add(hint, false)
 	}
 	if m.attentionCount() > 0 {
-		add("! attention", true)
+		add("! action", true)
 	}
 	add("? help", true)
 	add("q quit", false)
-	add("/ route", true)
+	add("/ request", true)
 	add("n new", true)
 	if w < 76 {
 		add("j/k tasks", true)
@@ -824,9 +831,9 @@ func (m model) footer(w int) string {
 	switch {
 	case m.router:
 		if _, ok := m.routerMentionQuery(); ok {
-			footerText = "tab complete · enter route · esc tasks · ctrl+c quit"
+			footerText = "tab complete · enter submit · esc tasks · ctrl+c quit"
 		} else {
-			footerText = "enter route · tab attention · esc tasks · ctrl+c quit"
+			footerText = "enter submit · tab actions · esc tasks · ctrl+c quit"
 		}
 	case m.activity:
 		footerText = "t output · v filter · esc collapse · ? help · q quit"

@@ -1,6 +1,6 @@
 # Design notes
 
-Orchestrator is a local, single-machine application. It adapts the trigger,
+pilharmonic is a local, single-machine application. It adapts the trigger,
 thread, mandate and execution concepts from DeepSeek's
 [domain model](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/001-domain.md)
 and [execution design](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/003-execution.md).
@@ -12,6 +12,19 @@ starts and runs the terminal. The service owns routing, scheduling, history
 and workspace management. The terminal displays snapshots and submits
 operator actions. Each executor owns its subprocess invocation and protocol.
 See the [executor contract](executors.md).
+
+## Terminal vocabulary
+
+The main view leads with a **NEW REQUEST** form, reached with `/` or on startup.
+The local policy checks a submitted request before it becomes a task. `n` creates
+a task directly as a queued draft without the request form's automatic routing;
+its request is still checked by the local policy. The form lists
+**NEEDS ACTION** and **RECENT TASKS**. Help (`?`) opens on **Concepts**, which
+defines request, task, route, action and attempt. On the task board, the
+`! action` hint selects the next task needing action in grouped display order
+and wraps at the end. Needs
+action covers blocked, waiting, awaiting review, input undelivered, merge
+failed, failed and interrupted tasks.
 
 ## Requests and authority
 
@@ -58,11 +71,18 @@ Each hand-off has a trigger and an attempt. Queued context travels with the
 initial mandate. For live context, the service records whether Pi accepted or
 rejected the command, or whether acknowledgement is unknown. Pi's
 acknowledgement establishes command receipt only. Operator and adapter reports
-can flag a task as needing attention independently of process status.
+can flag a task as needing action independently of process status.
 
 The JSON state file is for one application instance. The service protects
 in-memory state with a mutex and replaces the file on save. UI snapshots and
 worker inputs must be independent copies wherever callers can mutate them.
+
+The public name changed to pilharmonic without a storage migration. The default
+state path remains `<user config dir>/orchestrator/state.json`, and workspaces and
+the subagent socket stay beside it. Subagent environment variables keep the
+`ORCHESTRATOR_` prefix, authorization digests keep
+`orchestrator.authorization/v1`, and the engine package remains
+`internal/orchestrator` with the module path `pilharmonic`.
 
 ## Workspaces and integration
 
@@ -125,7 +145,7 @@ This changes display state only; the parent process and its persisted status are
 unchanged.
 
 The task-board header summarises the task count, the displayed running state,
-the queued process state and the derived attention count. Because a running
+the queued process state and the derived action count. Because a running
 parent with active children is displayed as waiting for subagents, it is not
 counted as running. The board footer renders actions valid for the selected
 task in the current mode, using the same stage and service guards as the keys:
@@ -133,8 +153,8 @@ review decisions for a pending commit, cancel and activity for a running task,
 start for an unscheduled queued task, and retry for a retryable task. Modal,
 composer, activity and detail-focus footers keep their own controls. Optional
 hints are dropped when they would exceed two footer lines. On the board, `!`
-selects the next task that needs attention in grouped display order and wraps;
-router and task composers retain `!` as text. When the sidebar is hidden, the
+selects the next task that needs action in grouped display order and wraps;
+request and task composers retain `!` as text. When the sidebar is hidden, the
 detail title prefixes the selected task's grouped position so narrow layouts
 still show where the selection sits.
 

@@ -2,7 +2,7 @@ package tui
 
 import (
 	"encoding/json"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 	"testing"
 )
 

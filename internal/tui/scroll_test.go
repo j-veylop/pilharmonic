@@ -11,7 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 func TestOutputScrollKeyboard(t *testing.T) {

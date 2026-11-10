@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 func TestStartupProfiles(t *testing.T) {

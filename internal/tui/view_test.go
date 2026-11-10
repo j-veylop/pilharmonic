@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 func TestViewFitsTerminal(t *testing.T) {
@@ -21,7 +21,7 @@ func TestViewFitsTerminal(t *testing.T) {
 			if lipgloss.Height(view) > size[1] || lipgloss.Width(view) > size[0] {
 				t.Fatalf("%v: rendered %dx%d", size, lipgloss.Width(view), lipgloss.Height(view))
 			}
-			if !strings.Contains(view, "ORCHESTRATOR") {
+			if !strings.Contains(view, "PILHARMONIC") {
 				t.Fatalf("missing header: %s", view)
 			}
 		}

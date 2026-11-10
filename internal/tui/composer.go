@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 type inputKind string

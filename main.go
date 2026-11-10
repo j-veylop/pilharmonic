@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"orchestrator/internal/orchestrator"
-	"orchestrator/internal/tui"
+	"pilharmonic/internal/orchestrator"
+	"pilharmonic/internal/tui"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 	}
 
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "orchestrator:", err)
+		fmt.Fprintln(os.Stderr, "pilharmonic:", err)
 		os.Exit(1)
 	}
 }

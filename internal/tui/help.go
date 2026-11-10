@@ -10,10 +10,16 @@ import (
 )
 
 var helpTopics = []struct{ title, body string }{
+	{"Concepts", `Request   Work submitted with /. The policy decides acceptance.
+Task      Accepted work with its own mandate, executor, status and history.
+Route     The automatic policy check that accepts a request and picks an executor.
+Action    Tasks that need you: blocked, waiting, awaiting review,
+          undelivered input, merge failed, failed or interrupted.
+Attempt   One run of a task. Retry keeps the task and adds an attempt.`},
 	{"Navigation", `h / l          Focus tasks / details
 j / k          Move down / up; counts: 5j, 3k
 gg / G         First / last task or top / bottom
-!              Next task needing attention (board)
+!              Next task needing action (board)
 Ctrl-u / d     Half page up / down
 Ctrl-b / f     Full page up / down
 Ctrl-y / e     One detail line up / down
@@ -23,9 +29,9 @@ Mouse wheel    Scroll details
 Enter          Toggle pane focus
 z              Expand details to full width
 Esc            Return / close expanded activity`},
-	{"Tasks", `@executor      Prefix a router request; Tab completes names
-n              New task draft
-/              Route new work
+	{"Tasks", `@executor      Prefix a request; Tab completes names
+n              New task without routing
+/              New request; policy decides acceptance
 a              Related task in selected thread
 b              Spawn subagent from running task
 A              Choose executor before scheduling
@@ -50,7 +56,7 @@ j / k          Select activity in detail focus
 Enter          Expand / collapse selected tool call
 v              All calls / latest attempt / errors
 Ctrl-u / d     Scroll expanded arguments and results`},
-	{"General", `esc            Close router / return to tasks
+	{"General", `esc            Close request form / return to tasks
 ?              Open / close this help
 q              Quit (closes help when open)
 Ctrl-c         Quit application
@@ -138,7 +144,7 @@ func (m model) helpView(background string, w, h int) string {
 	page := max(0, min(len(helpTopics)-1, m.helpPage))
 	start := min(max(0, m.helpScroll), max(0, len(lines)-available))
 	var content []string
-	content = append(content, accentStyle.Render("KEYBOARD SHORTCUTS")+mutedStyle.Render(fmt.Sprintf("  Page %d / %d", page+1, len(helpTopics))), m.helpTabs(mw-4))
+	content = append(content, accentStyle.Render("HELP")+mutedStyle.Render(fmt.Sprintf("  Page %d / %d", page+1, len(helpTopics))), m.helpTabs(mw-4))
 	for _, line := range lines[start:min(len(lines), start+available)] {
 		if line != "" && !strings.HasPrefix(line, " ") && !strings.Contains(line, "  ") {
 			line = titleStyle.Render(line)

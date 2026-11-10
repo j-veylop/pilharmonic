@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 // attentionStages are the task stages that need a person. They are intentionally
@@ -64,7 +64,7 @@ func routeWorkspace(task orchestrator.Task) string {
 }
 
 func routeNotice(task orchestrator.Task) string {
-	return "Routed to " + terminalText(executorLabel(task)) + " · " + string(task.Status) + " · " + routeWorkspace(task) + " — " + terminalText(task.Title)
+	return "Request accepted · " + terminalText(executorLabel(task)) + " · " + string(task.Status) + " · " + routeWorkspace(task) + " — " + terminalText(task.Title)
 }
 
 // routerKey handles the unified entry point. Typing goes to the composer; Tab
@@ -128,7 +128,7 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		if m.service == nil {
-			m.notice = "Router is not connected to a service."
+			m.notice = "Request form is not connected to a service."
 			return m, nil
 		}
 		task, err := m.service.SubmitRequest(text, m.workspace)
@@ -312,26 +312,26 @@ func (m model) routerComposerHeight() int {
 func (m model) routerPanel(width, height int) string {
 	inner := max(1, width-4)
 	policy := lipgloss.NewStyle().Foreground(cyan).Bold(true).Render(orchestrator.LocalPolicyVersion)
-	header := accentStyle.Render("ROUTE WORK") + mutedStyle.Render("  ·  policy ") + policy
+	header := accentStyle.Render("NEW REQUEST") + mutedStyle.Render("  ·  policy ") + policy
 
-	var top []string
-	attention := m.attentionTasks()
-	top = append(top, accentStyle.Render(fmt.Sprintf("NEEDS ATTENTION  %02d", len(attention))))
-	if len(attention) == 0 {
-		top = append(top, mutedStyle.Render("Nothing needs attention."))
+	top := []string{mutedStyle.Render("Accepted requests become tasks.")}
+	action := m.attentionTasks()
+	top = append(top, accentStyle.Render(fmt.Sprintf("NEEDS ACTION  %02d", len(action))))
+	if len(action) == 0 {
+		top = append(top, mutedStyle.Render("Nothing needs action."))
 	} else {
-		limit := min(len(attention), 8)
+		limit := min(len(action), 8)
 		for i := 0; i < limit; i++ {
-			top = append(top, m.routerAttentionRow(attention[i], i, inner))
+			top = append(top, m.routerAttentionRow(action[i], i, inner))
 		}
-		if len(attention) > limit {
-			top = append(top, mutedStyle.Render(fmt.Sprintf("+%d more", len(attention)-limit)))
+		if len(action) > limit {
+			top = append(top, mutedStyle.Render(fmt.Sprintf("+%d more", len(action)-limit)))
 		}
 	}
 	top = append(top, "")
-	top = append(top, accentStyle.Render("RECENT ROUTES"))
+	top = append(top, accentStyle.Render("RECENT TASKS"))
 	if len(m.tasks) == 0 {
-		top = append(top, mutedStyle.Render("No requests yet."))
+		top = append(top, mutedStyle.Render("No tasks yet. Submit a request to create one."))
 	} else {
 		limit := min(len(m.tasks), 8)
 		for i := 0; i < limit; i++ {

@@ -19,7 +19,7 @@ in one JSON file. The terminal UI reads snapshots from the service.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `-state` | `<user config dir>/orchestrator/state.json` | durable state file |
+| `-state` | `<user config dir>/orchestrator/state.json` | durable state file (legacy location retained) |
 | `-workspace` | current directory | working directory for newly created tasks |
 | `-max-concurrent` | `2` | maximum simultaneously running agents |
 | `-isolation` | `true` | allow automatic Git worktrees for mandates that request changes |
@@ -44,7 +44,7 @@ anything changed:
 The state file is opened, then configured command executors are loaded, the
 subagent limits and control socket are configured, and the concurrency limit is
 set, which also resumes persisted start requests. Then the TUI starts on the
-router screen. `Shutdown` cancels running work, closes pending start requests,
+**NEW REQUEST** form. `Shutdown` cancels running work, closes pending start requests,
 closes the subagent control socket and waits for workers to finish writing
 state. Quitting therefore ends
 active tasks as `canceled`, not `interrupted` — interrupted only comes from
@@ -52,7 +52,7 @@ reopening state after a crash or kill.
 
 ## Lifecycle of a request
 
-The primary path starts at the router. Pressing Enter on the router screen calls
+The primary path starts at the **NEW REQUEST** form. Pressing Enter there calls
 `SubmitRequest` (`router.go`), which resolves a leading `@NAME` executor mention,
 removes that token from the request, derives a display title from the first
 remaining line, and persists it through the same path as a manual draft. Without
@@ -61,8 +61,7 @@ rejected. The decision records the local policy ID/version (`local` / `local-1`)
 the trusted local source and actor, and a versioned digest of the policy input. A
 `routed` event records the assignment (selected executor, an isolated worktree or shared
 workspace as applicable, execution requested). The router then calls `Start`
-immediately. The same screen lists tasks whose stage
-needs a person and recent routes. One request becomes one task: the router does
+immediately. The same form lists **NEEDS ACTION** and **RECENT TASKS**. One request becomes one task: the router does
 not decompose requests or evaluate them with a model.
 
 1. **Manual submission.** Pressing `n` creates a draft through `CreateTask`
@@ -133,7 +132,7 @@ not decompose requests or evaluate them with a model.
    Each hand-off keeps a durable `Delivery` record with its trigger, execution
    attempt, state, reason and timestamps. A retry adds records for the new
    attempt instead of rewriting earlier outcomes, and only the current
-   attempt's records determine whether context needs attention. Acknowledged
+   attempt's records determine whether context needs action. Acknowledged
    follow-ups are not replayed and do not alter the mandate.
 8. **Subagent delegation.** `b` on a running task, or a running agent calling
    `"$ORCHESTRATOR_SUBAGENT_CLI" subagent`, goes through
@@ -161,7 +160,7 @@ not decompose requests or evaluate them with a model.
    source and attempt ID. The built-in Pi adapter records a `progress` report
    when Pi accepts the initial prompt and a `failed` report when Pi reports an
    error, without parsing assistant prose. Reports are
-   separate from process status. `Task.Stage()` derives an attention stage from
+   separate from process status. `Task.Stage()` derives an action stage from
    the latest current-attempt report, ignoring reports made before that attempt
    and clearing `blocked`/`waiting`/`failed` once newer context arrives. The
    terminal additionally displays a running parent as `waiting for subagents`
@@ -248,7 +247,7 @@ Pi, also that it reported an assistant response); it does not mean the work is
 correct or reviewed. For an isolated task, `merge_status` separately records
 whether its changes were merged, were already up to date, or failed to merge;
 a merge failure leaves the execution attempt completed but makes the task need
-attention.
+action.
 
 Review status is independent of both process status and merge outcome:
 `pending` means an isolated task's prepared worktree commit awaits an operator
@@ -292,7 +291,7 @@ rejection neither undoes a merge nor removes the retained worktree.
   attempts a merge; canceled and failed attempts do not. Automatic merges are
   serialized, create a merge commit, and abort on conflict instead of leaving
   the source checkout in a partial merge. Merge failure is recorded separately
-  from execution success and makes the task need attention.
+  from execution success and makes the task need action.
 - Automatic isolation is selected only when the mandate explicitly requests a
   change. Read-only inspection requests and requests with no imperative edit
   action share the source workspace. This classification is a lexical
@@ -377,7 +376,7 @@ rejection neither undoes a merge nor removes the retained worktree.
   permissions and shares the parent's workspace, so concurrent file edits are
   not coordinated. A child is not canceled when its parent ends, and the parent
   helper receives the child's final output only when the child completes.
-  Subprocesses that a Pi extension spawns on its own are not orchestrator tasks
+  Subprocesses that a Pi extension spawns on its own are not pilharmonic tasks
   and remain outside these tracking, limit and cancellation rules.
 - The control socket uses a Unix socket, so agent-driven delegation is not
   available on platforms without Unix-domain sockets.

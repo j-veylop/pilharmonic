@@ -1,4 +1,4 @@
-module orchestrator
+module pilharmonic
 
 go 1.24.0
 

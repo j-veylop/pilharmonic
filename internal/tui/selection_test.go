@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 func copyTestModel() model {
@@ -150,7 +150,7 @@ func TestMouseSelectionRejectsSidebarAndClampsDrag(t *testing.T) {
 	}
 	cmd()
 	copied := decodeOSC52(t, out.String())
-	if strings.Contains(copied, "TASKS") || strings.Contains(copied, "sidebar-title") || strings.Contains(copied, "ORCHESTRATOR") {
+	if strings.Contains(copied, "TASKS") || strings.Contains(copied, "sidebar-title") || strings.Contains(copied, "PILHARMONIC") {
 		t.Fatalf("selection escaped the content pane: %q", copied)
 	}
 	if !strings.HasPrefix(copied, "alpha\nbeta\n") {

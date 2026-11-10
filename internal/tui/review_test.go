@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 type reviewChangeRunner struct{}

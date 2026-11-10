@@ -10,7 +10,7 @@ import (
 func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
 	m := model{width: 80, height: 14, help: true}
 	view := m.View()
-	if !strings.Contains(view, "KEYBOARD SHORTCUTS") {
+	if !strings.Contains(view, "HELP") {
 		t.Fatal(view)
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
@@ -91,6 +91,11 @@ func TestHelpPagination(t *testing.T) {
 
 func TestHelpTopicsAreLogicalAndIndependent(t *testing.T) {
 	m := model{width: 80, height: 24, help: true}
+	concepts := strings.Join(m.helpLines(70), "\n")
+	if !strings.Contains(concepts, "Accepted work") || !strings.Contains(concepts, "need you") || strings.Contains(concepts, "Focus tasks") {
+		t.Fatal("concepts missing or contains another topic")
+	}
+	m.scrollHelp(1)
 	navigation := strings.Join(m.helpLines(70), "\n")
 	if !strings.Contains(navigation, "Focus tasks") || strings.Contains(navigation, "New task") {
 		t.Fatal("navigation contains another topic")

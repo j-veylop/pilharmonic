@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 func TestHeaderSummarizesDisplayStatesAndAttention(t *testing.T) {
@@ -23,7 +23,7 @@ func TestHeaderSummarizesDisplayStatesAndAttention(t *testing.T) {
 	}
 	m := model{width: 120, height: 35, tasks: tasks}
 	plain := ansi.Strip(m.View())
-	for _, want := range []string{"4 tasks", "● 1 running", "◷ 1 queued", "◆ 1 attention"} {
+	for _, want := range []string{"4 tasks", "● 1 running", "◷ 1 queued", "◆ 1 needs action"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("header missing %q: %q", want, plain)
 		}
@@ -33,8 +33,8 @@ func TestHeaderSummarizesDisplayStatesAndAttention(t *testing.T) {
 	}
 
 	normal := model{width: 120, height: 35, tasks: []orchestrator.Task{{ID: "done", Status: orchestrator.Completed}}}
-	if plain := ansi.Strip(normal.View()); !strings.Contains(plain, "◆ 0 attention") {
-		t.Fatalf("header omits the zero attention count: %q", plain)
+	if plain := ansi.Strip(normal.View()); !strings.Contains(plain, "◆ 0 need action") {
+		t.Fatalf("header omits the zero action count: %q", plain)
 	}
 }
 
@@ -98,7 +98,7 @@ func TestBoardFooterShowsOnlyValidSelectedTaskActions(t *testing.T) {
 					t.Fatalf("footer advertises invalid %q: %q", unwanted, footer)
 				}
 			}
-			for _, essential := range []string{"? help", "/ route", "n new", "q quit"} {
+			for _, essential := range []string{"? help", "/ request", "n new", "q quit"} {
 				if !strings.Contains(footer, essential) {
 					t.Fatalf("footer missing essential %q: %q", essential, footer)
 				}
@@ -235,8 +235,8 @@ func TestAttentionShortcutNoAttentionShowsNotice(t *testing.T) {
 	if m.selectedID() != selected {
 		t.Fatalf("! changed selection without attention: %q -> %q", selected, m.selectedID())
 	}
-	if !strings.Contains(m.notice, "No tasks need attention") {
-		t.Fatalf("missing no-attention notice: %q", m.notice)
+	if !strings.Contains(m.notice, "No tasks need action") {
+		t.Fatalf("missing no-action notice: %q", m.notice)
 	}
 }
 
@@ -283,8 +283,9 @@ func TestNarrowLayoutShowsSelectedTaskPosition(t *testing.T) {
 
 func TestHelpDocumentsAttentionJump(t *testing.T) {
 	m := model{width: 120, height: 40, help: true}
+	m.scrollHelp(1)
 	plain := ansi.Strip(m.View())
-	if !strings.Contains(plain, "Next task needing attention") {
-		t.Fatalf("help does not document the attention jump: %q", plain)
+	if !strings.Contains(plain, "Next task needing action") {
+		t.Fatalf("help does not document the action jump: %q", plain)
 	}
 }

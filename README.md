@@ -1,6 +1,6 @@
-# Orchestrator
+# pilharmonic
 
-Orchestrator is a local terminal application for submitting work to coding agents and tracking the result. Each request has a recorded acceptance decision, an immutable mandate and a history of execution attempts. The project takes inspiration from [DeepSeek's super-agent prototype](https://github.com/deepseek-ai/dsh-superagent-prototype).
+pilharmonic is a local terminal application for submitting work to coding agents and tracking the result. Each request has a recorded acceptance decision, an immutable mandate and a history of execution attempts. The project takes inspiration from [DeepSeek's super-agent prototype](https://github.com/deepseek-ai/dsh-superagent-prototype).
 
 ## Run
 
@@ -10,35 +10,56 @@ Use Go 1.24 or newer and an interactive terminal. For the default executor, inst
 go run .
 ```
 
-On the router screen, type a request and press **Enter**. The local router accepts it, selects an executor and requests execution. Start the request with `@NAME` to choose a registered executor, for example `@tester add regression tests`; without an explicit mention it uses `general`. Typing `@` shows the matching executors and **Tab** completes the first match. The mention is routing metadata and is not part of the recorded mandate. By default two agents can run at once. Additional start requests wait in FIFO order. Press **Esc** for the task board, **/** to return to the router, or **?** for the keyboard reference.
+To build or install the CLI from the repository root:
 
-Composers and the router input wrap long drafts and scroll as you move the cursor. Press **Ctrl-J** (or **Alt-Enter**) to insert a newline, then **Enter** to submit. Use **PgUp** and **PgDn** to move through long input.
+```sh
+go build -o pilharmonic .
+go install .
+```
 
-Use `go run . -help` for all startup flags. Common options are `-workspace` for the source directory, `-state` for the JSON state file and `-max-concurrent` for the process limit. The defaults are the current directory and `orchestrator/state.json` under the user config directory. Use a separate state file for each running instance. The state file contains prompts, recent output (up to 256 KiB per attempt), routing decisions and history in plain text.
+pilharmonic opens on the **NEW REQUEST** form. Type a request and press **Enter**. The local policy checks the request; when accepted it becomes a task, selects an executor and requests execution. Start the request with `@NAME` to choose a registered executor, for example `@tester add regression tests`; without an explicit mention it uses `general`. Typing `@` shows the matching executors and **Tab** completes the first match. The mention is routing metadata and is not part of the recorded mandate. By default two agents can run at once. Additional start requests wait in FIFO order. The form also lists **NEEDS ACTION** and **RECENT TASKS**. Press **Esc** for the task board, **/** to open a new request, or **?** for help; help starts with **Concepts**.
+
+On the task board, the **! action** hint jumps to the next task needing action: blocked, waiting, awaiting review, input undelivered, merge failed, failed or interrupted. **n** creates a task directly as a draft without routing. Choose an executor with **A**, then start it with **r**.
+
+Composers and the request input wrap long drafts and scroll as you move the cursor. Press **Ctrl-J** (or **Alt-Enter**) to insert a newline, then **Enter** to submit. Use **PgUp** and **PgDn** to move through long input.
+
+Use `go run . -help` for all startup flags. Common options are `-workspace` for the source directory, `-state` for the JSON state file and `-max-concurrent` for the process limit. The defaults are the current directory and `orchestrator/state.json` under the user config directory. That state location is retained for compatibility with existing installs. Use a separate state file for each running instance. The state file contains prompts, recent output (up to 256 KiB per attempt), routing decisions and history in plain text.
+
+## Compatibility with existing installs
+
+The public project name is pilharmonic. These identifiers remain unchanged so durable state, running agents and recorded decisions stay compatible:
+
+- the engine package remains `internal/orchestrator`, now imported as `pilharmonic/internal/orchestrator`;
+- the default state, workspace and control files remain under `<user config dir>/orchestrator/`;
+- subagent environment variables keep the `ORCHESTRATOR_` prefix: `ORCHESTRATOR_CONTROL_SOCKET`, `ORCHESTRATOR_TASK_ID`, `ORCHESTRATOR_SUBAGENT_TOKEN` and `ORCHESTRATOR_SUBAGENT_CLI`;
+- authorization digests keep `orchestrator.authorization/v1`;
+- automatic merges keep the fallback Git identity `Orchestrator <orchestrator@localhost>`.
+
+No migration is required for the rename.
 
 ## Task board
 
 | Action | Keys and behavior |
 | --- | --- |
-| Draft and run | `n` creates a queued draft. Use `A` to choose its executor or `w` to toggle isolation before requesting a start with `r`. |
+| Create a task | `n` creates a queued task directly without routing. Use `A` to choose its executor or `w` to toggle isolation before requesting a start with `r`. |
 | Share context | `a` creates a related task with its own mandate and the default profile in effect when accepted. `f` sends context to subscribed queued and running tasks in the thread. `s` pauses or resumes the selected task's subscription. |
 | Follow up on one task | `F` sends context to that task. For a finished task it also requeues it. Press `r` to start a fresh attempt with its mandate and context. |
 | Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `v` filters calls and Enter in the detail pane expands arguments and results. |
-| Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `!` on the task board selects the next task needing attention in grouped display order, wrapping at the end. `z` expands details. The mouse wheel scrolls details. |
+| Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `!` on the task board selects the next task needing action in grouped display order, wrapping at the end. `z` expands details. The mouse wheel scrolls details. |
 | Copy output | Drag inside the details pane to select text. Releasing the mouse copies the selection through the terminal's OSC 52 clipboard support. Selection cannot start in or extend into the sidebar, header or footer. Terminals that block OSC 52 ignore the copy. Use the terminal's normal shortcut to paste into composers. |
 | Report or review | `p` records a status report. On a task awaiting review, `v` approves the prepared commit and `V` records a rejection reason. |
 | Cancel or retry | `c` cancels. `R` requeues a failed, interrupted or canceled task, or a completed task whose merge failed. Then `r` starts it. |
 | Clean up | `x` discards a clean, integrated worktree and keeps task history. `d` deletes an inactive task and its worktree. `X` and `D` apply the corresponding bulk actions. Confirm with `y`. |
 
-Task-list rows show status first as a coloured glyph: `●` running, `✓` completed, `✗` failed, blocked or merge failed, `⊘` interrupted or canceled, `◷` queued, scheduled, waiting or waiting for subagents, and `◆` awaiting review. Running rows use a blue accent. A running parent with a queued or running child, or a child still integrating its worktree, is shown as `◷` waiting for subagents rather than `●` running. Child tasks are grouped directly beneath their parent and delegated children are indented by depth so the status glyph itself shows the hierarchy without an extra arrow. The executor and workspace badge follow, so the status stays visible when a narrow sidebar truncates the row. Task details and the router still show the status word.
+Task-list rows show status first as a coloured glyph: `●` running, `✓` completed, `✗` failed, blocked or merge failed, `⊘` interrupted or canceled, `◷` queued, scheduled, waiting or waiting for subagents, and `◆` awaiting review. Running rows use a blue accent. A running parent with a queued or running child, or a child still integrating its worktree, is shown as `◷` waiting for subagents rather than `●` running. Child tasks are grouped directly beneath their parent and delegated children are indented by depth so the status glyph itself shows the hierarchy without an extra arrow. The executor and workspace badge follow, so the status stays visible when a narrow sidebar truncates the row. Task details still show the status word.
 
-The header summarises the task count, tasks displayed as running, queued process state and the number of tasks that need attention. A running parent waiting for subagents is not counted as running. The board footer offers only actions valid for the selected task and current mode, such as `v`/`V` for a pending review, `c`/`t` for a running task, `r` for an unscheduled draft and `R` for a retryable task. It also keeps help, routing, new-task and quit hints as width permits. When the sidebar is hidden, the detail title starts with the selected task's grouped position, such as `TASK 2/5`.
+The header summarises the task count, tasks displayed as running, queued process state and the number of tasks that need action. Needs action covers blocked, waiting, awaiting review, input undelivered, merge failed, failed and interrupted tasks. A running parent waiting for subagents is not counted as running. The board footer offers only actions valid for the selected task and current mode, such as `v`/`V` for a pending review, `c`/`t` for a running task, `r` for an unscheduled draft and `R` for a retryable task. It also keeps help, request, new-task and quit hints as width permits. When the sidebar is hidden, the detail title starts with the selected task's grouped position, such as `TASK 2/5`.
 
-Quitting cancels active attempts and waits for their workers. After an unexpected stop, reopening the state file marks running attempts interrupted. Persisted start requests resume after startup configuration loads. Manual drafts stay idle.
+Quitting cancels active attempts and waits for their workers. After an unexpected stop, reopening the state file marks running attempts interrupted. Persisted start requests resume after startup configuration loads. Tasks created with **n** stay idle until started.
 
 ## Workspaces and review
 
-In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate explicitly requests a change, such as `fix`, `add`, `update` or `implement`. Read-only inspection requests (for example `review`, `explain`, `inspect`, `read` or `test`) and ambiguous requests with no detected edit action stay in the source workspace. The choice is a lexical request-opening heuristic; the selected executor does not create a worktree by itself. Use `w` on a draft to override the automatic choice, or `-isolation=false` to keep every task in the source workspace. The worktree starts from committed files and is reused on retries. Other workspaces run in place.
+In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate explicitly requests a change, such as `fix`, `add`, `update` or `implement`. Read-only inspection requests (for example `review`, `explain`, `inspect`, `read` or `test`) and ambiguous requests with no detected edit action stay in the source workspace. The choice is a lexical request-opening heuristic; the selected executor does not create a worktree by itself. Use `w` on a task before it starts to override the automatic choice, or `-isolation=false` to keep every task in the source workspace. The worktree starts from committed files and is reused on retries. Other workspaces run in place.
 
 **Successful isolated runs automatically commit pending changes and merge into the source repository's current checkout.** Merges are serialized. If a merge fails, inspect the error and retained worktree. Overlapping local changes in the source may need to be committed or stashed before retrying. Execution status, merge outcome and operator review are separate records. Rejecting a commit in the UI records your decision after the merge attempt.
 
@@ -48,7 +69,7 @@ before discarding the shared worktree. Cleanup runs in the background against
 the confirmed task IDs. After an interrupted discard, reopening the state file
 keeps a surviving tree or finishes clearing a removed one.
 
-Agents run with the host user's permissions. A running task can delegate with `b` in the UI or the `orchestrator subagent` helper through its local control socket. Each child has an independent lifecycle and mandate and shares its parent's execution workspace. Defaults allow two levels of delegation and four children per parent. Use `-subagents=false` to disable delegation. A top-level `general` task with delegation is asked to split complex or multi-concern work into focused children using the child budget remaining after earlier attempts, while answering simple tasks directly. An exhausted child budget receives no delegation credentials or coordinator guidance. Independent scopes may run in parallel; dependent or shared-file work should run sequentially. The router never splits work automatically, and the guidance does not widen the mandate.
+Agents run with the host user's permissions. A running task can delegate with `b` in the UI or the `pilharmonic subagent` helper through its local control socket. Each child has an independent lifecycle and mandate and shares its parent's execution workspace. Defaults allow two levels of delegation and four children per parent. Use `-subagents=false` to disable delegation. A top-level `general` task with delegation is asked to split complex or multi-concern work into focused children using the child budget remaining after earlier attempts, while answering simple tasks directly. An exhausted child budget receives no delegation credentials or coordinator guidance. Independent scopes may run in parallel; dependent or shared-file work should run sequentially. Request handling never splits work automatically, and the guidance does not widen the mandate.
 
 ## Built-in specialists
 
@@ -71,27 +92,26 @@ infers a specialist from the opening action. Select `implementer` with
 `@implementer`, with **A** on a draft, or let delegated work choose it
 automatically or by name. The mention must be the first token, uses the exact
 registered name and is removed from the mandate. An unknown or incomplete
-mention is rejected instead of falling back, and the router keeps the draft so
-it can be corrected. Router hints list matching names
+mention is rejected instead of falling back, and the request form keeps the draft so
+it can be corrected. Request hints list matching names
 and **Tab** completes the first one. Draft and related-task composers accept the
 same leading mention. The executor appears on the task board and in task
 details.
 
 Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
-instructions. They are embedded at build time. Run `./orchestrator` from this directory to load the
+instructions. They are embedded at build time. Run `./pilharmonic` from this directory to load the
 [provided configuration](profiles.json). Startup reads `profiles.json` from
 the current directory if present. Use `-profiles PATH` to select another file. It selects Astra for the default
 profile and DeepSeek Flash for the explorer, implementer and tester. To
 coordinate a task with Astra, create a draft and select `general` with **A**.
 The bundled profile includes `coordinator_instructions` asking a top-level
 `general` task to delegate repository work and summarize the results. These
-instructions apply when delegation is enabled and the task can use bash. The
-orchestrator also adds compiled coordinator guidance to every top-level
+instructions apply when delegation is enabled and the task can use bash. pilharmonic also adds compiled coordinator guidance to every top-level
 `general` attempt with delegation: answer simple tasks directly; for complex or
 multi-concern work, delegate multiple focused, self-contained subtasks when the
 child budget allows; run independent scopes in parallel and dependent or
 shared-file work sequentially. The guidance grants no authority beyond the
-mandate, and the router does not split work automatically.
+mandate, and request handling does not split work automatically.
 Child tasks appear beneath their parent on the board, labeled by specialist.
 Task details show the execution profile and the model requested for the latest
 attempt when the adapter recorded an explicit model.
@@ -116,7 +136,7 @@ Save the following as `agents.json` and run `go run . -agents agents.json`. On t
 }
 ```
 
-Each executor can have an optional `description`. Prefix a router request with `@echo-test` to select a configured command executor. Parents with delegation enabled see the registered names and descriptions and can pass `--agent NAME` to the subagent helper. Omitting the flag selects from the child mandate, with the parent’s executor as fallback.
+Each executor can have an optional `description`. Prefix a request with `@echo-test` to select a configured command executor. Parents with delegation enabled see the registered names and descriptions and can pass `--agent NAME` to the subagent helper. Omitting the flag selects from the child mandate, with the parent’s executor as fallback.
 
 The command receives the mandate and queued context on stdin. Its stdout and stderr appear in the output view. Configure only trusted executables and supply the configuration again on later launches. Pi also supports live follow-ups, structured tool activity and reports. See the [executor contract](docs/executors.md).
 
@@ -161,7 +181,7 @@ specialist's tools, the list in `-profiles` takes precedence.
 
 ## Development
 
-The module root builds the CLI, `internal/orchestrator` owns task state and execution, and `internal/tui` contains the Bubble Tea interface. Run these checks from the module root. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
+The module root builds the pilharmonic CLI, `internal/orchestrator` owns task state and execution, and `internal/tui` contains the Bubble Tea interface. Run these checks from the module root. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
 
 ```sh
 go build .

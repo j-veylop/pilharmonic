@@ -208,7 +208,7 @@ func (s *Service) handleSubagentControl(ctx context.Context, conn net.Conn) {
 	_ = json.NewEncoder(conn).Encode(response)
 }
 
-// RunSubagentCommand implements the `orchestrator subagent` helper used by a
+// RunSubagentCommand implements the `pilharmonic subagent` helper used by a
 // running agent. It reads the child mandate from stdin and speaks only to the
 // local control socket named in the environment. It never executes agent output.
 func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -247,7 +247,7 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	taskID := os.Getenv("ORCHESTRATOR_TASK_ID")
 	token := os.Getenv("ORCHESTRATOR_SUBAGENT_TOKEN")
 	if *socket == "" || taskID == "" || token == "" {
-		fmt.Fprintln(stderr, "subagent: not running inside an orchestrator task with subagents enabled")
+		fmt.Fprintln(stderr, "subagent: not running inside a pilharmonic task with subagents enabled")
 		return 2
 	}
 	conn, err := net.DialTimeout("unix", *socket, controlDialTimeout)

@@ -10,7 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 const runningGlyphPlaceholder = "\uE000"
@@ -259,7 +259,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.activityExpanded = false
 				}
 			} else {
-				m.notice = "No tasks need attention."
+				m.notice = "No tasks need action."
 			}
 		case "/":
 			m.router = true

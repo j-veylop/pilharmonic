@@ -299,7 +299,7 @@ func TestSubagentControlDisabledWithoutCredentials(t *testing.T) {
 	if code := RunSubagentCommand(nil, strings.NewReader("work"), &stdout, &stderr); code == 0 {
 		t.Fatal("command succeeded outside a task")
 	}
-	if !strings.Contains(stderr.String(), "orchestrator task") {
+	if !strings.Contains(stderr.String(), "pilharmonic task") {
 		t.Fatalf("unhelpful error: %s", stderr.String())
 	}
 }

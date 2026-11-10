@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 type routerRunner struct{}
@@ -39,14 +39,14 @@ func TestRouterRoutesRequestAndReturnsToBoard(t *testing.T) {
 	if task.Prompt != "write tests" || task.Decision.PolicyVersion != orchestrator.LocalPolicyVersion {
 		t.Fatalf("request not routed: %+v", task)
 	}
-	if !strings.Contains(m.notice, "Routed to "+orchestrator.DefaultRouteAgent) {
-		t.Fatalf("routing notice missing: %q", m.notice)
+	if !strings.Contains(m.notice, "Request accepted · "+orchestrator.DefaultRouteAgent) {
+		t.Fatalf("request acceptance notice missing: %q", m.notice)
 	}
 	if !m.router {
 		t.Fatal("router closed after routing")
 	}
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "RECENT ROUTES") || !strings.Contains(view, task.Title) {
+	if !strings.Contains(view, "RECENT TASKS") || !strings.Contains(view, task.Title) {
 		t.Fatalf("recent route not shown: %s", view)
 	}
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
@@ -78,7 +78,7 @@ func TestRouterAttentionListOpensTask(t *testing.T) {
 	}
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), router: true, width: 120, height: 35}
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "NEEDS ATTENTION") || !strings.Contains(view, "BLOCKED") {
+	if !strings.Contains(view, "NEEDS ACTION") || !strings.Contains(view, "BLOCKED") {
 		t.Fatalf("attention list missing blocked task: %s", view)
 	}
 	m = key(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -103,7 +103,7 @@ func TestRouterComposerSitsBelowLists(t *testing.T) {
 		{ID: "recent", Title: "recent task", Status: orchestrator.Running, Agent: "general", CreatedAt: now},
 	}}
 	view := ansi.Strip(m.View())
-	recent := strings.Index(view, "RECENT ROUTES")
+	recent := strings.Index(view, "RECENT TASKS")
 	composer := strings.Index(view, "next request")
 	if recent < 0 || composer < 0 {
 		t.Fatalf("missing list or composer: %s", view)
@@ -116,7 +116,7 @@ func TestRouterComposerSitsBelowLists(t *testing.T) {
 func TestRouterEmptyState(t *testing.T) {
 	m := model{router: true, width: 100, height: 30}
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"ROUTE WORK", "Describe the work", "Nothing needs attention.", "No requests yet."} {
+	for _, want := range []string{"NEW REQUEST", "Describe the work", "Nothing needs action.", "No tasks yet. Submit a request to create one."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in %s", want, view)
 		}
@@ -128,7 +128,7 @@ func TestRouterCursorVisibleWithNoticeInShortTerminal(t *testing.T) {
 		router:       true,
 		width:        30,
 		height:       10,
-		notice:       "Routed to general · queued · shared workspace — title",
+		notice:       "Request accepted · general · queued · shared workspace — title",
 		routerDraft:  strings.Repeat("word ", 12),
 		routerCursor: 0,
 	}
@@ -188,7 +188,7 @@ func TestRouterMentionHintsAndCompletes(t *testing.T) {
 	if task.Agent != "reviewer" || task.Prompt != "fix it" {
 		t.Fatalf("mentioned executor was not routed: %+v", task)
 	}
-	if !strings.Contains(m.notice, "Routed to reviewer") {
+	if !strings.Contains(m.notice, "Request accepted · reviewer") {
 		t.Fatalf("routing notice missing the executor: %q", m.notice)
 	}
 }

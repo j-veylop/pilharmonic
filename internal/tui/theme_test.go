@@ -25,7 +25,7 @@ func TestRunningStatusUsesBlue(t *testing.T) {
 }
 
 func TestGradientWordmarkPreservesTextAndWidth(t *testing.T) {
-	const wordmark = "◈ ORCHESTRATOR"
+	const wordmark = "◈ PILHARMONIC"
 	rendered := gradientText(wordmark)
 	if got := ansi.Strip(rendered); got != wordmark {
 		t.Fatalf("gradient changed the wordmark: %q", got)

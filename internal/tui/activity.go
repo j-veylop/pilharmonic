@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
-	"orchestrator/internal/orchestrator"
+	"pilharmonic/internal/orchestrator"
 )
 
 func (m model) selectedActivity() (orchestrator.ToolActivity, int, bool) {

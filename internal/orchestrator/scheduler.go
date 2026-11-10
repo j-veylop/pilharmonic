@@ -93,13 +93,18 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 		t.ProfileSpec = &profile
 		t.Events = append(t.Events, Event{t.UpdatedAt, "profile", "Profile resolved: " + t.ProfileName})
 	}
-	if s.controlPath != "" && s.subagentMaxDepth > t.Depth && s.subagentMaxChildren > 0 && !profile.NoSubagents {
+	remainingDepth := s.subagentMaxDepth - t.Depth
+	remainingChildren := 0
+	if remainingDepth > 0 && s.subagentMaxChildren > 0 && !profile.NoSubagents {
+		remainingChildren = s.remainingSubagentChildrenLocked(t.ID)
+	}
+	if s.controlPath != "" && remainingDepth > 0 && remainingChildren > 0 {
 		t.controlSocket = s.controlPath
 		t.controlToken = newID()
-		t.controlGuidance = s.subagentGuidanceLocked(s.subagentMaxDepth-t.Depth, s.subagentMaxChildren)
-		if t.ParentID == "" && t.Agent == DefaultRouteAgent && profile.CoordinatorInstructions != "" &&
+		t.controlGuidance = s.subagentGuidanceLocked(remainingDepth, remainingChildren)
+		if t.ParentID == "" && t.Agent == DefaultRouteAgent &&
 			(len(profile.Tools) == 0 || slices.Contains(profile.Tools, "bash")) {
-			t.controlGuidance += "\nCoordinator instructions:\n" + profile.CoordinatorInstructions
+			t.controlGuidance += coordinatorGuidance(profile)
 		}
 	} else {
 		t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""

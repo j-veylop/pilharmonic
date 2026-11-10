@@ -154,6 +154,15 @@ or the task profile model when omitted, on each execution. The attempt records
 that selector independently of the inherited profile name.
 
 A profile can supply coordinator instructions for the top-level general task. The
-scheduler adds them to its delegation guidance when the attempt has delegation
-credentials and shell access. Specialist and child prompts omit this guidance
-for the coordinator role. The model decides when to call the helper.
+scheduler adds compiled coordinator guidance, plus any profile instructions, when
+the attempt is top-level, uses the general executor, has delegation credentials
+and can use bash. Each attempt sees the child budget still remaining after
+children created by earlier attempts. The guidance asks the model to answer
+simple tasks directly; for complex or multi-concern work, to delegate multiple
+focused, self-contained children when the remaining child budget permits; to run
+independent scopes in parallel and dependent or shared-file work sequentially;
+and to verify child evidence without assuming coordination. An exhausted child
+budget receives no delegation credentials or coordinator guidance. The guidance
+grants no authority beyond the original mandate, and the router does not split
+work automatically. Specialist and child prompts omit this guidance for the
+coordinator role. The model decides when to call the helper.

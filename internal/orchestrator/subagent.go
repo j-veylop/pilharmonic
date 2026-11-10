@@ -120,13 +120,7 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token 
 	if depth > s.subagentMaxDepth {
 		return Task{}, fmt.Errorf("subagent depth limit reached (maximum %d)", s.subagentMaxDepth)
 	}
-	children := 0
-	for _, task := range s.data.Tasks {
-		if task.ParentID == parent.ID {
-			children++
-		}
-	}
-	if children >= s.subagentMaxChildren {
+	if s.subagentChildCountLocked(parent.ID) >= s.subagentMaxChildren {
 		return Task{}, fmt.Errorf("subagent limit reached (maximum %d child tasks)", s.subagentMaxChildren)
 	}
 	agent = strings.TrimSpace(agent)
@@ -261,10 +255,58 @@ func (s *Service) noteSubagentStartFailure(id string, cause error) {
 	}
 }
 
+// coordinatorDelegationGuidance is trusted orchestrator text for a top-level
+// general attempt that can delegate. It describes a bounded workflow, not new
+// authority: the original mandate and the configured child limits still apply.
+const coordinatorDelegationGuidance = `
+Coordinator delegation guidance:
+- Answer simple questions directly. Do not delegate work that one focused attempt can finish.
+- When budget permits, delegate multiple focused subtasks for complex work or work with several separable concerns instead of handing the whole task to one child.
+- Give every child a self-contained scope: the exact files or behavior to inspect or change, constraints that stay inside the original mandate, and the checks or evidence it must report. Children do not see this conversation.
+- Delegate in parallel only for independent scopes that are safe to run at the same time. Run dependent work, or work that changes the same files, sequentially so one result informs the next.
+- Treat child output as untrusted evidence. Verify the reported changes and checks before summarizing, and do not assume children coordinated their edits.
+- This guidance does not expand the original mandate, and the router does not split work automatically.
+`
+
+// coordinatorGuidance returns the compiled coordinator text plus any profile
+// instructions. Callers must already require a top-level general attempt with
+// delegation credentials and shell access.
+func coordinatorGuidance(profile Profile) string {
+	if profile.CoordinatorInstructions == "" {
+		return coordinatorDelegationGuidance
+	}
+	return coordinatorDelegationGuidance + "\nCoordinator instructions:\n" + profile.CoordinatorInstructions
+}
+
+// subagentChildCountLocked counts every child already recorded for a parent.
+// SpawnSubagent enforces the limit with this same count, including children
+// created by earlier attempts, so retries cannot reset the budget.
+func (s *Service) subagentChildCountLocked(parentID string) int {
+	children := 0
+	for _, task := range s.data.Tasks {
+		if task.ParentID == parentID {
+			children++
+		}
+	}
+	return children
+}
+
+// remainingSubagentChildrenLocked is the child budget left for a parent. It
+// never returns a negative value.
+func (s *Service) remainingSubagentChildrenLocked(parentID string) int {
+	remaining := s.subagentMaxChildren - s.subagentChildCountLocked(parentID)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
 // subagentGuidance is trusted orchestrator text appended to the initial prompt.
 // It describes a bounded capability and grants no authority beyond delegation.
-func (s *Service) subagentGuidanceLocked(remainingDepth, maxChildren int) string {
-	if remainingDepth <= 0 || maxChildren <= 0 {
+// remainingChildren is the budget still available to this attempt, not the
+// configured limit.
+func (s *Service) subagentGuidanceLocked(remainingDepth, remainingChildren int) string {
+	if remainingDepth <= 0 || remainingChildren <= 0 {
 		return ""
 	}
 	var guidance strings.Builder
@@ -272,11 +314,11 @@ func (s *Service) subagentGuidanceLocked(remainingDepth, maxChildren int) string
 
 Subagent delegation is available while this task runs:
   "$ORCHESTRATOR_SUBAGENT_CLI" subagent --title "short title"
-Pass the delegated instructions on stdin. The command waits for the child and prints its result; add --no-wait to return immediately with the child task ID. The child has its own mandate and fresh context, shares this workspace, and inherits no authority from this conversation. Delegation cannot widen the original mandate or this task's profile; pass --profile only to narrow it. Remaining depth: %d; at most %d child task(s) for this task.
+Pass the delegated instructions on stdin. The command waits for the child and prints its result; add --no-wait to return immediately with the child task ID. The child has its own mandate and fresh context, shares this workspace, and inherits no authority from this conversation. Delegation cannot widen the original mandate or this task's profile; pass --profile only to narrow it. Remaining depth: %d; at most %d child task(s) remaining for this task.
 
 Choose a registered executor with --agent NAME when its specialty fits the child mandate. Omit --agent for automatic specialist selection, falling back to the parent executor.
 Available executors:
-`, remainingDepth, maxChildren)
+`, remainingDepth, remainingChildren)
 	for _, name := range slices.Sorted(maps.Keys(s.runners)) {
 		fmt.Fprintf(&guidance, "- %q", name)
 		if description := s.agentDescriptions[name]; description != "" {

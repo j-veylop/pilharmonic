@@ -321,6 +321,197 @@ func TestRunnerEnvironmentReplacesInheritedControlCredentials(t *testing.T) {
 	}
 }
 
+func TestSubagentBudgetGuidanceCountsExistingChildrenOnRetry(t *testing.T) {
+	t.Run("partially consumed", func(t *testing.T) {
+		s, started, release, parent := retryParentWithChildren(t, 3, 4)
+		resumed := <-started
+		if resumed.ID != parent.ID || resumed.controlToken == "" || resumed.controlSocket == "" {
+			t.Fatalf("remaining child budget withheld credentials: %+v", resumed)
+		}
+		for _, want := range []string{
+			"at most 1 child task(s) remaining for this task",
+			"Coordinator delegation guidance:",
+		} {
+			if !strings.Contains(resumed.controlGuidance, want) {
+				t.Fatalf("missing %q in %q", want, resumed.controlGuidance)
+			}
+		}
+		if strings.Contains(resumed.controlGuidance, "at most 4 child task(s)") {
+			t.Fatalf("guidance advertised the configured limit: %q", resumed.controlGuidance)
+		}
+		child, err := s.SpawnSubagent(parent.ID, "", "last allowed child", "")
+		if err != nil {
+			t.Fatalf("remaining child budget rejected a child: %v", err)
+		}
+		await(t, s, child.ID, Completed)
+		if _, err = s.SpawnSubagent(parent.ID, "", "over budget", ""); err == nil || !strings.Contains(err.Error(), "subagent limit") {
+			t.Fatalf("child limit not enforced after retry: %v", err)
+		}
+		close(release)
+		await(t, s, parent.ID, Completed)
+	})
+
+	t.Run("exhausted", func(t *testing.T) {
+		s, started, release, parent := retryParentWithChildren(t, 2, 2)
+		resumed := <-started
+		if resumed.ID != parent.ID {
+			t.Fatalf("unexpected resumed task: %+v", resumed)
+		}
+		if resumed.controlToken != "" || resumed.controlSocket != "" || resumed.controlGuidance != "" {
+			t.Fatalf("exhausted budget received delegation credentials or guidance: %+v", resumed)
+		}
+		if strings.Contains(piPrompt(resumed), "Subagent delegation") || strings.Contains(piPrompt(resumed), "Coordinator delegation guidance") {
+			t.Fatalf("exhausted budget prompted impossible delegation: %q", piPrompt(resumed))
+		}
+		if _, err := s.SpawnSubagent(parent.ID, "", "over budget", ""); err == nil || !strings.Contains(err.Error(), "subagent limit") {
+			t.Fatalf("exhausted child limit not enforced after retry: %v", err)
+		}
+		close(release)
+		await(t, s, parent.ID, Completed)
+	})
+}
+
+// retryParentWithChildren starts a parent, creates children that share its
+// configured budget, then retries it so the next attempt starts with the same
+// durable children. The returned started channel receives top-level attempts.
+func retryParentWithChildren(t *testing.T, children, maxChildren int) (*Service, chan Task, chan struct{}, Task) {
+	t.Helper()
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	if err := s.SetSubagentLimits(DefaultMaxSubagentDepth, maxChildren); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan Task, 4)
+	release := make(chan struct{})
+	s.RegisterRunner(DefaultRouteAgent, runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+		if task.ParentID != "" {
+			return nil
+		}
+		started <- task
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}))
+	parent, err := s.CreateTask("parent", "inspect and fix the parser", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	for i := 0; i < children; i++ {
+		child, spawnErr := s.SpawnSubagent(parent.ID, "", "child mandate", "")
+		if spawnErr != nil {
+			t.Fatal(spawnErr)
+		}
+		await(t, s, child.ID, Completed)
+	}
+	if err = s.Cancel(parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, parent.ID, Canceled)
+	if err = s.Retry(parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	return s, started, release, parent
+}
+
+func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan Task, 2)
+	release := make(chan struct{})
+	s.RegisterRunner(DefaultRouteAgent, runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+		started <- task
+		if task.ParentID == "" {
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}))
+	parent, err := s.CreateTask("parent", "inspect and fix the parser", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	running := <-started
+	prompt := piPrompt(running)
+	for _, want := range []string{
+		"Answer simple questions directly",
+		"delegate multiple focused subtasks",
+		"instead of handing the whole task to one child",
+		"self-contained scope",
+		"Remaining depth: 2; at most 4 child task(s) remaining for this task",
+		"Delegation cannot widen the original mandate or this task's profile",
+		"parallel only for independent scopes",
+		"sequentially",
+		"do not assume children coordinated their edits",
+		"does not expand the original mandate",
+		"router does not split work automatically",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("missing %q in coordinator prompt", want)
+		}
+	}
+	child, err := s.SpawnSubagent(parent.ID, "", "inspect the parser", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	childRunning := <-started
+	if strings.Contains(piPrompt(childRunning), "Coordinator delegation guidance") {
+		t.Fatal("delegated child received coordinator guidance")
+	}
+	if got := s.ListTasks(); len(got) != 2 {
+		t.Fatalf("automatic splitting created %d tasks, want 2", len(got))
+	}
+	close(release)
+	await(t, s, child.ID, Completed)
+	await(t, s, parent.ID, Completed)
+}
+
+func TestCoordinatorGuidanceRequiresShellAccess(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterProfile(Profile{Name: "inspect", Tools: []string{"read"}, CoordinatorInstructions: "Use the helper."}); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan Task, 1)
+	s.RegisterRunner(DefaultRouteAgent, supportingRunner{runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		started <- task
+		return nil
+	})})
+	task, err := s.CreateTaskWithProfile("parent", "inspect the parser", t.TempDir(), "inspect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	running := <-started
+	if strings.Contains(running.controlGuidance, "Coordinator delegation guidance") || strings.Contains(running.controlGuidance, "Coordinator instructions") {
+		t.Fatalf("coordinator guidance appended without shell access: %q", running.controlGuidance)
+	}
+	await(t, s, task.ID, Completed)
+}
+
 func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s, err := Open(path)
@@ -351,8 +542,10 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	running := <-seen
-	if !strings.Contains(piPrompt(running), instruction) {
-		t.Fatal("missing coordinator instructions in Pi prompt")
+	for _, want := range []string{instruction, "Coordinator delegation guidance:", "delegate multiple focused subtasks"} {
+		if !strings.Contains(piPrompt(running), want) {
+			t.Fatalf("missing %q in Pi prompt", want)
+		}
 	}
 	if !strings.Contains(running.controlGuidance, `"reviewer" — Review Go concurrency.`) || !strings.Contains(running.controlGuidance, "--agent NAME") {
 		t.Fatal("missing specialist selection guidance")

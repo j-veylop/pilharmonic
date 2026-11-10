@@ -46,7 +46,7 @@ before discarding the shared worktree. Cleanup runs in the background against
 the confirmed task IDs. After an interrupted discard, reopening the state file
 keeps a surviving tree or finishes clearing a removed one.
 
-Agents run with the host user's permissions. A running task can delegate with `b` in the UI or the `orchestrator subagent` helper through its local control socket. Each child has an independent lifecycle and mandate and shares its parent's execution workspace. Defaults allow two levels of delegation and four children per parent. Use `-subagents=false` to disable delegation.
+Agents run with the host user's permissions. A running task can delegate with `b` in the UI or the `orchestrator subagent` helper through its local control socket. Each child has an independent lifecycle and mandate and shares its parent's execution workspace. Defaults allow two levels of delegation and four children per parent. Use `-subagents=false` to disable delegation. A top-level `general` task with delegation is asked to split complex or multi-concern work into focused children using the child budget remaining after earlier attempts, while answering simple tasks directly. An exhausted child budget receives no delegation credentials or coordinator guidance. Independent scopes may run in parallel; dependent or shared-file work should run sequentially. The router never splits work automatically, and the guidance does not widen the mandate.
 
 ## Built-in specialists
 
@@ -83,7 +83,13 @@ profile and DeepSeek Flash for the explorer, implementer and tester. To
 coordinate a task with Astra, create a draft and select `general` with **A**.
 The bundled profile includes `coordinator_instructions` asking a top-level
 `general` task to delegate repository work and summarize the results. These
-instructions apply when delegation is enabled and the task can use bash.
+instructions apply when delegation is enabled and the task can use bash. The
+orchestrator also adds compiled coordinator guidance to every top-level
+`general` attempt with delegation: answer simple tasks directly; for complex or
+multi-concern work, delegate multiple focused, self-contained subtasks when the
+child budget allows; run independent scopes in parallel and dependent or
+shared-file work sequentially. The guidance grants no authority beyond the
+mandate, and the router does not split work automatically.
 Child tasks appear beneath their parent on the board, labeled by specialist.
 Task details show the execution profile and the model requested for the latest
 attempt when the adapter recorded an explicit model.

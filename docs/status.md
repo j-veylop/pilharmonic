@@ -143,8 +143,15 @@ not decompose requests or evaluate them with a model.
    and depth, records an event on both tasks, then starts the child. The child
    uses the parent's executor as fallback and its execution workspace
    (including a prepared worktree), but not its context. Control credentials and prompt guidance are
-   process-local and are cleared when the attempt ends. If capacity is
-   unavailable, `subagent` reports the child as queued after a short start
+   process-local and are cleared when the attempt ends. Prompt guidance advertises
+   the child budget still remaining after earlier attempts; an exhausted budget
+   receives no credentials or coordinator guidance. A top-level `general`
+   attempt with delegation and bash access also receives compiled coordinator
+   guidance: answer simple tasks directly, split complex or multi-concern work
+   into focused self-contained children when the remaining budget permits, run independent
+   scopes in parallel and dependent or shared-file work sequentially. The
+   guidance grants no authority and does not split work automatically. If capacity
+   is unavailable, `subagent` reports the child as queued after a short start
    timeout instead of holding the parent's slot indefinitely.
 9. **Reports.** `p` records an operator observation: `progress`, `waiting`,
    `blocked`, `ready` or `failed`, with a message (`report.go`). A runner may
@@ -300,7 +307,10 @@ rejection neither undoes a merge nor removes the retained worktree.
   it is never a mutation of the parent's mandate. Spawn records are persisted
   before the child starts, and a failed start remains visible as a queued task
   with an event. Agent-initiated requests require a running parent and valid attempt
-  credentials, and depth and child limits bound fan-out.
+  credentials, and depth and child limits bound fan-out. Coordinator guidance
+  encourages focused fan-out for complex work but is trusted prompt text only:
+  the router does not split requests, and nothing guarantees that children
+  coordinate their edits.
 - Subagent control credentials exist only in process memory and the child
   process's environment. The control socket is owner-only and never writes
   agent output as commands.

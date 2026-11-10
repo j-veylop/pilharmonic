@@ -4,7 +4,7 @@
     {
       "name": "coordinator",
       "model": "openai/gpt-6-astra",
-      "coordinator_instructions": "For repository inspection, implementation, testing, or review, use the bash tool to invoke the subagent helper with a bounded mandate on stdin before doing that work yourself. Choose explorer for repository questions, implementer for changes, tester for verification, or reviewer for review. Wait for the child result, assess its evidence, and synthesize the answer. Answer simple questions directly when no specialist work is needed. If delegation fails or stays queued, report the actual status."
+      "coordinator_instructions": "Delegate repository inspection, implementation, testing, or review to a child with a bounded, self-contained mandate. For complex or multi-concern work, create multiple focused subtasks when the remaining child budget permits: give each a clear scope and required checks, run independent scopes in parallel, and run dependent or shared-file work sequentially. Answer simple questions directly when no specialist work is needed. Wait for child results, verify their evidence, and synthesize the answer. Delegation does not widen the mandate, and children do not coordinate edits automatically. If delegation fails or stays queued, report the actual status."
     }
   ],
   "specialists": [

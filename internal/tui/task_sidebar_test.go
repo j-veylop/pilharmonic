@@ -121,7 +121,7 @@ func TestTaskMetaLineOmitsRedundantChildSuffix(t *testing.T) {
 	}
 }
 
-func TestTaskPanelGroupsChildrenUnderParentAndMarksOwnership(t *testing.T) {
+func TestTaskPanelGroupsChildrenUnderParentByIndentation(t *testing.T) {
 	now := time.Now()
 	tasks := []orchestrator.Task{
 		{ID: "grandchild", ParentID: "child-a", Depth: 2, Title: "grand child", Agent: "tester", Status: orchestrator.Running, CreatedAt: now.Add(-30 * time.Second)},
@@ -144,13 +144,15 @@ func TestTaskPanelGroupsChildrenUnderParentAndMarksOwnership(t *testing.T) {
 		}
 		last = position
 	}
-	for _, want := range []string{"● ▾ parent work", "    ● second child", "    ● ▾ first child", "      ● grand child"} {
+	for _, want := range []string{"● parent work", "    ● second child", "    ● first child", "      ● grand child"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("missing ownership layout %q in %q", want, plain)
+			t.Fatalf("missing indented layout %q in %q", want, plain)
 		}
 	}
-	if strings.Contains(plain, "↳") {
-		t.Fatalf("child rows still use an arrow marker: %q", plain)
+	for _, unwanted := range []string{"▾", "↳"} {
+		if strings.Contains(plain, unwanted) {
+			t.Fatalf("task rows still use an arrow marker %q: %q", unwanted, plain)
+		}
 	}
 }
 

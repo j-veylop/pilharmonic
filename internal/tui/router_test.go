@@ -97,6 +97,22 @@ func TestRouterAttentionListOpensTask(t *testing.T) {
 	}
 }
 
+func TestRouterComposerSitsBelowLists(t *testing.T) {
+	now := time.Now()
+	m := model{router: true, width: 120, height: 35, routerDraft: "next request", tasks: []orchestrator.Task{
+		{ID: "recent", Title: "recent task", Status: orchestrator.Running, Agent: "general", CreatedAt: now},
+	}}
+	view := ansi.Strip(m.View())
+	recent := strings.Index(view, "RECENT ROUTES")
+	composer := strings.Index(view, "next request")
+	if recent < 0 || composer < 0 {
+		t.Fatalf("missing list or composer: %s", view)
+	}
+	if composer < recent {
+		t.Fatalf("composer is above the recent routes: %s", view)
+	}
+}
+
 func TestRouterEmptyState(t *testing.T) {
 	m := model{router: true, width: 100, height: 30}
 	view := ansi.Strip(m.View())

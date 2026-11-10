@@ -179,47 +179,69 @@ func (m model) routerComposerHeight() int {
 		width = 80
 	}
 	lines := max(2, min(composerMaxLines, height/4))
-	// The footer (notice and wrapped hints) and the panel border, header and
-	// blank share the terminal with the composer. Cap the composer rows so the
+	// The footer (notice and wrapped hints), the panel border and the header
+	// share the terminal with the bottom composer. Cap the composer rows so the
 	// cursor row is never clipped by the panel on short terminals.
 	footer := m.footer(width)
 	body := height - 1 - (strings.Count(footer, "\n") + 1)
-	return max(1, min(lines, body-4))
+	return max(1, min(lines, body-5))
 }
 
 func (m model) routerPanel(width, height int) string {
 	inner := max(1, width-4)
-	var lines []string
 	policy := lipgloss.NewStyle().Foreground(cyan).Bold(true).Render(orchestrator.LocalPolicyVersion)
-	lines = append(lines, accentStyle.Render("ROUTE WORK")+mutedStyle.Render("  ·  policy ")+policy)
-	lines = append(lines, "")
-	lines = append(lines, m.routerComposerLines(inner)...)
-	lines = append(lines, "")
+	header := accentStyle.Render("ROUTE WORK") + mutedStyle.Render("  ·  policy ") + policy
+
+	var top []string
 	attention := m.attentionTasks()
-	lines = append(lines, accentStyle.Render(fmt.Sprintf("NEEDS ATTENTION  %02d", len(attention))))
+	top = append(top, accentStyle.Render(fmt.Sprintf("NEEDS ATTENTION  %02d", len(attention))))
 	if len(attention) == 0 {
-		lines = append(lines, mutedStyle.Render("Nothing needs attention."))
+		top = append(top, mutedStyle.Render("Nothing needs attention."))
 	} else {
 		limit := min(len(attention), 8)
 		for i := 0; i < limit; i++ {
-			lines = append(lines, m.routerAttentionRow(attention[i], i, inner))
+			top = append(top, m.routerAttentionRow(attention[i], i, inner))
 		}
 		if len(attention) > limit {
-			lines = append(lines, mutedStyle.Render(fmt.Sprintf("+%d more", len(attention)-limit)))
+			top = append(top, mutedStyle.Render(fmt.Sprintf("+%d more", len(attention)-limit)))
 		}
 	}
-	lines = append(lines, "")
-	lines = append(lines, accentStyle.Render("RECENT ROUTES"))
+	top = append(top, "")
+	top = append(top, accentStyle.Render("RECENT ROUTES"))
 	if len(m.tasks) == 0 {
-		lines = append(lines, mutedStyle.Render("No requests yet."))
+		top = append(top, mutedStyle.Render("No requests yet."))
 	} else {
 		limit := min(len(m.tasks), 8)
 		for i := 0; i < limit; i++ {
-			lines = append(lines, m.routerRecentRow(m.tasks[i], inner))
+			top = append(top, m.routerRecentRow(m.tasks[i], inner))
 		}
 		if len(m.tasks) > limit {
-			lines = append(lines, mutedStyle.Render(fmt.Sprintf("+%d earlier", len(m.tasks)-limit)))
+			top = append(top, mutedStyle.Render(fmt.Sprintf("+%d earlier", len(m.tasks)-limit)))
 		}
+	}
+
+	// Keep the composer at the bottom of the panel. Drop list rows first when
+	// the terminal is too short for both, then the header, so the composer and
+	// its cursor stay visible.
+	composer := m.routerComposerLines(inner)
+	contentHeight := max(1, height-2)
+	maxTop := max(0, contentHeight-len(composer)-3)
+	if len(top) > maxTop {
+		top = top[:maxTop]
+	}
+	lines := make([]string, 0, 3+len(top)+len(composer))
+	lines = append(lines, header)
+	if len(top) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, top...)
+	}
+	if len(lines)+1+len(composer) <= contentHeight {
+		lines = append(lines, "")
+	}
+	lines = append(lines, composer...)
+	if len(lines) > contentHeight {
+		drop := min(len(lines)-contentHeight, len(lines)-len(composer))
+		lines = lines[drop:]
 	}
 	return panel(strings.Join(lines, "\n"), width, height)
 }

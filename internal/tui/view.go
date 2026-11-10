@@ -107,13 +107,11 @@ func taskRowExecutorLabel(task orchestrator.Task) string {
 	return executorLabel(task)
 }
 
-// taskListRow pairs a task with its snapshot index and sidebar ownership
-// marker. Grouping and indentation are display concerns; the service keeps its
-// own ordering.
+// taskListRow pairs a task with its snapshot index. Grouping and indentation
+// are display concerns; the service keeps its own ordering.
 type taskListRow struct {
-	index  int
-	task   orchestrator.Task
-	marker string
+	index int
+	task  orchestrator.Task
 }
 
 // taskListRows groups delegated children directly beneath their parent while
@@ -142,9 +140,8 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 		visited[index] = true
 		task := tasks[index]
 		rows = append(rows, taskListRow{
-			index:  index,
-			task:   task,
-			marker: taskOwnershipMarker(len(children[task.ID]) > 0),
+			index: index,
+			task:  task,
 		})
 		for _, child := range children[task.ID] {
 			walk(child)
@@ -161,15 +158,6 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 	return rows
 }
 
-// taskOwnershipMarker marks a task that has subagents. Delegated children are
-// shown by indentation instead, so their rows carry no extra glyph.
-func taskOwnershipMarker(ownsChildren bool) string {
-	if ownsChildren {
-		return "▾ "
-	}
-	return ""
-}
-
 // taskChildIndent nests a delegated child's status glyph under its parent by
 // depth, capped so deep trees stay readable in a narrow sidebar.
 func taskChildIndent(task orchestrator.Task) string {
@@ -183,11 +171,7 @@ func taskChildIndent(task orchestrator.Task) string {
 // the same rail and body styles as other selectable rows while keeping the
 // status colour distinct.
 func taskTitleRow(task orchestrator.Task, width int, selected bool) string {
-	return taskTitleRowWithMarker(task, taskOwnershipMarker(false), width, selected)
-}
-
-func taskTitleRowWithMarker(task orchestrator.Task, marker string, width int, selected bool) string {
-	text := marker + strings.ReplaceAll(terminalText(task.Title), "\n", " ")
+	text := strings.ReplaceAll(terminalText(task.Title), "\n", " ")
 	icon := taskStatusIcon(task)
 	indent := taskChildIndent(task)
 	if !selected {
@@ -375,7 +359,7 @@ func (m model) taskPanel(width, height int) string {
 		for i := start; i < len(rows) && i < start+slots; i++ {
 			row := rows[i]
 			lines = append(lines,
-				taskTitleRowWithMarker(row.task, row.marker, inner, row.index == m.selected),
+				taskTitleRow(row.task, inner, row.index == m.selected),
 				taskMetaLine(row.task, inner))
 		}
 	}

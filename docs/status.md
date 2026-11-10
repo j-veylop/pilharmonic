@@ -167,29 +167,27 @@ not decompose requests or evaluate them with a model.
    while a child is queued, running or waiting for worktree integration. Running
    indicators use a blue accent; waiting, completed and failed indicators keep
    their distinct semantic colours and glyphs.
-10. **Finish and automatic merge.** When the runner returns, the worker records
+10. **Finish, review and merge.** When the runner returns, the worker records
     `canceled` if its context was canceled, `failed` on a non-nil error,
     otherwise `completed`. Before finalizing a successful isolated attempt, the
-    worker validates the workspace reservation again, commits any worktree
-    changes with a task-identifying message, and merges that commit into the
-    source repository's current checkout with a merge commit (`merge.go`).
-    Merges are serialized. A no-change completion is recorded as `up_to_date`;
-    a clean merge records the worktree and merge commits; a conflict or Git
-    failure aborts the source merge and records `merge_failed` separately from
-    the successful attempt. A dirty source checkout whose changes overlap the
-    worktree blocks the merge instead of being overwritten or stashed: Git
-    aborts, the error names the files and asks the operator to commit or stash
-    them, and a retry after the source is clean merges the retained worktree. The worktree is retained in every case until the
-    task is deleted or its worktree is explicitly discarded. A merged
-    commit, or a worktree commit whose merge failed, is then recorded as
-    `pending` review with its commit; an up-to-date completion has no new
-    commit and is not opened for review. The latest attempt is finalized,
-    control credentials are cleared, terminal, merge and review events are
-    appended, state is saved, and the scheduler starts the next waiting task if
-    capacity opened.
+    worker validates the workspace reservation again and commits any worktree
+    changes with a task-identifying message (`merge.go`). A prepared commit
+    opens `pending` review without changing the source checkout. An up-to-date
+    completion opens no review. The latest attempt is finalized, control
+    credentials are cleared, events are appended, state is saved, and the
+    scheduler starts the next waiting task if capacity opened.
+    Accepting review persists approval and schedules a serialized merge of the
+    reviewed commit into the source repository's current checkout. A clean
+    merge records the worktree and merge commits; a conflict or Git failure
+    aborts the source merge and records failure separately from the successful
+    attempt and approved review. Overlapping dirty source files block merging
+    rather than being overwritten or stashed. The operator can clean the source
+    and retry. Rejecting review never merges the commit; the worktree remains
+    available for a follow-up with additional context and another execution.
+    The worktree is retained until deletion or explicit eligible discard.
 11. **Retry, cancel, delete.** `R` requeues a failed, interrupted or canceled
     task without changing its mandate or attempts and requires a new `r`; a
-    completed isolated task whose automatic merge failed is also retryable and
+    completed isolated task whose approved merge failed is also retryable and
     clears the previous merge result. An isolated task reuses its prepared
     worktree. `c` cancels a queued task
     immediately or signals a running one. `d` then `y` deletes an inactive
@@ -235,7 +233,7 @@ not decompose requests or evaluate them with a model.
   `workspaces/<task-id>/`: `owner.json` records the task, source repository,
   common Git directory and initial commit, and `tree/` is the detached Git
   worktree. It is not part of `state.json` and is retained while the task
-  exists, including after an automatic merge failure, so retries and review
+  exists, including after an approved merge failure, so retries and review
   can use it. Deleting the task removes the reservation; if cleanup fails, the
   deletion remains durable and the reservation is left in place with an error.
   An explicit discard removes the reservation while keeping the task, using the
@@ -253,14 +251,15 @@ Review status is independent of both process status and merge outcome:
 `pending` means an isolated task's prepared worktree commit awaits an operator
 decision, and `approved`/`rejected` record that decision with its commit, actor,
 time and optional note. Review opens when a successful isolated attempt
-produces a worktree commit that was merged or whose merge failed; an up-to-date
-completion opens no review. The local UI approves with `v` and rejects with `V`
-plus a required reason, and the service methods `ApproveReview` and
-`RejectReview` perform the same transition. The commit displayed when the operator opens the review must match the pending
-commit. Each decision is persisted with a `review_approved` or `review_rejected` event before
-it is acknowledged, and a new attempt clears it. Review status does not gate
-automatic merging: merge outcome continues to be recorded separately, and a
-rejection neither undoes a merge nor removes the retained worktree.
+prepares a worktree commit needing integration; an up-to-date completion opens
+no review. The local UI approves and schedules merging with `v`, and rejects
+with `V` plus a required reason. The service methods `ApproveReview` and
+`RejectReview` perform these transitions. The displayed commit must match the
+pending commit. Each decision is persisted with a `review_approved` or
+`review_rejected` event before it is acknowledged, and a new attempt clears it.
+Review gates merging: only approval permits integration of the reviewed commit.
+Rejection retains the worktree; `F` supplies follow-up context and requeues the
+task for an explicit start without expanding its mandate.
 
 ## Invariants the code tries to keep
 
@@ -287,8 +286,8 @@ rejection neither undoes a merge nor removes the retained worktree.
   repository; ownership records, directory types, repository identity and the
   recorded commit are validated before reuse and again before merging.
   Preparing a workspace happens before the runner starts, and the source
-  workspace is not modified while the agent runs. Only a successful completion
-  attempts a merge; canceled and failed attempts do not. Automatic merges are
+  workspace is not modified while the agent runs. Successful completion prepares
+  a review; only operator approval permits merging. Approved merges are
   serialized, create a merge commit, and abort on conflict instead of leaving
   the source checkout in a partial merge. Merge failure is recorded separately
   from execution success and makes the task need action.
@@ -299,11 +298,10 @@ rejection neither undoes a merge nor removes the retained worktree.
   selected executor does not create a worktree by itself and changing it does
   not reclassify the automatic choice; an explicit per-task choice overrides
   the automatic one.
-- Review is a separate operator record, not a merge gate. A prepared worktree
-  commit that was merged or whose merge failed is opened for review once, a
-  decision is matched to that commit and persisted before it is acknowledged,
-  and a new attempt clears it. A decision never rewrites merge history or the
-  retained worktree.
+- Review is a separate operator record and a merge gate. A prepared worktree
+  commit opens review before integration. Approval is matched to that commit
+  and persisted before merging is scheduled; rejection leaves it unmerged.
+  A new attempt clears review. Decisions never rewrite earlier merge history.
 - A subagent is a new task with its own mandate, thread, decision and attempt;
   it is never a mutation of the parent's mandate. Spawn records are persisted
   before the child starts, and a failed start remains visible as a queued task
@@ -337,9 +335,9 @@ rejection neither undoes a merge nor removes the retained worktree.
   workspace; an explicit `w` choice enables a worktree.
   Isolation starts from that commit: uncommitted source files are absent, a
   repository with no commit cannot be isolated, and the `git` executable is
-  required. Successful isolated tasks merge automatically, but that is
-  integration, not review: review is a recorded approve/reject decision on a
-  prepared commit and does not gate merging. There is no in-app diff or conflict
+  required. Successful isolated tasks prepare commits for review. Accepting
+  review automatically schedules integration; rejection retains unmerged work
+  for inspection or follow-up. There is no in-app diff or conflict
   resolution, and a conflicting merge must be resolved outside the application.
   Worktrees for retained tasks accumulate beside the state file; deleting a task
   cleans up its worktree, and `x`/`X` discard merged worktrees while keeping the

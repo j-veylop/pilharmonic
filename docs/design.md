@@ -103,12 +103,14 @@ unavailable. Delegated children inherit the parent's execution workspace instead
 of being classified separately. Agents retain the host user's permissions.
 
 After a successful isolated run, the service commits pending changes and
-attempts a serialized merge into the source checkout. A failed merge leaves
-the execution successful, records the integration error and retains the
-worktree. Successful integration or a failed merge with a prepared commit
-opens that commit for operator review. Review records the operator's decision
-against the commit displayed in the UI. A stale decision leaves a newer
-review pending. An up-to-date completion opens no review.
+opens the prepared commit for operator review without merging it into the source
+checkout. Accepting the review persists the decision and schedules a serialized
+merge of that exact commit. A failed merge leaves the execution successful,
+records the integration error and retains the worktree. Rejecting the review
+leaves the source unchanged and retains the worktree for inspection or a task
+follow-up with additional context; the follow-up requeues work without changing
+its mandate. Review decisions must match the commit displayed in the UI. A stale
+decision leaves a newer review pending. An up-to-date completion opens no review.
 
 An operator can discard a clean, integrated worktree while keeping the task.
 Deleting a task makes the deletion durable before cleaning up its reservation.
@@ -116,8 +118,10 @@ Parent deletion requires that its children have been deleted or are part of the
 same bulk deletion. An inherited worktree stays reserved while any descendant
 references it, including a finished task that can receive a follow-up. When
 descendants are queued or running, the owner releases its process slot and
-records a pending merge. The scheduler revisits that merge after startup and
-as work finishes. An unsuccessful descendant blocks integration for inspection.
+records pending integration. The scheduler revisits preparation or an approved
+merge after startup and as work finishes. Preparing work after descendants finish
+still requires review before merging. An unsuccessful descendant blocks
+integration for inspection.
 
 Discard saves its intent before removing anything. On restart the service
 retains a surviving tree for an explicit retry, or finishes clearing the

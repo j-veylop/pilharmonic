@@ -592,6 +592,8 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 	}
 	s.mu.Lock()
 	merge := mergeOutcome{}
+	preparation := preparationOutcome{}
+	prepared := false
 	integrationSkipped := false
 	if err == nil && ctx.Err() == nil && t.Isolated {
 		if t.noAutoIntegrate() {
@@ -602,13 +604,19 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 				if owner.ID != t.ID {
 					continue
 				}
-				if s.hasInheritedWorkspaceLocked(*owner, true) {
-					merge.Status = MergeWaiting
+				if blocker, blocked := s.integrationBlockerLocked(*owner); blocked {
+					merge = blocker
 				} else {
 					owner.integrating = true
 					s.mu.Unlock()
-					merge = s.autoMergeIsolated(t)
+					var prepareErr error
+					preparation, prepareErr = s.prepareIsolatedCommit(t)
 					s.mu.Lock()
+					if prepareErr != nil {
+						merge = mergeOutcome{Status: MergeFailed, Error: prepareErr.Error(), WorktreeCommit: preparation.WorktreeCommit}
+					} else {
+						prepared = true
+					}
 				}
 				break
 			}
@@ -651,6 +659,9 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 		}
 		if merge.Status != "" {
 			task.recordMerge(merge)
+		}
+		if prepared {
+			task.recordPreparation(preparation)
 		}
 		if err := s.save(); err != nil {
 			s.persistErr = err

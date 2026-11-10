@@ -33,7 +33,7 @@ The public project name is pilharmonic. These identifiers remain unchanged so du
 - the default state, workspace and control files remain under `<user config dir>/orchestrator/`;
 - subagent environment variables keep the `ORCHESTRATOR_` prefix: `ORCHESTRATOR_CONTROL_SOCKET`, `ORCHESTRATOR_TASK_ID`, `ORCHESTRATOR_SUBAGENT_TOKEN` and `ORCHESTRATOR_SUBAGENT_CLI`;
 - authorization digests keep `orchestrator.authorization/v1`;
-- automatic merges keep the fallback Git identity `Orchestrator <orchestrator@localhost>`.
+- approved merges keep the fallback Git identity `Orchestrator <orchestrator@localhost>`.
 
 No migration is required for the rename.
 
@@ -47,7 +47,7 @@ No migration is required for the rename.
 | Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `v` filters calls and Enter in the detail pane expands arguments and results. |
 | Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `!` on the task board selects the next task needing action in grouped display order, wrapping at the end. `z` toggles full-width details, and `[` / `]` scroll one detail line. The mouse wheel scrolls details. |
 | Copy output | Drag inside the details pane to select text. Releasing the mouse copies the selection through the terminal's OSC 52 clipboard support. Selection cannot start in or extend into the sidebar, header or footer. Terminals that block OSC 52 ignore the copy. Use the terminal's normal shortcut to paste into composers. |
-| Report or review | `p` records a status report. On a task awaiting review, `v` approves the prepared commit and `V` records a rejection reason. |
+| Report or review | `p` records a status report. On a task awaiting review, `v` approves and merges the prepared commit; `V` rejects it with a reason. Use `F` to add follow-up context and requeue rejected work. |
 | Cancel or retry | `c` cancels. `R` requeues a failed, interrupted or canceled task, or a completed task whose merge failed. Then `r` starts it. |
 | Clean up | `x` discards a clean, integrated worktree and keeps task history. `d` deletes an inactive task and its worktree. `X` and `D` apply the corresponding bulk actions. Confirm with `y`. |
 
@@ -61,7 +61,7 @@ Quitting cancels active attempts and waits for their workers. After an unexpecte
 
 In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate explicitly requests a change, such as `fix`, `add`, `update` or `implement`. Read-only inspection requests (for example `review`, `explain`, `inspect`, `read` or `test`) and ambiguous requests with no detected edit action stay in the source workspace. The choice is a lexical request-opening heuristic; the selected executor does not create a worktree by itself. Use `w` on a task before it starts to override the automatic choice, or `-isolation=false` to keep every task in the source workspace. The worktree starts from committed files and is reused on retries. Other workspaces run in place.
 
-**Successful isolated runs automatically commit pending changes and merge into the source repository's current checkout.** Merges are serialized. If a merge fails, inspect the error and retained worktree. Overlapping local changes in the source may need to be committed or stashed before retrying. Execution status, merge outcome and operator review are separate records. Rejecting a commit in the UI records your decision after the merge attempt.
+**Successful isolated runs commit pending changes for review; merging stays blocked until you accept the review.** Press `v` to approve the displayed commit and automatically merge it into the source repository's current checkout. Merges are serialized. Press `V` to reject it without merging; the worktree remains available. Use `F` to add context or describe remaining work within the original mandate, then `r` to start the requeued task. If an approved merge fails, inspect the error and retained worktree. Overlapping local changes in the source may need to be committed or stashed before retrying. Execution status, merge outcome and operator review remain separate records.
 
 A parent waits to integrate while descendants use its worktree. Inspect any
 unsuccessful descendant before retrying integration. Delete descendant tasks

@@ -171,6 +171,9 @@ func (s *Service) checkDiscardLocked(t Task) error {
 	if s.discarding[t.ID] {
 		return errors.New("worktree is already being discarded")
 	}
+	if t.integrating {
+		return errors.New("worktree integration is in progress; wait before discarding")
+	}
 	if t.ScheduleRequested {
 		return errors.New("worktree is scheduled for use")
 	}

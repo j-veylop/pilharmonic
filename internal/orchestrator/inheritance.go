@@ -38,36 +38,83 @@ func (s *Service) checkRequeueIntegrationLocked(t Task) error {
 }
 
 // The owner's successful attempt releases its execution slot even when a
-// queued subagent needs that slot. Its durable merge intent is reconciled
-// after configuration at startup and after tracked workers become idle.
+// queued subagent needs that slot. Its durable integration intent is reconciled
+// after configuration at startup and after tracked workers become idle. A
+// waiting task prepares a reviewable commit; an approved task merges exactly the
+// commit the operator reviewed.
 func (s *Service) resumeMergesLocked() {
 	if s.closing {
 		return
 	}
 	for i := range s.data.Tasks {
 		owner := &s.data.Tasks[i]
-		if owner.MergeStatus != MergeWaiting || owner.integrating || s.hasInheritedWorkspaceLocked(*owner, true) {
+		if owner.integrating || s.hasInheritedWorkspaceLocked(*owner, true) {
 			continue
 		}
-		owner.integrating = true
-		s.wg.Add(1)
-		go s.finishDeferredMerge(clone(*owner))
+		if owner.ReviewStatus == ReviewApproved && owner.ReviewCommit != "" &&
+			owner.MergeStatus != MergeFailed && owner.MergeStatus != MergeMerged && owner.MergeStatus != MergeUpToDate {
+			owner.integrating = true
+			s.wg.Add(1)
+			go s.finishReviewedMerge(clone(*owner))
+			continue
+		}
+		if owner.MergeStatus == MergeWaiting && owner.ReviewStatus == "" {
+			owner.integrating = true
+			s.wg.Add(1)
+			go s.finishDeferredPreparation(clone(*owner))
+		}
 	}
 }
 
-func (s *Service) finishDeferredMerge(owner Task) {
+func (s *Service) finishDeferredPreparation(owner Task) {
 	defer s.wg.Done()
-	outcome := s.autoMergeIsolated(owner)
+	s.mu.Lock()
+	blocker, blocked := s.integrationBlockerLocked(owner)
+	s.mu.Unlock()
+	if blocked {
+		s.finalizeIntegration(owner.ID, &blocker, nil)
+		return
+	}
+	preparation, err := s.prepareIsolatedCommit(owner)
+	if err != nil {
+		outcome := mergeOutcome{Status: MergeFailed, Error: err.Error(), WorktreeCommit: preparation.WorktreeCommit}
+		s.finalizeIntegration(owner.ID, &outcome, nil)
+		return
+	}
+	s.finalizeIntegration(owner.ID, nil, &preparation)
+}
+
+func (s *Service) finishReviewedMerge(owner Task) {
+	defer s.wg.Done()
+	s.mu.Lock()
+	blocker, blocked := s.integrationBlockerLocked(owner)
+	s.mu.Unlock()
+	if blocked {
+		s.finalizeIntegration(owner.ID, &blocker, nil)
+		return
+	}
+	outcome := s.mergeApprovedCommit(owner)
+	s.finalizeIntegration(owner.ID, &outcome, nil)
+}
+
+// finalizeIntegration records one asynchronous integration result and resumes
+// any other integration intent that became eligible.
+func (s *Service) finalizeIntegration(id string, merge *mergeOutcome, preparation *preparationOutcome) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.data.Tasks {
 		t := &s.data.Tasks[i]
-		if t.ID != owner.ID {
+		if t.ID != id {
 			continue
 		}
 		t.integrating = false
 		t.UpdatedAt = time.Now().UTC()
-		t.recordMerge(outcome)
+		if merge != nil {
+			t.recordMerge(*merge)
+		}
+		if preparation != nil {
+			t.recordPreparation(*preparation)
+		}
 		if err := s.save(); err != nil {
 			s.persistErr = err
 		} else {
@@ -78,18 +125,19 @@ func (s *Service) finishDeferredMerge(owner Task) {
 }
 
 func (task *Task) recordMerge(merge mergeOutcome) {
-
 	task.MergeStatus = merge.Status
 	task.MergeError = merge.Error
 	task.MergeCommit = merge.MergeCommit
-	task.WorktreeCommit = merge.WorktreeCommit
+	if merge.WorktreeCommit != "" {
+		task.WorktreeCommit = merge.WorktreeCommit
+	}
 	task.MergedAt = time.Time{}
 	eventKind, message := "merge_"+merge.Status, ""
 	switch merge.Status {
 	case MergeMerged:
 		eventKind = "merged"
 		task.MergedAt = task.UpdatedAt
-		message = "Merged worktree commit " + merge.WorktreeCommit + " into source (merge commit " + merge.MergeCommit + ")"
+		message = "Merged worktree commit " + task.WorktreeCommit + " into source (merge commit " + merge.MergeCommit + ")"
 	case MergeUpToDate:
 		eventKind = "merge_up_to_date"
 		task.MergedAt = task.UpdatedAt
@@ -98,17 +146,33 @@ func (task *Task) recordMerge(merge mergeOutcome) {
 		message = "Integration waits for subagents using this worktree"
 	case MergeFailed:
 		eventKind = "merge_failed"
-		message = "Automatic isolated workspace merge failed: " + merge.Error
+		message = "Isolated workspace merge failed: " + merge.Error
 	}
 	task.Events = append(task.Events, Event{task.UpdatedAt, eventKind, message})
-	// Prepared isolated work is recorded for review separately from the merge
-	// outcome. An up-to-date completion has no new commit to review, and a
-	// merge that failed before committing has nothing reviewable yet.
-	if task.Isolated && merge.WorktreeCommit != "" && merge.Status != MergeUpToDate {
-		if reviewErr := task.beginReview(merge.WorktreeCommit); reviewErr != nil {
-			task.Events = append(task.Events, Event{task.UpdatedAt, "review_error", "Could not open review: " + reviewErr.Error()})
-		} else {
-			task.Events = append(task.Events, Event{task.UpdatedAt, "review_pending", "Prepared worktree commit " + merge.WorktreeCommit + " awaits review"})
-		}
+}
+
+// recordPreparation records a commit prepared by an isolated attempt. A new
+// commit opens review instead of merging; an up-to-date completion has nothing
+// to review.
+func (task *Task) recordPreparation(preparation preparationOutcome) {
+	task.WorktreeCommit = preparation.WorktreeCommit
+	task.MergeError = ""
+	task.MergeCommit = ""
+	task.MergedAt = time.Time{}
+	if preparation.UpToDate {
+		task.MergeStatus = MergeUpToDate
+		task.MergeCommit = preparation.SourceCommit
+		task.MergedAt = task.UpdatedAt
+		task.Events = append(task.Events, Event{task.UpdatedAt, "merge_up_to_date", "No unmerged isolated worktree changes"})
+		return
 	}
+	task.MergeStatus = ""
+	if !task.Isolated || preparation.WorktreeCommit == "" {
+		return
+	}
+	if err := task.beginReview(preparation.WorktreeCommit); err != nil {
+		task.Events = append(task.Events, Event{task.UpdatedAt, "review_error", "Could not open review: " + err.Error()})
+		return
+	}
+	task.Events = append(task.Events, Event{task.UpdatedAt, "review_pending", "Prepared worktree commit " + preparation.WorktreeCommit + " awaits review"})
 }

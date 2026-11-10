@@ -28,26 +28,54 @@ type mergeOutcome struct {
 	Error          string
 }
 
-// autoMergeIsolated integrates a successful isolated attempt back into its
-// source repository. Merges are serialized because several worktrees may point
-// at the same source checkout. Git operations never run while holding the
-// service mutex.
-func (s *Service) autoMergeIsolated(t Task) mergeOutcome {
-	// A failed descendant may have left partial edits in the shared tree.
-	s.mu.Lock()
+// preparationOutcome records the commit prepared for review. UpToDate means the
+// worktree has nothing the source does not already contain.
+type preparationOutcome struct {
+	WorktreeCommit string
+	SourceCommit   string
+	UpToDate       bool
+}
+
+// integrationBlockerLocked reports worktree state that prevents preparing or
+// merging an isolated task. Caller holds mu. An active descendant still uses the
+// inherited worktree, so integration waits; an unsuccessful descendant may have
+// left partial edits that need inspection first.
+func (s *Service) integrationBlockerLocked(owner Task) (mergeOutcome, bool) {
+	if s.hasInheritedWorkspaceLocked(owner, true) {
+		return mergeOutcome{Status: MergeWaiting}, true
+	}
 	for _, child := range s.data.Tasks {
-		if child.ParentID != "" && child.Workspace == t.ExecutionWorkspace &&
-			(child.Status == Failed || child.Status == Interrupted || child.Status == Canceled || child.MergeStatus == MergeFailed) {
-			s.mu.Unlock()
-			return mergeOutcome{Status: MergeFailed, Error: "Inspect inherited worktree and resolve unsuccessful subagent " + child.ID + " before retrying integration"}
+		if child.ParentID == "" || child.Workspace != owner.ExecutionWorkspace {
+			continue
+		}
+		if child.Status == Failed || child.Status == Interrupted || child.Status == Canceled || child.MergeStatus == MergeFailed {
+			return mergeOutcome{Status: MergeFailed, Error: "Inspect inherited worktree and resolve unsuccessful subagent " + child.ID + " before retrying integration"}, true
 		}
 	}
-	s.mu.Unlock()
+	return mergeOutcome{}, false
+}
+
+// prepareIsolatedCommit commits worktree changes and records the resulting
+// commit as reviewable work. It never changes the source checkout. Git
+// operations never run while holding the service mutex.
+func (s *Service) prepareIsolatedCommit(t Task) (preparationOutcome, error) {
 	s.mergeMu.Lock()
 	defer s.mergeMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
 	defer cancel()
-	outcome, err := mergeIsolatedWorkspace(ctx, s.path, t)
+	return prepareWorkspaceCommit(ctx, s.path, t)
+}
+
+// mergeApprovedCommit integrates exactly the reviewed commit. It deliberately
+// does not commit or stage worktree changes, so content that appeared after
+// review cannot ride along with the operator's approval. Merges are serialized
+// because several worktrees may point at the same source checkout.
+func (s *Service) mergeApprovedCommit(t Task) mergeOutcome {
+	s.mergeMu.Lock()
+	defer s.mergeMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
+	defer cancel()
+	outcome, err := mergeReviewedWorkspace(ctx, s.path, t, t.ReviewCommit)
 	if err != nil {
 		outcome.Status = MergeFailed
 		outcome.Error = err.Error()
@@ -55,17 +83,16 @@ func (s *Service) autoMergeIsolated(t Task) mergeOutcome {
 	return outcome
 }
 
-// mergeIsolatedWorkspace commits all worktree changes, then merges that commit
-// into the source repository's current checkout. It validates that the worktree
-// still belongs to the task and source recorded in owner.json before touching
-// either repository. A failed merge is aborted so the source does not remain in
-// a conflicted state; the worktree is always retained.
-func mergeIsolatedWorkspace(ctx context.Context, statePath string, t Task) (mergeOutcome, error) {
+// prepareWorkspaceCommit commits all worktree changes and reports whether the
+// resulting commit already exists in the source checkout. It validates that the
+// worktree still belongs to the task and source recorded in owner.json before
+// touching either repository. The source checkout is never modified.
+func prepareWorkspaceCommit(ctx context.Context, statePath string, t Task) (preparationOutcome, error) {
 	owner, tree, err := validateMergeWorkspace(ctx, statePath, t)
 	if err != nil {
-		return mergeOutcome{}, err
+		return preparationOutcome{}, err
 	}
-	outcome := mergeOutcome{Status: MergeFailed}
+	outcome := preparationOutcome{}
 
 	dirty, err := gitOutput(ctx, tree, "status", "--porcelain")
 	if err != nil {
@@ -90,9 +117,50 @@ func mergeIsolatedWorkspace(ctx context.Context, statePath string, t Task) (merg
 	if err != nil {
 		return outcome, err
 	}
-	// A retry can complete without new changes, or another task may already
-	// have merged this worktree commit. Both are successful no-ops.
+	outcome.SourceCommit = sourceHead
 	if _, err = gitOutput(ctx, owner.Source, "merge-base", "--is-ancestor", worktreeHead, sourceHead); err == nil {
+		outcome.UpToDate = true
+	}
+	return outcome, nil
+}
+
+// mergeReviewedWorkspace merges exactly the reviewed commit into the source
+// repository's current checkout. It verifies that the commit is still part of
+// the retained worktree history and descends from the isolation commit. A
+// failed merge is aborted so the source does not remain in a conflicted state;
+// uncommitted worktree content is left untouched by the merge.
+func mergeReviewedWorkspace(ctx context.Context, statePath string, t Task, reviewed string) (mergeOutcome, error) {
+	reviewed = strings.TrimSpace(reviewed)
+	if reviewed == "" || reviewed != t.ReviewCommit {
+		return mergeOutcome{}, errors.New("reviewed commit does not match the task review")
+	}
+	owner, tree, err := validateMergeWorkspace(ctx, statePath, t)
+	if err != nil {
+		return mergeOutcome{}, err
+	}
+	outcome := mergeOutcome{Status: MergeFailed, WorktreeCommit: reviewed}
+
+	resolved, err := gitOutput(ctx, tree, "rev-parse", "--verify", reviewed+"^{commit}")
+	if err != nil {
+		return outcome, errors.New("reviewed commit is not available in the worktree")
+	}
+	if resolved != reviewed {
+		return outcome, errors.New("reviewed commit is not the exact worktree commit")
+	}
+	if _, err = gitOutput(ctx, tree, "merge-base", "--is-ancestor", reviewed, "HEAD"); err != nil {
+		return outcome, errors.New("reviewed commit is no longer part of the worktree history")
+	}
+	if _, err = gitOutput(ctx, tree, "merge-base", "--is-ancestor", owner.Commit, reviewed); err != nil {
+		return outcome, errors.New("reviewed commit does not descend from the isolation commit")
+	}
+
+	sourceHead, err := gitOutput(ctx, owner.Source, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return outcome, err
+	}
+	// A restart can repeat an approval whose merge already completed. An
+	// ancestor check is also used when another task merged this commit.
+	if _, err = gitOutput(ctx, owner.Source, "merge-base", "--is-ancestor", reviewed, sourceHead); err == nil {
 		outcome.Status = MergeUpToDate
 		outcome.MergeCommit = sourceHead
 		return outcome, nil
@@ -101,7 +169,7 @@ func mergeIsolatedWorkspace(ctx context.Context, statePath string, t Task) (merg
 		return outcome, errors.New("source repository already has an in-progress merge")
 	}
 
-	mergeArgs := append(gitIdentityArgs(ctx, owner.Source), "merge", "--no-ff", "--no-gpg-sign", "-m", mergeSubject(t), worktreeHead)
+	mergeArgs := append(gitIdentityArgs(ctx, owner.Source), "merge", "--no-ff", "--no-gpg-sign", "-m", mergeSubject(t), reviewed)
 	if _, err = gitOutput(ctx, owner.Source, mergeArgs...); err != nil {
 		// Leave the source checkout as it was rather than preserving a partial
 		// merge for the operator to discover later. Only abort a merge this
@@ -225,7 +293,7 @@ func validateMergeWorkspace(ctx context.Context, statePath string, t Task) (work
 	return owner, tree, nil
 }
 
-// MergeConflict reports whether a failed automatic merge was caused by a
+// MergeConflict reports whether a failed approved merge was caused by a
 // conflict. The merge is always aborted, so this is an operator-facing
 // classification of the retained error, not a separate merge outcome.
 func (t Task) MergeConflict() bool {

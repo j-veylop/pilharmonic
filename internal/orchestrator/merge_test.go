@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func TestIsolatedCompletionAutoMergesChanges(t *testing.T) {
+func TestIsolatedCompletionPreparesReviewThenApprovalMerges(t *testing.T) {
 	repo := committedRepo(t)
 	head := testGit(t, repo, "rev-parse", "HEAD")
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
@@ -34,8 +34,25 @@ func TestIsolatedCompletionAutoMergesChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := await(t, s, task.ID, Completed)
-	if done.MergeStatus != MergeMerged || done.MergeCommit == "" || done.WorktreeCommit == "" || done.MergedAt.IsZero() {
-		t.Fatalf("merge result not recorded: %+v", done)
+	if done.ReviewStatus != ReviewPending || done.ReviewCommit == "" || done.ReviewCommit != done.WorktreeCommit {
+		t.Fatalf("prepared commit did not open review: %+v", done)
+	}
+	if done.MergeStatus != "" || done.MergeCommit != "" || !done.MergedAt.IsZero() {
+		t.Fatalf("completion merged before approval: %+v", done)
+	}
+	if got := testGit(t, repo, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("source changed before approval: %s, want %s", got, head)
+	}
+	if _, err = os.Stat(filepath.Join(repo, "artifact.txt")); !os.IsNotExist(err) {
+		t.Fatalf("artifact merged before approval: %v", err)
+	}
+
+	merged := approveReview(t, s, task.ID)
+	if merged.MergeStatus != MergeMerged || merged.MergeCommit == "" || merged.WorktreeCommit != done.ReviewCommit || merged.MergedAt.IsZero() {
+		t.Fatalf("merge result not recorded: %+v", merged)
+	}
+	if merged.ReviewStatus != ReviewApproved {
+		t.Fatalf("approval was not retained with the merge: %+v", merged)
 	}
 	b, err := os.ReadFile(filepath.Join(repo, "artifact.txt"))
 	if err != nil || string(b) != "from worktree\n" {
@@ -45,8 +62,8 @@ func TestIsolatedCompletionAutoMergesChanges(t *testing.T) {
 	if err != nil || string(b) != "changed in worktree\n" {
 		t.Fatalf("tracked change not merged: %q, %v", b, err)
 	}
-	if got := testGit(t, repo, "rev-parse", "HEAD"); got != done.MergeCommit || got == head {
-		t.Fatalf("source HEAD %q, merge commit %q, initial %q", got, done.MergeCommit, head)
+	if got := testGit(t, repo, "rev-parse", "HEAD"); got != merged.MergeCommit || got == head {
+		t.Fatalf("source HEAD %q, merge commit %q, initial %q", got, merged.MergeCommit, head)
 	}
 	if status := testGit(t, repo, "status", "--porcelain"); status != "" {
 		t.Fatalf("source checkout is dirty after merge: %q", status)
@@ -56,6 +73,171 @@ func TestIsolatedCompletionAutoMergesChanges(t *testing.T) {
 	}
 	if _, err = os.Stat(done.ExecutionWorkspace); err != nil {
 		t.Fatalf("worktree was removed after merge: %v", err)
+	}
+}
+
+// Approval merges the commit the operator reviewed. Worktree content that
+// appeared after review is neither committed nor merged.
+func TestApprovalMergesReviewedCommitWithoutLaterDirtyContent(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		return os.WriteFile(filepath.Join(task.Workspace, "reviewed.txt"), []byte("reviewed\n"), 0600)
+	}))
+	task, err := s.CreateTask("reviewed", "prepare changes", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	prepared := await(t, s, task.ID, Completed)
+	if !prepared.AwaitingReview() || prepared.ReviewCommit == "" {
+		t.Fatalf("completion did not prepare reviewed work: %+v", prepared)
+	}
+	if err = s.ApproveReview(task.ID, "not-the-reviewed-commit", ""); err == nil {
+		t.Fatal("approval accepted an unreviewed commit")
+	}
+	still, _ := s.GetTask(task.ID)
+	if !still.AwaitingReview() || still.ReviewCommit != prepared.ReviewCommit {
+		t.Fatalf("stale approval changed the review: %+v", still)
+	}
+
+	late := filepath.Join(prepared.ExecutionWorkspace, "unreviewed.txt")
+	if err = os.WriteFile(late, []byte("not reviewed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	merged := approveReview(t, s, task.ID)
+	if merged.MergeStatus != MergeMerged || merged.WorktreeCommit != prepared.ReviewCommit {
+		t.Fatalf("wrong worktree commit merged: %+v", merged)
+	}
+	testGit(t, repo, "merge-base", "--is-ancestor", merged.ReviewCommit, "HEAD")
+	if _, err = os.Stat(filepath.Join(repo, "reviewed.txt")); err != nil {
+		t.Fatalf("reviewed content was not merged: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(repo, "unreviewed.txt")); !os.IsNotExist(err) {
+		t.Fatalf("unreviewed content was merged: %v", err)
+	}
+	head := testGit(t, prepared.ExecutionWorkspace, "rev-parse", "HEAD")
+	if head != prepared.ReviewCommit {
+		t.Fatalf("approval committed later worktree content: HEAD %s, reviewed %s", head, prepared.ReviewCommit)
+	}
+	if status := testGit(t, prepared.ExecutionWorkspace, "status", "--porcelain"); !strings.Contains(status, "unreviewed.txt") {
+		t.Fatalf("unreviewed worktree content was staged or committed: %q", status)
+	}
+}
+
+// Approval persists a durable merge intent and starts the merge asynchronously.
+// Follow-up, discard and delete must not race that merge.
+func TestApprovedMergeGuardsFollowUpDiscardAndDelete(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		return os.WriteFile(filepath.Join(task.Workspace, "guarded.txt"), []byte("work\n"), 0600)
+	}))
+	task, err := s.CreateTask("guarded", "prepare changes", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	prepared := await(t, s, task.ID, Completed)
+	if !prepared.AwaitingReview() {
+		t.Fatalf("completion did not open review: %+v", prepared)
+	}
+
+	s.mergeMu.Lock()
+	if err = s.ApproveReview(task.ID, prepared.ReviewCommit, ""); err != nil {
+		s.mergeMu.Unlock()
+		t.Fatal(err)
+	}
+	if _, err = s.FollowUp(task.ID, "late context"); err == nil || !strings.Contains(err.Error(), "integration") {
+		t.Fatalf("follow-up during approved merge error = %v", err)
+	}
+	if err = s.DiscardWorktree(task.ID); err == nil || !strings.Contains(err.Error(), "integration") {
+		t.Fatalf("discard during approved merge error = %v", err)
+	}
+	if err = s.DeleteTask(task.ID); err == nil || !strings.Contains(err.Error(), "integrat") {
+		t.Fatalf("delete during approved merge error = %v", err)
+	}
+	s.mergeMu.Unlock()
+
+	merged := awaitIntegration(t, s, task.ID)
+	if merged.MergeStatus != MergeMerged {
+		t.Fatalf("approved merge did not complete: %+v", merged)
+	}
+	if _, err = os.Stat(filepath.Join(repo, "guarded.txt")); err != nil {
+		t.Fatalf("approved work was not merged: %v", err)
+	}
+}
+
+// A persisted approval whose merge did not start before shutdown resumes after
+// restart without changing the reviewed commit.
+func TestApprovedMergeIntentResumesAfterRestart(t *testing.T) {
+	repo := committedRepo(t)
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := openTestService(t, path)
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		return os.WriteFile(filepath.Join(task.Workspace, "restart.txt"), []byte("work\n"), 0600)
+	}))
+	task, err := s.CreateTask("restart", "prepare changes", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	prepared := await(t, s, task.ID, Completed)
+	if !prepared.AwaitingReview() {
+		t.Fatalf("completion did not open review: %+v", prepared)
+	}
+	s.mu.Lock()
+	for i := range s.data.Tasks {
+		if s.data.Tasks[i].ID != task.ID {
+			continue
+		}
+		if err = s.data.Tasks[i].settleReview(ReviewApproved, prepared.ReviewCommit, LocalActor, "durable approval"); err != nil {
+			s.mu.Unlock()
+			t.Fatal(err)
+		}
+	}
+	err = s.save()
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Shutdown()
+	stored, _ := restored.GetTask(task.ID)
+	if stored.ReviewStatus != ReviewApproved || stored.MergeStatus != "" {
+		t.Fatalf("approval intent was not durable: %+v", stored)
+	}
+	if err = restored.ResumeScheduled(); err != nil {
+		t.Fatal(err)
+	}
+	merged := awaitIntegration(t, restored, task.ID)
+	if merged.MergeStatus != MergeMerged || merged.WorktreeCommit != prepared.ReviewCommit {
+		t.Fatalf("restart did not merge the reviewed commit: %+v", merged)
+	}
+	if _, err = os.Stat(filepath.Join(repo, "restart.txt")); err != nil {
+		t.Fatalf("reviewed work was not merged after restart: %v", err)
 	}
 }
 
@@ -135,9 +317,16 @@ func TestIsolatedMergeConflictIsRecordedAndAborted(t *testing.T) {
 	if err = s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
-	done := await(t, s, task.ID, Completed)
+	prepared := await(t, s, task.ID, Completed)
+	if !prepared.AwaitingReview() || prepared.MergeStatus != "" {
+		t.Fatalf("completion did not stop at review: %+v", prepared)
+	}
+	done := approveReview(t, s, task.ID)
 	if done.MergeStatus != MergeFailed || !strings.Contains(done.MergeError, "merge isolated worktree") || done.WorktreeCommit == "" {
 		t.Fatalf("merge failure not recorded: %+v", done)
+	}
+	if done.ReviewStatus != ReviewApproved {
+		t.Fatalf("merge failure lost the approved review: %+v", done)
 	}
 	if !done.MergeConflict() {
 		t.Fatalf("conflict was not classified: %q", done.MergeError)
@@ -162,7 +351,7 @@ func TestIsolatedMergeConflictIsRecordedAndAborted(t *testing.T) {
 		t.Fatalf("merge failure cannot be retried: %v", err)
 	}
 	retried, _ := s.GetTask(task.ID)
-	if retried.Status != Queued || retried.MergeStatus != "" {
+	if retried.Status != Queued || retried.MergeStatus != "" || retried.ReviewStatus != "" {
 		t.Fatalf("merge failure retry did not clear the result: %+v", retried)
 	}
 }
@@ -195,7 +384,13 @@ func TestConcurrentIsolatedCompletionsMergeSerially(t *testing.T) {
 		}
 	}
 	for _, task := range tasks {
-		done := await(t, s, task.ID, Completed)
+		prepared := await(t, s, task.ID, Completed)
+		if !prepared.AwaitingReview() {
+			t.Fatalf("completion did not open review for %s: %+v", task.ID, prepared)
+		}
+	}
+	for _, task := range tasks {
+		done := approveReview(t, s, task.ID)
 		if done.MergeStatus != MergeMerged && done.MergeStatus != MergeUpToDate {
 			t.Fatalf("merge did not succeed for %s: %+v", task.ID, done)
 		}
@@ -276,7 +471,11 @@ func TestMergeBlockedByDirtySourceExplainsAndRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(release)
-	done := await(t, s, task.ID, Completed)
+	prepared := await(t, s, task.ID, Completed)
+	if !prepared.AwaitingReview() {
+		t.Fatalf("completion did not open review: %+v", prepared)
+	}
+	done := approveReview(t, s, task.ID)
 	if done.MergeStatus != MergeFailed {
 		t.Fatalf("merge status = %s, want failed: %+v", done.MergeStatus, done)
 	}
@@ -299,7 +498,8 @@ func TestMergeBlockedByDirtySourceExplainsAndRetries(t *testing.T) {
 	if err = s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
-	merged := await(t, s, task.ID, Completed)
+	await(t, s, task.ID, Completed)
+	merged := approveReview(t, s, task.ID)
 	if merged.MergeStatus != MergeMerged {
 		t.Fatalf("retry merge status = %s (%s), want merged", merged.MergeStatus, merged.MergeError)
 	}

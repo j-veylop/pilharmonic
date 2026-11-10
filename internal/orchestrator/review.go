@@ -9,10 +9,9 @@ import (
 
 // Review states describe an operator's disposition of an isolated task's
 // prepared worktree commit. They are independent of execution status and merge
-// outcome: automatic merging is integration, not review, so a merged change
-// can still await or later receive a review decision. A rejected change stays
-// in its retained worktree; rejecting it records the decision but does not
-// undo or prevent the automatic merge.
+// outcome, but they gate integration: a prepared commit is not merged until the
+// operator approves exactly that commit. A rejected change stays in its
+// retained worktree so a follow-up can add context and run another attempt.
 const (
 	ReviewPending  = "pending"
 	ReviewApproved = "approved"
@@ -77,20 +76,26 @@ func (t *Task) settleReview(status, commit, actor, note string) error {
 }
 
 // ApproveReview records the local operator's approval of the prepared worktree
-// commit currently awaiting review.
+// commit currently awaiting review. The decision is persisted before this call
+// returns; approval also starts an asynchronous, serialized merge of exactly
+// that commit, so the caller is not blocked by Git. Merge progress and failure
+// are recorded on the task, and a failed merge remains retryable.
 func (s *Service) ApproveReview(id, commit, note string) error {
 	return s.recordReview(id, ReviewApproved, commit, note)
 }
 
 // RejectReview records the local operator's rejection of the prepared worktree
-// commit currently awaiting review. The commit and worktree are retained; the
-// decision does not undo an automatic merge.
+// commit currently awaiting review. The commit and worktree are retained, no
+// merge is scheduled, and a follow-up can add context and requeue the task for
+// another attempt.
 func (s *Service) RejectReview(id, commit, note string) error {
 	return s.recordReview(id, ReviewRejected, commit, note)
 }
 
 // recordReview checks that the displayed commit still awaits review and
-// persists the decision with its event. A failed save restores the previous state.
+// persists the decision with its event. Approval of isolated work records a
+// durable merge intent and schedules the merge worker; a failed save restores
+// the previous state.
 func (s *Service) recordReview(id, decision, commit, note string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -102,6 +107,9 @@ func (s *Service) recordReview(id, decision, commit, note string) error {
 		if t.ID != id {
 			continue
 		}
+		if t.DiscardPending {
+			return errors.New("worktree discard is pending; wait before reviewing the commit")
+		}
 		old := clone(*t)
 		if err := t.settleReview(decision, commit, LocalActor, note); err != nil {
 			return err
@@ -112,9 +120,22 @@ func (s *Service) recordReview(id, decision, commit, note string) error {
 			message += ": " + t.ReviewNote
 		}
 		t.Events = append(t.Events, Event{t.UpdatedAt, "review_" + decision, message})
+		mergeScheduled := false
+		if decision == ReviewApproved && t.Isolated {
+			if s.hasInheritedWorkspaceLocked(*t, true) {
+				t.recordMerge(mergeOutcome{Status: MergeWaiting})
+			} else {
+				t.integrating = true
+				mergeScheduled = true
+			}
+		}
 		if err := s.save(); err != nil {
 			*t = old
 			return err
+		}
+		if mergeScheduled {
+			s.wg.Add(1)
+			go s.finishReviewedMerge(clone(*t))
 		}
 		return nil
 	}

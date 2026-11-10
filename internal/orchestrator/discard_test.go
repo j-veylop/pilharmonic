@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-// mergedIsolatedTask runs an isolated task that changes its worktree, so the
-// automatic merge records a worktree and merge commit and leaves a retained
-// worktree.
+// mergedIsolatedTask runs an isolated task that changes its worktree, approves
+// the prepared commit and waits for the serialized merge. It leaves a retained
+// worktree with recorded worktree and merge commits.
 func mergedIsolatedTask(t *testing.T, s *Service, repo, title string) Task {
 	t.Helper()
 	task, err := s.CreateTask(title, "do work", repo)
@@ -27,7 +27,8 @@ func mergedIsolatedTask(t *testing.T, s *Service, repo, title string) Task {
 	if err = s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
-	done := await(t, s, task.ID, Completed)
+	await(t, s, task.ID, Completed)
+	done := approveReview(t, s, task.ID)
 	if done.MergeStatus != MergeMerged || done.ExecutionWorkspace == "" {
 		t.Fatalf("task did not merge or has no worktree: %+v", done)
 	}

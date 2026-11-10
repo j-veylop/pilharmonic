@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"pilharmonic/internal/orchestrator"
@@ -45,8 +46,9 @@ func reviewRepo(t *testing.T) string {
 	return dir
 }
 
-// startIsolatedReviewTask runs a task whose worktree change is merged and then
-// opened for review, which is the state the review keys act on.
+// startIsolatedReviewTask runs a task whose worktree change is prepared and
+// opened for review without merging it, which is the state the review keys act
+// on. Approval schedules the merge; rejection leaves the worktree retained.
 func startIsolatedReviewTask(t *testing.T, s *orchestrator.Service, repo, title string) orchestrator.Task {
 	t.Helper()
 	task, err := s.CreateTask(title, "do work", repo)
@@ -64,10 +66,46 @@ func startIsolatedReviewTask(t *testing.T, s *orchestrator.Service, repo, title 
 	if !ok {
 		t.Fatal("task missing after completion")
 	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !done.AwaitingReview() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+		done, ok = s.GetTask(task.ID)
+		if !ok {
+			t.Fatal("task missing while waiting for review")
+		}
+	}
 	if !done.AwaitingReview() {
 		t.Fatalf("completion did not open a review: %+v", done)
 	}
 	return done
+}
+
+// approveReviewAndAwaitMerge records approval and waits for the asynchronous
+// integration it schedules, so later discard or follow-up actions see a merged
+// worktree.
+func approveReviewAndAwaitMerge(t *testing.T, s *orchestrator.Service, task orchestrator.Task) orchestrator.Task {
+	t.Helper()
+	if task.AwaitingReview() {
+		if err := s.ApproveReview(task.ID, task.ReviewCommit, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		got, ok := s.GetTask(task.ID)
+		if !ok {
+			t.Fatal("task missing while awaiting merge")
+		}
+		switch got.MergeStatus {
+		case orchestrator.MergeMerged, orchestrator.MergeUpToDate:
+			return got
+		case orchestrator.MergeFailed:
+			t.Fatalf("merge failed: %s", got.MergeError)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("merge did not complete")
+	return orchestrator.Task{}
 }
 
 func selectTask(t *testing.T, m *model, id string) {
@@ -99,8 +137,12 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	if got.ReviewStatus != orchestrator.ReviewApproved || got.ReviewedBy != orchestrator.LocalActor {
 		t.Fatalf("approval key did not record a decision: %+v", got)
 	}
-	if !strings.Contains(m.notice, "Review approved") {
-		t.Fatalf("approval not acknowledged: %q", m.notice)
+	if !strings.Contains(m.notice, "Review approved") || !strings.Contains(m.notice, "merge") {
+		t.Fatalf("approval did not state the merge consequence: %q", m.notice)
+	}
+	got = approveReviewAndAwaitMerge(t, s, got)
+	if got.MergeStatus != orchestrator.MergeMerged && got.MergeStatus != orchestrator.MergeUpToDate {
+		t.Fatalf("approval did not merge the prepared commit: %+v", got)
 	}
 
 	rejected := startIsolatedReviewTask(t, s, repo, "reject")
@@ -111,6 +153,9 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	if m.input.kind != rejectReviewInput || m.input.target != rejected.ID {
 		t.Fatalf("rejection key did not open a reason input: %+v", m)
 	}
+	if !strings.Contains(m.notice, "worktree") || !strings.Contains(m.notice, "F") {
+		t.Fatalf("rejection prompt did not mention retained work: %q", m.notice)
+	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("not needed")})
 	m = next.(model)
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -119,8 +164,30 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	if got.ReviewStatus != orchestrator.ReviewRejected || got.ReviewNote != "not needed" {
 		t.Fatalf("rejection key did not record a decision: %+v", got)
 	}
-	if m.input.kind != "" || !strings.Contains(m.notice, "Review rejected") {
-		t.Fatalf("rejection not acknowledged: input=%v notice=%q", m.input, m.notice)
+	if m.input.kind != "" || !strings.Contains(m.notice, "Review rejected") || !strings.Contains(m.notice, "F") {
+		t.Fatalf("rejection not acknowledged with follow-up: input=%v notice=%q", m.input, m.notice)
+	}
+	if view := m.View(); !strings.Contains(view, "F adds follow-up") {
+		t.Fatalf("rejected detail does not suggest follow-up: %s", view)
+	}
+
+	// Rejection keeps the worktree and allows a follow-up that requeues the
+	// task without changing its original mandate.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
+	m = next.(model)
+	if m.input.kind != followUpInput || m.input.target != rejected.ID {
+		t.Fatalf("rejected task did not open a follow-up composer: %+v", m.input)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("add regression coverage")})
+	m = next.(model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	got, _ = s.GetTask(rejected.ID)
+	if got.Status != orchestrator.Queued || got.Prompt != "do work" || len(got.Context) != 1 || got.Context[0].Text != "add regression coverage" || got.ReviewStatus != "" {
+		t.Fatalf("follow-up did not requeue the rejected task cleanly: %+v", got)
+	}
+	if _, err := os.Stat(rejected.ExecutionWorkspace); err != nil {
+		t.Fatalf("rejection did not retain the worktree: %v", err)
 	}
 }
 

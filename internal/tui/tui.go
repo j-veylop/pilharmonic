@@ -362,7 +362,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if err := m.service.ApproveReview(t.ID, t.ReviewCommit, ""); err != nil {
 					m.notice = err.Error()
 				} else {
-					m.notice = "Review approved for commit " + t.ReviewCommit + "."
+					m.notice = "Review approved for commit " + t.ReviewCommit + "; merge scheduled."
 				}
 			}
 		case "V":
@@ -372,7 +372,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice = "No worktree commit awaits review."
 				} else {
 					m.input = composer{kind: rejectReviewInput, target: t.ID, reviewCommit: t.ReviewCommit}
-					m.notice = "Enter a reason to reject the review."
+					m.notice = "Enter a reason to reject; the worktree is kept for F follow-up."
 				}
 			}
 		case "d", "D", "x", "X":

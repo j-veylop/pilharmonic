@@ -590,17 +590,27 @@ func (m model) detailContent(width int) []string {
 	}
 	switch t.ReviewStatus {
 	case orchestrator.ReviewPending:
-		add(accentStyle.Render("REVIEW PENDING") + mutedStyle.Render("  commit "+terminalText(t.ReviewCommit)+"  ·  v approve / V reject"))
-	case orchestrator.ReviewApproved, orchestrator.ReviewRejected:
-		label, color := "REVIEW APPROVED", statusCompleted
-		if t.ReviewStatus == orchestrator.ReviewRejected {
-			label, color = "REVIEW REJECTED", statusFailed
-		}
+		add(accentStyle.Render("REVIEW PENDING") + mutedStyle.Render("  commit "+terminalText(t.ReviewCommit)+"  ·  merge blocked until approval  ·  v approve + merge / V reject"))
+	case orchestrator.ReviewApproved:
 		suffix := "  " + terminalText(t.ReviewedBy)
 		if !t.ReviewedAt.IsZero() {
 			suffix += "  " + t.ReviewedAt.Local().Format("Jan 02 15:04")
 		}
-		add(lipgloss.NewStyle().Foreground(color).Bold(true).Render(label) + mutedStyle.Render(suffix))
+		add(lipgloss.NewStyle().Foreground(statusCompleted).Bold(true).Render("REVIEW APPROVED") + mutedStyle.Render(suffix))
+		if t.MergeStatus == "" {
+			add(mutedStyle.Render("Merge scheduled for the approved commit; the result appears here."))
+		}
+	case orchestrator.ReviewRejected:
+		suffix := "  " + terminalText(t.ReviewedBy)
+		if !t.ReviewedAt.IsZero() {
+			suffix += "  " + t.ReviewedAt.Local().Format("Jan 02 15:04")
+		}
+		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("REVIEW REJECTED") + mutedStyle.Render(suffix))
+		line := "F adds follow-up context and requeues the task."
+		if t.ExecutionWorkspace != "" {
+			line = "Worktree retained; " + line
+		}
+		add(mutedStyle.Render(line))
 	}
 	if t.ReviewNote != "" {
 		add(mutedStyle.Render("Review note: " + terminalText(t.ReviewNote)))
@@ -797,7 +807,10 @@ func (m model) selectedTaskHints() []string {
 	}
 	var hints []string
 	if task.AwaitingReview() {
-		hints = append(hints, "v approve", "V reject")
+		hints = append(hints, "v approve + merge", "V reject")
+	}
+	if task.ReviewStatus == orchestrator.ReviewRejected {
+		hints = append(hints, "F follow up")
 	}
 	switch {
 	case task.Status == orchestrator.Running:
@@ -909,6 +922,9 @@ func (m model) footer(w int) string {
 			}
 		}
 		footer = strings.Join(draft, "\n") + "\n" + mutedStyle.Render("enter submit  ·  ctrl+j/alt+enter newline  ·  esc cancel")
+		if m.input.kind == rejectReviewInput {
+			footer += "\n" + mutedStyle.Render("Rejection keeps the worktree; F adds follow-up context and requeues.")
+		}
 	}
 	if m.agentPicker.target != "" {
 		footer = mutedStyle.Render("↑↓/j/k choose agent · enter select · esc cancel")

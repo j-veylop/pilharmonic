@@ -28,6 +28,39 @@ func await(t *testing.T, s *Service, id string, want Status) Task {
 	t.Fatalf("got status %s, want %s", task.Status, want)
 	return Task{}
 }
+
+// awaitIntegration waits for an asynchronous approved merge to settle.
+func awaitIntegration(t *testing.T, s *Service, id string) Task {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		task, _ := s.GetTask(id)
+		switch task.MergeStatus {
+		case MergeMerged, MergeUpToDate, MergeFailed:
+			return task
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
+	task, _ := s.GetTask(id)
+	t.Fatalf("integration did not settle: %+v", task)
+	return Task{}
+}
+
+// approveReview approves the pending commit and waits for the merge outcome.
+func approveReview(t *testing.T, s *Service, id string) Task {
+	t.Helper()
+	task, ok := s.GetTask(id)
+	if !ok {
+		t.Fatal("task not found")
+	}
+	if !task.AwaitingReview() {
+		t.Fatalf("task is not awaiting review: %+v", task)
+	}
+	if err := s.ApproveReview(id, task.ReviewCommit, ""); err != nil {
+		t.Fatal(err)
+	}
+	return awaitIntegration(t, s, id)
+}
 func TestRouteRunAndReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s, err := Open(path)

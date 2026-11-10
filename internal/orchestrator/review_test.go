@@ -321,3 +321,74 @@ func TestRejectReviewRecordsReason(t *testing.T) {
 		t.Fatal("reviewed a missing task")
 	}
 }
+
+func TestRejectedReviewRetainsWorkAndFollowUpOpensNewReview(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		name := "attempt-1.txt"
+		if len(task.Context) > 0 {
+			name = "attempt-2.txt"
+		}
+		return os.WriteFile(filepath.Join(task.Workspace, name), []byte(name), 0600)
+	}))
+	task, err := s.CreateTask("reject", "prepare changes", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	prepared := await(t, s, task.ID, Completed)
+	if !prepared.AwaitingReview() {
+		t.Fatalf("completion did not open review: %+v", prepared)
+	}
+	if err = s.RejectReview(task.ID, prepared.ReviewCommit, "needs more context"); err != nil {
+		t.Fatal(err)
+	}
+	rejected, _ := s.GetTask(task.ID)
+	if rejected.ReviewStatus != ReviewRejected || rejected.ReviewCommit != prepared.ReviewCommit || rejected.MergeStatus != "" {
+		t.Fatalf("rejection did not retain the commit without merging: %+v", rejected)
+	}
+	if _, err = os.Stat(filepath.Join(repo, "attempt-1.txt")); !os.IsNotExist(err) {
+		t.Fatalf("rejected work was merged: %v", err)
+	}
+	if head := testGit(t, prepared.ExecutionWorkspace, "rev-parse", "HEAD"); head != prepared.ReviewCommit {
+		t.Fatalf("rejection changed the worktree commit: %s", head)
+	}
+
+	requeued, err := s.FollowUp(task.ID, "add the missing detail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !requeued {
+		t.Fatal("rejected task was not requeued for follow-up")
+	}
+	following, _ := s.GetTask(task.ID)
+	if following.Status != Queued || following.ReviewStatus != "" || following.MergeStatus != "" {
+		t.Fatalf("follow-up did not clear the rejected review: %+v", following)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, task.ID, Completed)
+	next, _ := s.GetTask(task.ID)
+	if !next.AwaitingReview() || next.ReviewCommit == "" || next.ReviewCommit == prepared.ReviewCommit {
+		t.Fatalf("follow-up did not prepare a new review: %+v", next)
+	}
+	if _, err = os.Stat(filepath.Join(repo, "attempt-2.txt")); !os.IsNotExist(err) {
+		t.Fatalf("follow-up work merged before approval: %v", err)
+	}
+	merged := approveReview(t, s, task.ID)
+	if merged.MergeStatus != MergeMerged || merged.WorktreeCommit != next.ReviewCommit {
+		t.Fatalf("follow-up review did not merge exactly: %+v", merged)
+	}
+	for _, name := range []string{"attempt-1.txt", "attempt-2.txt"} {
+		if _, err = os.Stat(filepath.Join(repo, name)); err != nil {
+			t.Fatalf("%s was not merged after approval: %v", name, err)
+		}
+	}
+}

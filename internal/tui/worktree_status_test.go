@@ -23,8 +23,8 @@ func TestWorkspaceBadgeDistinguishesWorkspaceAndMergeState(t *testing.T) {
 		{"up to date", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeUpToDate}, glyphCheck, "up to date"},
 		{"merge failed", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeFailed, MergeError: "source repository already has an in-progress merge"}, glyphMergeError, "merge error"},
 		{"merge conflict", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeFailed, MergeError: "CONFLICT (content): Merge conflict in tracked.txt"}, glyphConflict, "conflict"},
-		{"review pending", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeMerged, ReviewStatus: orchestrator.ReviewPending}, glyphReview, "review"},
-		{"review rejected", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeMerged, ReviewStatus: orchestrator.ReviewRejected}, glyphMergeError, "rejected"},
+		{"review pending", orchestrator.Task{Isolated: true, ReviewStatus: orchestrator.ReviewPending}, glyphReview, "review"},
+		{"review rejected", orchestrator.Task{Isolated: true, ReviewStatus: orchestrator.ReviewRejected}, glyphMergeError, "rejected"},
 	}
 	for _, tc := range cases {
 		badge := workspaceBadgeFor(tc.task)
@@ -80,13 +80,13 @@ func TestRouterRecentRoutesShowWorkspaceBadge(t *testing.T) {
 func TestTaskDetailShowsReviewState(t *testing.T) {
 	task := orchestrator.Task{
 		ID: "task", Title: "reviewed work", Prompt: "work", Status: orchestrator.Completed,
-		Isolated: true, MergeStatus: orchestrator.MergeMerged, MergeCommit: "def456",
+		Isolated: true, ExecutionWorkspace: "/state/workspaces/task/tree",
 		ReviewStatus: orchestrator.ReviewPending, ReviewCommit: "abc123",
 	}
 	m := model{width: 120, height: 35, tasks: []orchestrator.Task{task}}
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "REVIEW PENDING") || !strings.Contains(view, "abc123") || !strings.Contains(view, "v approve / V reject") {
-		t.Fatalf("pending review not shown: %s", view)
+	if !strings.Contains(view, "REVIEW PENDING") || !strings.Contains(view, "abc123") || !strings.Contains(view, "merge blocked until approval") || !strings.Contains(view, "v approve + merge") || !strings.Contains(view, "V reject") {
+		t.Fatalf("pending review not shown with its merge consequence: %s", view)
 	}
 
 	task.ReviewStatus = orchestrator.ReviewRejected
@@ -97,5 +97,8 @@ func TestTaskDetailShowsReviewState(t *testing.T) {
 	view = ansi.Strip(m.View())
 	if !strings.Contains(view, "REVIEW REJECTED") || !strings.Contains(view, orchestrator.LocalActor) || !strings.Contains(view, "not needed") {
 		t.Fatalf("rejection not shown: %s", view)
+	}
+	if !strings.Contains(view, "Worktree retained") || !strings.Contains(view, "F adds follow-up") {
+		t.Fatalf("rejection does not explain retained work and follow-up: %s", view)
 	}
 }

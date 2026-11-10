@@ -24,6 +24,10 @@ func (s *Service) DeleteTask(id string) error {
 			s.mu.Unlock()
 			return errors.New("task worktree is awaiting integration")
 		}
+		if t.integrating {
+			s.mu.Unlock()
+			return errors.New("task worktree is being integrated; wait before deleting")
+		}
 		if t.DiscardPending {
 			s.mu.Unlock()
 			return errors.New("worktree is being discarded; wait before deleting")
@@ -172,7 +176,7 @@ func (s *Service) deletableCompletedLocked(confirmed map[string]bool) map[string
 		if task.Status != Completed || task.MergeStatus == MergeWaiting || (confirmed != nil && !confirmed[task.ID]) {
 			continue
 		}
-		if _, stopping := s.cancel[task.ID]; !stopping && !task.DiscardPending {
+		if _, stopping := s.cancel[task.ID]; !stopping && !task.DiscardPending && !task.integrating {
 			eligible[task.ID] = true
 		}
 	}

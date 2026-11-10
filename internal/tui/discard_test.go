@@ -20,6 +20,9 @@ func TestDiscardWorktreeConfirmation(t *testing.T) {
 	defer s.Shutdown()
 	s.RegisterRunner("general", reviewChangeRunner{})
 	done := startIsolatedReviewTask(t, s, repo, "discard")
+	// Merge is blocked while the review is pending, so discard requires the
+	// operator to approve and wait for integration first.
+	done = approveReviewAndAwaitMerge(t, s, done)
 
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selectTask(t, &m, done.ID)
@@ -54,7 +57,9 @@ func TestDiscardAllMergedWorktreesConfirmation(t *testing.T) {
 	defer s.Shutdown()
 	s.RegisterRunner("general", reviewChangeRunner{})
 	first := startIsolatedReviewTask(t, s, repo, "first")
+	first = approveReviewAndAwaitMerge(t, s, first)
 	second := startIsolatedReviewTask(t, s, repo, "second")
+	second = approveReviewAndAwaitMerge(t, s, second)
 
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})

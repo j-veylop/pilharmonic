@@ -15,7 +15,8 @@ Task      Accepted work with its own mandate, executor, status and history.
 Route     The automatic policy check that accepts a request and picks an executor.
 Action    Tasks that need you: blocked, waiting, awaiting review,
           undelivered input, merge failed, failed or interrupted.
-Attempt   One run of a task. Retry keeps the task and adds an attempt.`},
+Attempt   One run of a task. Retry keeps the task and adds an attempt.
+Review    Approval merges prepared work; rejection keeps it for a follow-up.`},
 	{"Navigation", `h / l          Focus tasks / details
 j / k          Move down / up; counts: 5j, 3k
 gg / G         First / last task or top / bottom
@@ -39,14 +40,14 @@ A              Choose executor before starting
 P              Choose profile (model, tools) before starting
 w              Toggle worktree isolation before start
 r / R          Start / retry task
-v / V          Approve / reject prepared worktree commit
+v / V          Approve (merge) / reject prepared worktree commit
 c              Cancel task
 d              Delete inactive task + worktree (confirm y)
 D              Delete completed tasks + worktrees (confirm y)
 x              Discard selected merged worktree (confirm y)
 X              Discard all merged worktrees (confirm y)
 f              Send context to thread subscribers
-F              Follow up selected task
+F              Follow up task; a rejected worktree is kept for this
 s              Pause / resume thread subscription
 p              Report: kind + message
                progress, waiting, blocked, ready, failed`},

@@ -111,7 +111,7 @@ func (m model) submitInput(prompt string) (string, error) {
 	id := m.input.target
 	switch m.input.kind {
 	case rejectReviewInput:
-		return "Review rejected; worktree unchanged.", m.service.RejectReview(id, m.input.reviewCommit, prompt)
+		return "Review rejected; worktree retained; press F to follow up.", m.service.RejectReview(id, m.input.reviewCommit, prompt)
 	case reportInput:
 		kind, message, _ := strings.Cut(prompt, " ")
 		return "Report recorded.", m.service.RecordReport(id, kind, message)

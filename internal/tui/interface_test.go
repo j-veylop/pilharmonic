@@ -78,8 +78,14 @@ func TestBoardFooterShowsOnlyValidSelectedTaskActions(t *testing.T) {
 		{
 			name:    "awaiting review",
 			task:    orchestrator.Task{Status: orchestrator.Completed, ReviewStatus: orchestrator.ReviewPending, ReviewCommit: "abc"},
-			want:    []string{"v approve", "V reject"},
+			want:    []string{"v approve + merge", "V reject"},
 			notWant: []string{"r run", "c cancel", "R retry"},
+		},
+		{
+			name:    "rejected review",
+			task:    orchestrator.Task{Status: orchestrator.Completed, ReviewStatus: orchestrator.ReviewRejected},
+			want:    []string{"F follow up"},
+			notWant: []string{"r run", "c cancel", "R retry", "v approve"},
 		},
 	}
 	for _, tc := range cases {

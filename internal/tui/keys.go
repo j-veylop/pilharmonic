@@ -86,6 +86,39 @@ func (m *model) jumpVim(bottom bool, count int) {
 	}
 }
 
+// jumpAttention moves selection to the next task that needs attention in
+// grouped sidebar order, wrapping at the end. It reports whether any task needs
+// attention; when none do, the selection is left unchanged.
+func (m *model) jumpAttention() bool {
+	rows := taskListRows(m.tasks)
+	any := false
+	for _, row := range rows {
+		if needsAttention(row.task) {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return false
+	}
+	position := -1
+	for i, row := range rows {
+		if row.index == m.selected {
+			position = i
+			break
+		}
+	}
+	for step := 1; step <= len(rows); step++ {
+		candidate := (position + step) % len(rows)
+		if needsAttention(rows[candidate].task) {
+			m.selected = rows[candidate].index
+			m.historyOffset = 0
+			return true
+		}
+	}
+	return false
+}
+
 // moveTaskSelection follows the grouped sidebar order rather than the service
 // snapshot order, so a child stays next to its parent while navigating.
 func (m *model) moveTaskSelection(delta int) {

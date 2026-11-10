@@ -252,6 +252,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice = ""
 				}
 			}
+		case "!":
+			if m.jumpAttention() {
+				if oldTaskID != m.selectedID() {
+					m.activityID = ""
+					m.activityExpanded = false
+				}
+			} else {
+				m.notice = "No tasks need attention."
+			}
 		case "/":
 			m.router = true
 			m.routerFocus = 0

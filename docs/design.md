@@ -124,6 +124,20 @@ is still queued, running or integrating is displayed as waiting for subagents.
 This changes display state only; the parent process and its persisted status are
 unchanged.
 
+The task-board header summarises the task count, the displayed running state,
+the queued process state and the derived attention count. Because a running
+parent with active children is displayed as waiting for subagents, it is not
+counted as running. The board footer renders actions valid for the selected
+task in the current mode, using the same stage and service guards as the keys:
+review decisions for a pending commit, cancel and activity for a running task,
+start for an unscheduled queued task, and retry for a retryable task. Modal,
+composer, activity and detail-focus footers keep their own controls. Optional
+hints are dropped when they would exceed two footer lines. On the board, `!`
+selects the next task that needs attention in grouped display order and wraps;
+router and task composers retain `!` as text. When the sidebar is hidden, the
+detail title prefixes the selected task's grouped position so narrow layouts
+still show where the selection sits.
+
 Mouse drag selection is limited to the detail content pane. Releasing a
 nonempty selection writes its plain text as an OSC 52 clipboard sequence,
 serialized with renderer output so the escape codes cannot be split. Sidebar,

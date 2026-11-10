@@ -13,6 +13,7 @@ var helpTopics = []struct{ title, body string }{
 	{"Navigation", `h / l          Focus tasks / details
 j / k          Move down / up; counts: 5j, 3k
 gg / G         First / last task or top / bottom
+!              Next task needing attention (board)
 Ctrl-u / d     Half page up / down
 Ctrl-b / f     Full page up / down
 Ctrl-y / e     One detail line up / down

@@ -287,6 +287,68 @@ func fit(s string, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+// attentionCount counts tasks whose derived stage needs an operator decision.
+func (m model) attentionCount() int {
+	count := 0
+	for _, task := range m.tasks {
+		if needsAttention(task) {
+			count++
+		}
+	}
+	return count
+}
+
+// headerCounts derives running from the displayed state so a parent waiting for
+// subagents is not reported as running, while queued remains the process status
+// (scheduled tasks are still queued).
+func (m model) headerCounts() (running, queued int) {
+	for _, task := range m.tasks {
+		if task.Status == orchestrator.Queued {
+			queued++
+		}
+		if _, label, _ := m.taskState(task); label == "RUNNING" {
+			running++
+		}
+	}
+	return running, queued
+}
+
+// headerSummary chooses the most descriptive counter format that fits beside
+// the wordmark and mode badge, so narrow terminals are not truncated with an
+// ellipsis. Running is the displayed state; queued is the process status.
+func (m model) headerSummary(available int) string {
+	running, queued := m.headerCounts()
+	attention := m.attentionCount()
+	tasks := len(m.tasks)
+	format := func(taskText, runningText, queuedText, attentionText string) string {
+		return mutedStyle.Render(taskText) +
+			lipgloss.NewStyle().Foreground(statusRunning).Render(runningText) +
+			lipgloss.NewStyle().Foreground(statusWaiting).Render(queuedText) +
+			lipgloss.NewStyle().Foreground(cyan).Render(attentionText)
+	}
+	options := []string{
+		format(fmt.Sprintf("  %d tasks", tasks),
+			fmt.Sprintf("  ● %d running", running),
+			fmt.Sprintf("  ◷ %d queued", queued),
+			fmt.Sprintf("  ◆ %d attention", attention)),
+		format(fmt.Sprintf("  %d tasks", tasks),
+			fmt.Sprintf("  ● %d run", running),
+			fmt.Sprintf("  ◷ %d wait", queued),
+			fmt.Sprintf("  ◆ %d attn", attention)),
+		format(fmt.Sprintf("  %d tasks", tasks),
+			fmt.Sprintf("  ●%d", running),
+			fmt.Sprintf("  ◷%d", queued),
+			fmt.Sprintf("  ◆%d", attention)),
+		format(fmt.Sprintf("  %d tasks", tasks), "", "", fmt.Sprintf("  ◆%d", attention)),
+	}
+	for _, option := range options {
+		if lipgloss.Width(option) <= available {
+			return option
+		}
+	}
+	return options[len(options)-1]
+}
+
 func (m model) View() string {
 	w, h := m.width, m.height
 	if w <= 0 {
@@ -298,19 +360,7 @@ func (m model) View() string {
 	if w < 30 || h < 10 {
 		return fit("ORCHESTRATOR\nResize terminal to at least 30 × 10\nq quit", w, h)
 	}
-	running, queued := 0, 0
-	for _, t := range m.tasks {
-		if t.Status == orchestrator.Running {
-			running++
-		}
-		if t.Status == orchestrator.Queued {
-			queued++
-		}
-	}
 	header := gradientText("◈ ORCHESTRATOR")
-	summary := mutedStyle.Render(fmt.Sprintf("  %d tasks", len(m.tasks))) +
-		lipgloss.NewStyle().Foreground(statusRunning).Render(fmt.Sprintf("  ● %d active", running)) +
-		lipgloss.NewStyle().Foreground(statusWaiting).Render(fmt.Sprintf("  ◷ %d queued", queued))
 	mode, modeColor := " TASKS ", accent
 	if m.detailFocus || m.fullscreen {
 		mode, modeColor = " DETAILS ", cyan
@@ -322,6 +372,7 @@ func (m model) View() string {
 		mode, modeColor = " ROUTER ", accent
 	}
 	mode = modeBadge(mode, modeColor)
+	summary := m.headerSummary(max(1, w-lipgloss.Width(header)-lipgloss.Width(mode)-1))
 	gap := max(1, w-lipgloss.Width(header+summary)-lipgloss.Width(mode))
 	top := fit(header+summary+strings.Repeat(" ", gap)+mode, w, 1)
 	footer := m.footer(w)
@@ -412,6 +463,28 @@ func (m model) taskPanel(width, height int) string {
 		}
 	}
 	return focusedPanel(strings.Join(lines, "\n"), width, height, !m.detailFocus && !m.fullscreen)
+}
+
+// sidebarVisible reports whether View renders the task sidebar. The selected
+// task position is only needed when the sidebar is hidden.
+func (m model) sidebarVisible() bool {
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	return w >= 76 && !m.fullscreen
+}
+
+// selectedPosition returns the selected task's one-based position in grouped
+// display order, which is the order the sidebar and navigation use.
+func (m model) selectedPosition() (position, total int, ok bool) {
+	rows := taskListRows(m.tasks)
+	for i, row := range rows {
+		if row.index == m.selected {
+			return i + 1, len(rows), true
+		}
+	}
+	return 0, 0, false
 }
 
 // detailGeometry matches the responsive layout used by View.
@@ -630,10 +703,13 @@ func (m model) detailPanel(width, height int) string {
 	}
 	t := m.tasks[m.selected]
 	titleLine := titleStyle.Render(strings.ReplaceAll(terminalText(t.Title), "\n", " ")) + "  " + m.taskLabel(t)
-	lines := []string{m.detailTabRow(t, inner), fit(titleLine, inner, 1)}
 	if action := m.currentAction(t); action != "" {
-		lines[1] = lipgloss.NewStyle().Foreground(cyan).Render(action)
+		titleLine = lipgloss.NewStyle().Foreground(cyan).Render(action)
 	}
+	if position, total, ok := m.selectedPosition(); ok && !m.sidebarVisible() && inner >= 8 {
+		titleLine = mutedStyle.Render(fmt.Sprintf("TASK %d/%d  ", position, total)) + titleLine
+	}
+	lines := []string{m.detailTabRow(t, inner), fit(titleLine, inner, 1)}
 	content := m.detailContent(inner)
 	available := max(0, height-2-len(lines)-1)
 	offset := min(max(0, m.historyOffset), max(0, len(content)-available))
@@ -660,8 +736,91 @@ func (m model) detailPanel(width, height int) string {
 	return focusedPanel(strings.Join(lines, "\n"), width, height, m.detailFocus || m.fullscreen)
 }
 
+func (m model) selectedTask() (orchestrator.Task, bool) {
+	if m.selected < 0 || m.selected >= len(m.tasks) {
+		return orchestrator.Task{}, false
+	}
+	return m.tasks[m.selected], true
+}
+
+// retryable mirrors the task states Service.Retry accepts. Integration that is
+// already pending is excluded because Retry refuses it.
+func retryable(task orchestrator.Task) bool {
+	if task.DiscardPending || task.MergeStatus == orchestrator.MergeWaiting {
+		return false
+	}
+	if task.Status == orchestrator.Completed {
+		return task.MergeStatus == orchestrator.MergeFailed
+	}
+	return task.Status == orchestrator.Failed || task.Status == orchestrator.Interrupted || task.Status == orchestrator.Canceled
+}
+
+// selectedTaskHints advertises only operations the existing command guards and
+// service methods accept for the selected task state.
+func (m model) selectedTaskHints() []string {
+	task, ok := m.selectedTask()
+	if !ok {
+		return nil
+	}
+	var hints []string
+	if task.AwaitingReview() {
+		hints = append(hints, "v approve", "V reject")
+	}
+	switch {
+	case task.Status == orchestrator.Running:
+		hints = append(hints, "c cancel", "t activity")
+	case task.Status == orchestrator.Queued && !task.ScheduleRequested:
+		hints = append(hints, "r run")
+	case task.Status == orchestrator.Queued:
+		hints = append(hints, "c cancel")
+	}
+	if retryable(task) {
+		hints = append(hints, "R retry")
+	}
+	return hints
+}
+
+func hintsWidth(hints []string) int {
+	width := 0
+	for i, hint := range hints {
+		if i > 0 {
+			width += 5 // rendered separator "  ·  "
+		}
+		width += lipgloss.Width(hint)
+	}
+	return width
+}
+
+// boardFooter keeps selected-task actions first, then the operator essentials.
+// Optional hints are dropped before the footer grows past two lines.
+func (m model) boardFooter(w int) string {
+	var hints []string
+	add := func(hint string, optional bool) {
+		candidate := append(append([]string{}, hints...), hint)
+		if optional && hintsWidth(candidate) > 2*w {
+			return
+		}
+		hints = candidate
+	}
+	for _, hint := range m.selectedTaskHints() {
+		add(hint, false)
+	}
+	if m.attentionCount() > 0 {
+		add("! attention", true)
+	}
+	add("? help", true)
+	add("q quit", false)
+	add("/ route", true)
+	add("n new", true)
+	if w < 76 {
+		add("j/k tasks", true)
+		add("l details", true)
+	}
+	return strings.Join(hints, " · ")
+}
+
 func (m model) footer(w int) string {
-	footerText := "n new · / route · r run · ? help · q quit"
+	footerText := m.boardFooter(w)
 	switch {
 	case m.router:
 		if _, ok := m.routerMentionQuery(); ok {
@@ -673,8 +832,6 @@ func (m model) footer(w int) string {
 		footerText = "t output · v filter · esc collapse · ? help · q quit"
 	case m.detailFocus || m.fullscreen:
 		footerText = "j/k scroll · T thinking · h tasks · ? help · q quit"
-	case w < 76:
-		footerText = "j/k tasks · l details · / route · ? help · q quit"
 	}
 	var hints []string
 	for _, line := range strings.Split(footerText, "\n") {

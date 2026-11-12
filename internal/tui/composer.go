@@ -47,22 +47,6 @@ func (c composer) viewLines(width, height int) []string {
 	return c.editorState().viewLines(width, height)
 }
 
-// editText keeps the old single-value editing helper for callers that only
-// need an append-only draft. Composers use editor so wrapped lines and cursor
-// movement remain possible.
-func editText(text string, msg tea.KeyMsg) string {
-	e := editor{text: text, cursor: len(text)}
-	switch msg.Type {
-	case tea.KeyBackspace, tea.KeyCtrlH:
-		e.backspace()
-	case tea.KeyRunes:
-		e.insert(string(msg.Runes))
-	case tea.KeySpace:
-		e.insert(" ")
-	}
-	return e.text
-}
-
 func (m model) composerWidth() int {
 	width := m.width
 	if width <= 0 {
@@ -91,14 +75,7 @@ func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 			m.notice = "Enter text first."
 			return m, nil
 		}
-		notice, err := m.submitInput(prompt)
-		m.notice = notice
-		if err != nil {
-			m.notice = err.Error()
-		}
-		m.input = composer{}
-		m.tasks = m.service.ListTasks()
-		m.clamp()
+		return m, m.submitInputCmd(prompt)
 	default:
 		e := m.input.editorState()
 		e.handleKey(msg, m.composerWidth(), m.composerHeight())
@@ -107,25 +84,47 @@ func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) submitInputCmd(prompt string) tea.Cmd {
+	return func() tea.Msg {
+		notice, err := m.submitInput(prompt)
+		return composerResultMsg{notice: notice, err: err}
+	}
+}
+
 func (m model) submitInput(prompt string) (string, error) {
 	id := m.input.target
 	switch m.input.kind {
 	case rejectReviewInput:
-		return "Review rejected; worktree retained; press F to follow up.", m.service.RejectReview(id, m.input.reviewCommit, prompt)
+		if err := m.service.RejectReview(id, m.input.reviewCommit, prompt); err != nil {
+			return "", err
+		}
+		return "Review rejected; worktree retained; press F to follow up.", nil
 	case reportInput:
 		kind, message, _ := strings.Cut(prompt, " ")
-		return "Report recorded.", m.service.RecordReport(id, kind, message)
+		if err := m.service.RecordReport(id, kind, message); err != nil {
+			return "", err
+		}
+		return "Report recorded.", nil
 	case threadInput:
-		return "Context recorded; delivery status is in history.", m.service.AddManualThreadContext(id, prompt)
+		if err := m.service.AddManualThreadContext(id, prompt); err != nil {
+			return "", err
+		}
+		return "Context recorded; delivery status is in history.", nil
 	case followUpInput:
 		requeued, err := m.service.FollowUp(id, prompt)
 		if requeued {
 			return "Follow-up recorded; requeued. Press r to start.", err
 		}
-		return "Follow-up recorded; delivery status is in history.", err
+		if err != nil {
+			return "", err
+		}
+		return "Follow-up recorded; delivery status is in history.", nil
 	case subagentInput:
 		task, err := m.service.SpawnSubagent(id, "", prompt, "")
-		return "Subagent started: " + task.ID, err
+		if err != nil {
+			return "", err
+		}
+		return "Subagent started: " + task.ID, nil
 	case newTaskInput, relatedTaskInput:
 		title := prompt
 		if _, request, explicit := orchestrator.SplitAgentMention(prompt); explicit {
@@ -141,7 +140,10 @@ func (m model) submitInput(prompt string) (string, error) {
 		} else {
 			task, err = m.service.CreateTask(title, prompt, m.workspace)
 		}
-		return "Task queued: " + task.ID, err
+		if err != nil {
+			return "", err
+		}
+		return "Task queued: " + task.ID, nil
 	default:
 		return "", fmt.Errorf("unknown input kind %q", m.input.kind)
 	}

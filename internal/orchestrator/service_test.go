@@ -255,10 +255,10 @@ func TestRetryPreservesAttempts(t *testing.T) {
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		runs++
 		if runs == 1 {
-			io.WriteString(out, "first attempt")
+			_, _ = io.WriteString(out, "first attempt")
 			return errors.New("failed first")
 		}
-		io.WriteString(out, "second attempt")
+		_, _ = io.WriteString(out, "second attempt")
 		return nil
 	}))
 	task, err := s.CreateTask("test", "original mandate", t.TempDir())
@@ -289,5 +289,61 @@ func TestRetryPreservesAttempts(t *testing.T) {
 	got, _ := reloaded.GetTask(task.ID)
 	if len(got.Attempts) != 2 || got.Attempts[0].Error != "failed first" {
 		t.Fatalf("attempt history lost: %+v", got.Attempts)
+	}
+}
+
+// TestOutputBatchesUntilFlush proves streamed output stays in memory until the
+// flush threshold, then reaches disk before the attempt ends. Lifecycle saves
+// carry any buffered output, so completing a task never drops it.
+func TestOutputBatchesUntilFlush(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	small := strings.Repeat("x", 1024)
+	large := strings.Repeat("y", outputFlushSize)
+	wroteSmall := make(chan struct{})
+	wroteLarge := make(chan struct{})
+	release := make(chan struct{})
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
+		if _, err := io.WriteString(out, small); err != nil {
+			return err
+		}
+		close(wroteSmall)
+		<-release
+		if _, err := io.WriteString(out, large); err != nil {
+			return err
+		}
+		close(wroteLarge)
+		return nil
+	}))
+	task, err := s.CreateTask("stream", "stream output", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-wroteSmall
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(onDisk), small) {
+		t.Fatal("small output chunk persisted before reaching the flush threshold")
+	}
+	close(release)
+	<-wroteLarge
+	flushed, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(flushed), large) {
+		t.Fatal("output crossing the flush threshold was not persisted")
+	}
+	done := await(t, s, task.ID, Completed)
+	if done.Output != small+large {
+		t.Fatalf("output lost: got %d bytes, want %d", len(done.Output), len(small+large))
 	}
 }

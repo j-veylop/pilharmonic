@@ -73,7 +73,7 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	release := make(chan struct{})
 	writers := make(chan outputWriter, 1)
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {

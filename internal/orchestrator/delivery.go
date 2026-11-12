@@ -121,14 +121,18 @@ func (t *Task) settleAllPendingDeliveries(reason string, now time.Time) bool {
 
 // undeliveredForAttempt reports whether any contextual input for this attempt
 // was rejected or remains unproven. Older state without delivery records falls
-// back to the per-context summary.
+// back to the per-context summary, bounded by that attempt's start.
 func (t Task) undeliveredForAttempt(attemptID string) bool {
 	if len(t.Deliveries) == 0 {
-		var started time.Time
-		if len(t.Attempts) > 0 {
-			started = t.Attempts[len(t.Attempts)-1].StartedAt
+		started, known := t.attemptStartedAt(attemptID)
+		if !known && attemptID != "" {
+			// The named attempt is not recorded, so no context can be
+			// attributed to it.
+			return false
 		}
 		for _, c := range t.Context {
+			// Context created before the attempt started belonged to an earlier
+			// hand-off and is not this attempt's delivery.
 			if !c.CreatedAt.Before(started) && (c.Delivery == DeliveryRejected || c.Delivery == DeliveryUnknown) {
 				return true
 			}
@@ -141,4 +145,21 @@ func (t Task) undeliveredForAttempt(attemptID string) bool {
 		}
 	}
 	return false
+}
+
+// attemptStartedAt resolves the start of the named attempt. An empty attempt ID
+// falls back to the newest attempt for legacy state.
+func (t Task) attemptStartedAt(attemptID string) (time.Time, bool) {
+	if attemptID == "" {
+		if len(t.Attempts) == 0 {
+			return time.Time{}, false
+		}
+		return t.Attempts[len(t.Attempts)-1].StartedAt, true
+	}
+	for i := len(t.Attempts) - 1; i >= 0; i-- {
+		if t.Attempts[i].ID == attemptID {
+			return t.Attempts[i].StartedAt, true
+		}
+	}
+	return time.Time{}, false
 }

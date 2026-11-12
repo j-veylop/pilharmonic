@@ -53,7 +53,7 @@ func TestAgentPickerReportsCapturedTargetThatDisappeared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	task, err := s.CreateTask("work", "mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)

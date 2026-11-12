@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	maxControlRequest   = 4 << 20
-	maxSubagentPrompt   = 256 << 10
-	controlDialTimeout  = 2 * time.Second
-	defaultSubagentWait = 30 * time.Minute
-	defaultStartTimeout = 5 * time.Second
+	maxControlRequest     = 4 << 20
+	maxSubagentPrompt     = 256 << 10
+	controlDialTimeout    = 2 * time.Second
+	controlRequestTimeout = 10 * time.Second
+	defaultSubagentWait   = 30 * time.Minute
+	defaultStartTimeout   = 5 * time.Second
 )
 
 type subagentRequest struct {
@@ -61,6 +62,13 @@ func (s *Service) EnableSubagentControl(path string) error {
 		if dialErr == nil {
 			_ = conn.Close()
 			return errors.New("subagent control socket is already in use")
+		}
+		// The probe cannot prove the socket is dead: a listener that is still
+		// starting up can refuse one connection, and unlinking a live peer's
+		// socket would strand it. Only take over the exact socket file that was
+		// probed; if the path now names a different file, leave it alone.
+		if current, restatErr := os.Lstat(path); restatErr != nil || !os.SameFile(info, current) {
+			return errors.New("subagent control socket changed while probing; refusing to take it over")
 		}
 		if err = os.Remove(path); err != nil {
 			return err
@@ -154,24 +162,42 @@ func (s *Service) closeSubagentControl() {
 	}
 }
 
+// writeControlResponse bounds how long a peer may stall the response write.
+func writeControlResponse(conn net.Conn, response subagentResponse) {
+	_ = conn.SetWriteDeadline(time.Now().Add(controlRequestTimeout))
+	_ = json.NewEncoder(conn).Encode(response)
+}
+
 func (s *Service) handleSubagentControl(ctx context.Context, conn net.Conn) {
-	decoder := json.NewDecoder(io.LimitReader(conn, maxControlRequest+1))
+	// An accepted connection is untrusted until it authenticates, so bound how
+	// long it may take to deliver its request. The wait below applies its own
+	// deadline to the response.
+	_ = conn.SetReadDeadline(time.Now().Add(controlRequestTimeout))
+	reader := &io.LimitedReader{R: conn, N: maxControlRequest + 1}
+	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	var req subagentRequest
 	if err := decoder.Decode(&req); err != nil {
-		_ = json.NewEncoder(conn).Encode(subagentResponse{Error: "invalid request: " + err.Error()})
+		// Reading up to the limit without a complete value means the request was
+		// truncated by the limit, not malformed; say so instead of reporting the
+		// decoder's opaque "unexpected EOF".
+		if reader.N <= 0 {
+			writeControlResponse(conn, subagentResponse{Error: fmt.Sprintf("control request exceeds %d MiB", maxControlRequest>>20)})
+			return
+		}
+		writeControlResponse(conn, subagentResponse{Error: "invalid request: " + err.Error()})
 		return
 	}
 	if req.TaskID == "" || req.Token == "" {
-		_ = json.NewEncoder(conn).Encode(subagentResponse{Error: "task ID and token are required"})
+		writeControlResponse(conn, subagentResponse{Error: "task ID and token are required"})
 		return
 	}
 	if len(req.Prompt) > maxSubagentPrompt {
-		_ = json.NewEncoder(conn).Encode(subagentResponse{Error: "subagent mandate exceeds 256 KiB"})
+		writeControlResponse(conn, subagentResponse{Error: "subagent mandate exceeds 256 KiB"})
 		return
 	}
 	if len(req.Title) > 4096 {
-		_ = json.NewEncoder(conn).Encode(subagentResponse{Error: "subagent title is too long"})
+		writeControlResponse(conn, subagentResponse{Error: "subagent title is too long"})
 		return
 	}
 	startTimeout := time.Duration(req.StartTimeoutMS) * time.Millisecond
@@ -187,10 +213,11 @@ func (s *Service) handleSubagentControl(ctx context.Context, conn net.Conn) {
 	}
 	task, err := s.spawnSubagent(req.TaskID, req.Title, req.Prompt, req.Agent, req.Profile, req.Token)
 	if err != nil {
-		_ = json.NewEncoder(conn).Encode(subagentResponse{TaskID: task.ID, Error: err.Error()})
+		writeControlResponse(conn, subagentResponse{TaskID: task.ID, Error: err.Error()})
 		return
 	}
 	response := subagentResponse{TaskID: task.ID, Status: string(task.Status), Output: task.Output, Error: task.Error}
+	note := ""
 	if req.Wait {
 		waitCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -199,13 +226,23 @@ func (s *Service) handleSubagentControl(ctx context.Context, conn net.Conn) {
 		response.Output = result.Output
 		response.Error = result.Error
 		if waitErr != nil {
-			response.Error = waitErr.Error()
+			// The child's own error is the more useful report; a wait timeout only
+			// adds that the caller stopped waiting for it.
+			if response.Error == "" {
+				response.Error = waitErr.Error()
+			} else {
+				note = "stopped waiting: " + waitErr.Error()
+			}
 		}
 	}
 	if response.Status == string(Queued) {
-		response.Note = "queued for agent capacity; the child continues independently"
+		if note != "" {
+			note += "; "
+		}
+		note += "queued for agent capacity; the child continues independently"
 	}
-	_ = json.NewEncoder(conn).Encode(response)
+	response.Note = note
+	writeControlResponse(conn, response)
 }
 
 // RunSubagentCommand implements the `pilharmonic subagent` helper used by a
@@ -222,6 +259,9 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	startTimeout := flags.Duration("start-timeout", defaultStartTimeout, "how long to wait for a free execution slot")
 	timeout := flags.Duration("timeout", defaultSubagentWait, "maximum time to wait for completion")
 	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if flags.NArg() != 0 {
@@ -255,7 +295,7 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		fmt.Fprintln(stderr, "subagent:", err)
 		return 1
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	waitDeadline := 10 * time.Second
 	if !*noWait {
 		waitDeadline = *timeout + *startTimeout + 10*time.Second

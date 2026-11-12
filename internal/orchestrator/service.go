@@ -15,7 +15,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 type Status string
@@ -66,16 +68,17 @@ type Thread struct {
 
 // Attempt records one execution separately from the task mandate.
 type Attempt struct {
-	ID             string    `json:"id"`
-	Agent          string    `json:"agent"`
-	Tools          []string  `json:"tools,omitempty"`
-	Profile        string    `json:"profile,omitempty"`
-	RequestedModel string    `json:"requested_model,omitempty"`
-	Status         Status    `json:"status"`
-	StartedAt      time.Time `json:"started_at"`
-	FinishedAt     time.Time `json:"finished_at,omitempty"`
-	Output         string    `json:"output,omitempty"`
-	Error          string    `json:"error,omitempty"`
+	ID              string    `json:"id"`
+	Agent           string    `json:"agent"`
+	Tools           []string  `json:"tools,omitempty"`
+	Profile         string    `json:"profile,omitempty"`
+	RequestedModel  string    `json:"requested_model,omitempty"`
+	Status          Status    `json:"status"`
+	StartedAt       time.Time `json:"started_at"`
+	FinishedAt      time.Time `json:"finished_at,omitempty"`
+	OutputTruncated bool      `json:"output_truncated,omitempty"`
+	Output          string    `json:"output,omitempty"`
+	Error           string    `json:"error,omitempty"`
 }
 
 type Task struct {
@@ -137,7 +140,13 @@ type Task struct {
 	controlToken    string
 	controlGuidance string
 }
+
+// stateVersion is written to the state file on every save. Opening a file
+// written by a newer build fails loudly instead of silently dropping fields.
+const stateVersion = 1
+
 type state struct {
+	Version int      `json:"version,omitempty"`
 	Tasks   []Task   `json:"tasks"`
 	Threads []Thread `json:"threads,omitempty"`
 }
@@ -154,26 +163,41 @@ type LiveRunner interface {
 }
 
 type Service struct {
-	mu              sync.Mutex
-	mergeMu         sync.Mutex
-	path            string
-	data            state
-	runners         map[string]Runner
-	specialistTools map[string][]string
-	profiles        map[string]Profile
+	mu                 sync.Mutex
+	mergeMu            sync.Mutex
+	path               string
+	credentialsPath    string
+	creds              map[string]string
+	modelSelectionPath string
+	modelSelection     map[string]string
+	modelCache         modelListCache
+	data               state
+	runners            map[string]Runner
+	specialistTools    map[string][]string
+	profiles           map[string]Profile
 	// routeProfile is the profile the local router assigns, and the fallback for
 	// tasks created without an explicit choice.
-	routeProfile      string
-	cancel            map[string]context.CancelFunc
-	discarding        map[string]bool
-	wg                sync.WaitGroup
-	closing           bool
-	persistErr        error
+	routeProfile   string
+	cancel         map[string]context.CancelFunc
+	discarding     map[string]bool
+	wg             sync.WaitGroup
+	closing        bool
+	persistErr     error
+	startupWarning string
+	// outputPending counts adapter output written to memory but not yet
+	// persisted, so a crash loses at most outputFlushSize bytes.
+	outputPending     int
 	limit             int
 	live              map[string]chan Trigger
 	pending           map[string]*pendingRequest
 	policies          map[string]Policy
 	agentDescriptions map[string]string
+	// activity signals the idle watchdog for each running task. It is empty
+	// unless an idle timeout is configured.
+	activity    map[string]chan struct{}
+	idleTimeout time.Duration
+	// attemptRetention bounds how many attempts per task keep their output.
+	attemptRetention int
 
 	defaultIsolation bool
 
@@ -192,7 +216,7 @@ func Open(path string) (*Service, error) {
 	}
 	s := &Service{
 		path:              path,
-		runners:           map[string]Runner{DefaultRouteAgent: PiRunner{}},
+		runners:           map[string]Runner{},
 		profiles:          builtinProfiles(),
 		routeProfile:      DefaultProfileName,
 		cancel:            make(map[string]context.CancelFunc),
@@ -200,6 +224,7 @@ func Open(path string) (*Service, error) {
 		limit:             defaultConcurrency,
 		live:              make(map[string]chan Trigger),
 		pending:           make(map[string]*pendingRequest),
+		activity:          make(map[string]chan struct{}),
 		defaultIsolation:  true,
 		agentDescriptions: map[string]string{DefaultRouteAgent: "General-purpose coding agent."},
 		policies: map[string]Policy{
@@ -208,16 +233,41 @@ func Open(path string) (*Service, error) {
 		},
 		subagentMaxDepth:    DefaultMaxSubagentDepth,
 		subagentMaxChildren: DefaultMaxSubagents,
+		attemptRetention:    DefaultAttemptRetention,
 		controlConns:        make(map[net.Conn]struct{}),
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	s.credentialsPath = credentialsPathFor(path)
+	creds, err := loadCredentials(s.credentialsPath)
+	if err != nil {
+		return nil, err
+	}
+	s.creds = creds
+	s.modelSelectionPath = modelSelectionPathFor(path)
+	selection, err := loadModelSelection(s.modelSelectionPath)
+	if err != nil {
+		return nil, err
+	}
+	s.modelSelection = selection
+	s.runners[DefaultRouteAgent] = FantasyRunner{ModelFactory: s.fantasyModelFactory, modelClass: ModelClassBig, modelOverride: s.modelSelection[ModelClassBig]}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	if err == nil {
 		if err = json.Unmarshal(b, &s.data); err != nil {
-			return nil, fmt.Errorf("read state: %w", err)
+			corrupt := fmt.Sprintf("%s.corrupt-%d", path, time.Now().Unix())
+			if renameErr := os.Rename(path, corrupt); renameErr != nil {
+				return nil, fmt.Errorf("read state: %w (preserving corrupt file failed: %v)", err, renameErr)
+			}
+			s.startupWarning = fmt.Sprintf("state file was corrupt (%v); preserved as %s and started empty", err, corrupt)
+			s.data = state{}
+		} else if s.data.Version > stateVersion {
+			return nil, fmt.Errorf("state file version %d is newer than this build supports (%d)", s.data.Version, stateVersion)
 		}
+		s.data.Version = stateVersion
 	}
 	migrated := migrateStartupState(&s.data)
 	recovered, err := recoverStartupState(s)
@@ -239,14 +289,16 @@ func (s *Service) RegisterRunner(name string, runner Runner) {
 }
 func newID() string {
 	var b [8]byte
-	rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		// A failing crypto/rand cannot mint trustworthy IDs, which are also used
+		// as worktree reservation names. Failing loudly is safer than writing
+		// collision-prone identifiers to durable state.
+		panic(err)
+	}
 	return hex.EncodeToString(b[:])
 }
 func (s *Service) save() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(s.data, "", "  ")
+	b, err := json.Marshal(s.data)
 	if err != nil {
 		return err
 	}
@@ -255,7 +307,7 @@ func (s *Service) save() error {
 		return err
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	defer func() { _ = os.Remove(name) }()
 	if err = f.Chmod(0600); err == nil {
 		_, err = f.Write(b)
 	}
@@ -269,7 +321,37 @@ func (s *Service) save() error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(name, s.path)
+	if err = syncStateFile(s.path, name); err != nil {
+		return err
+	}
+	// A successful write persisted every in-memory change, including output
+	// the writer only buffered.
+	s.outputPending = 0
+	s.persistErr = nil
+	return nil
+}
+
+// syncStateFile replaces the state file atomically and fsyncs the parent
+// directory so the rename itself survives a power loss. The caller holds mu
+// (or has not shared the service yet). Callers must persist before
+// acknowledging a state change.
+func syncStateFile(path, temp string) error {
+	if err := os.Rename(temp, path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	dirErr := dir.Sync()
+	closeErr := dir.Close()
+	// Some filesystems do not support fsync on a directory. The rename has
+	// already replaced the file, so treating these as success avoids rolling
+	// back in-memory state that is already on disk.
+	if dirErr != nil && !errors.Is(dirErr, syscall.EINVAL) && !errors.Is(dirErr, syscall.ENOTSUP) {
+		return dirErr
+	}
+	return closeErr
 }
 func clone(t Task) Task {
 	t.SpecialistTools = append([]string(nil), t.SpecialistTools...)
@@ -288,11 +370,11 @@ func clone(t Task) Task {
 }
 func (s *Service) ListTasks() []Task {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	result := make([]Task, len(s.data.Tasks))
 	for i, t := range s.data.Tasks {
 		result[i] = clone(t)
 	}
+	s.mu.Unlock()
 	sort.SliceStable(result, func(i, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
 	return result
 }
@@ -305,6 +387,22 @@ func (s *Service) GetTask(id string) (Task, bool) {
 		}
 	}
 	return Task{}, false
+}
+
+// PersistenceError returns the most recent background save failure, or nil.
+// It is cleared by the next successful save.
+func (s *Service) PersistenceError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistErr
+}
+
+// StartupWarning reports a non-fatal problem encountered while opening the
+// state file (for example, a corrupt file that was preserved and skipped).
+func (s *Service) StartupWarning() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.startupWarning
 }
 
 // SetDefaultIsolation controls whether mandates that explicitly request changes
@@ -531,6 +629,24 @@ func (s *Service) Start(ctx context.Context, id string) error {
 
 const maxOutput = 256 * 1024
 
+// outputFlushSize bounds streamed output that a crash can lose before the next
+// save. Output is not an authorization decision, so it batches; lifecycle
+// changes always save immediately and carry any pending output with them.
+const outputFlushSize = 8 * 1024
+
+// trimToRuneStart returns s truncated to at most n bytes without splitting a
+// UTF-8 rune, so JSON output never contains replacement characters.
+func trimToRuneStart(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	s = s[len(s)-n:]
+	for len(s) > 0 && !utf8.RuneStart(s[0]) {
+		s = s[1:]
+	}
+	return s
+}
+
 type outputWriter struct {
 	s         *Service
 	taskID    string
@@ -564,12 +680,23 @@ func (w outputWriter) Write(p []byte) (int, error) {
 	oldOutput, oldAttemptOutput, oldUpdatedAt := t.Output, attempt.Output, t.UpdatedAt
 	t.Output += string(p)
 	if len(t.Output) > maxOutput {
-		t.Output = t.Output[len(t.Output)-maxOutput:]
+		t.Output = trimToRuneStart(t.Output, maxOutput)
 	}
 	t.UpdatedAt = time.Now().UTC()
 	attempt.Output = t.Output
+	if ping := w.s.activity[w.taskID]; ping != nil {
+		select {
+		case ping <- struct{}{}:
+		default:
+		}
+	}
+	w.s.outputPending += len(p)
+	if w.s.outputPending < outputFlushSize {
+		return len(p), nil
+	}
 	if err := w.s.save(); err != nil {
 		t.Output, attempt.Output, t.UpdatedAt = oldOutput, oldAttemptOutput, oldUpdatedAt
+		w.s.outputPending -= len(p)
 		return 0, err
 	}
 	return len(p), nil
@@ -580,15 +707,19 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 	var err error
 	t, err = s.prepareExecution(ctx, t)
 	if err == nil {
+		var stop func()
+		ctx, stop = s.watchIdle(ctx, t.ID)
+		defer stop()
 		writer := outputWriter{s: s, taskID: t.ID, attemptID: t.currentAttemptID()}
-		if lr, ok := r.(LiveRunner); ok {
-			s.mu.Lock()
-			live := s.live[t.ID]
-			s.mu.Unlock()
-			err = lr.RunLive(ctx, t, writer, live, writer.contextAck)
-		} else {
-			err = r.Run(ctx, t, writer)
-		}
+		err = runRecover(func() error {
+			if lr, ok := r.(LiveRunner); ok {
+				s.mu.Lock()
+				live := s.live[t.ID]
+				s.mu.Unlock()
+				return lr.RunLive(ctx, t, writer, live, writer.contextAck)
+			}
+			return r.Run(ctx, t, writer)
+		})
 	}
 	s.mu.Lock()
 	merge := mergeOutcome{}
@@ -639,7 +770,7 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 		switch {
 		case ctx.Err() != nil:
 			task.Status = Canceled
-			task.Error = ctx.Err().Error()
+			task.Error = cancelReason(ctx)
 		case err != nil:
 			task.Status = Failed
 			task.Error = err.Error()
@@ -666,11 +797,38 @@ func (s *Service) run(ctx context.Context, t Task, r Runner) {
 		if err := s.save(); err != nil {
 			s.persistErr = err
 		} else if !s.closing {
-			_ = s.scheduleLocked()
+			if schedErr := s.scheduleLocked(); schedErr != nil {
+				s.persistErr = schedErr
+			}
 		}
 		break
 	}
 }
+
+// runRecover converts a panic in a runner into a normal error so a single
+// misbehaving adapter cannot wedge the whole service.
+func runRecover(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("runner panic: %v", r)
+		}
+	}()
+	return fn()
+}
+
+// cancelReason maps a context cancellation to an operator-readable cause.
+func cancelReason(ctx context.Context) string {
+	cause := context.Cause(ctx)
+	switch {
+	case errors.Is(cause, ErrIdleTimeout):
+		return cause.Error()
+	case errors.Is(cause, context.Canceled):
+		return "canceled by operator"
+	default:
+		return cause.Error()
+	}
+}
+
 func (s *Service) Cancel(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

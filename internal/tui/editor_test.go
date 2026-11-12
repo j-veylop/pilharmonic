@@ -94,7 +94,7 @@ func TestComposerNewlineAndSubmitKeepFullPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	m := model{service: s, workspace: t.TempDir(), width: 100, height: 30, input: composer{kind: newTaskInput}}
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("first line")})
 	m = key(m, tea.KeyMsg{Type: tea.KeyCtrlJ})
@@ -131,11 +131,12 @@ func TestEmptyComposerDoesNotAssumeATaskDraft(t *testing.T) {
 }
 
 func TestRouterComposerWrapsAndSubmitsMultilineRequest(t *testing.T) {
+	configureTestProvider(t)
 	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	m := model{service: s, workspace: t.TempDir(), width: 60, height: 35, router: true}
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(strings.Repeat("long request ", 8))})
 	m = key(m, tea.KeyMsg{Type: tea.KeyCtrlJ})
@@ -155,11 +156,12 @@ func TestRouterComposerWrapsAndSubmitsMultilineRequest(t *testing.T) {
 }
 
 func TestRouterAltEnterDoesNotSubmit(t *testing.T) {
+	configureTestProvider(t)
 	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", routerRunner{})
 	m := model{service: s, workspace: t.TempDir(), width: 80, height: 24, router: true}
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("first")})

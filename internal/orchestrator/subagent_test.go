@@ -16,7 +16,7 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	started := make(chan Task, 2)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
@@ -82,7 +82,7 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Shutdown()
+	defer func() { _ = restored.Shutdown() }()
 	reloaded, ok := restored.GetTask(child.ID)
 	if !ok || reloaded.ParentID != parent.ID || reloaded.Depth != 1 || reloaded.Decision.PolicyVersion != SubagentPolicyVersion || reloaded.Prompt != "child mandate only" {
 		t.Fatalf("subagent relationship was not durable: %+v", reloaded)
@@ -139,7 +139,7 @@ func TestSpawnSubagentDuringWorkspacePreparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	// startLocked marks the attempt running before the worker has prepared
 	// the worktree. Reproduce that window without racing a real git process.
 	parent := Task{ID: "parent", Status: Running, Isolated: true, Workspace: t.TempDir(), Agent: DefaultRouteAgent}
@@ -157,7 +157,7 @@ func TestSpawnSubagentRequiresRunningParentAndHonorsLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	started := make(chan Task, 4)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
@@ -207,7 +207,7 @@ func TestSubagentControlRoundTripAndCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
 		if task.ParentID == "" {
@@ -265,6 +265,9 @@ func TestSubagentControlRoundTripAndCredentials(t *testing.T) {
 	if _, err = s.spawnSubagent(parent.ID, "", "bad credential", "", "", "wrong"); err == nil || !strings.Contains(err.Error(), "credential") {
 		t.Fatalf("bad token accepted: %v", err)
 	}
+	if _, err = s.spawnSubagent(parent.ID, "", "no credential", "", "", ""); err == nil || !strings.Contains(err.Error(), "credential") {
+		t.Fatalf("empty token accepted: %v", err)
+	}
 
 	t.Setenv("ORCHESTRATOR_CONTROL_SOCKET", socket)
 	t.Setenv("ORCHESTRATOR_TASK_ID", parent.ID)
@@ -318,6 +321,26 @@ func TestRunnerEnvironmentReplacesInheritedControlCredentials(t *testing.T) {
 	disabled := strings.Join((Task{}).runnerEnvironment(), "\n")
 	if strings.Contains(disabled, "ORCHESTRATOR_SUBAGENT_TOKEN") || strings.Contains(disabled, "ORCHESTRATOR_TASK_ID") {
 		t.Fatalf("disabled task inherited credentials: %s", disabled)
+	}
+}
+
+func TestRunnerEnvironmentDropsOperatorSecrets(t *testing.T) {
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "operator-secret")
+	t.Setenv("GITHUB_TOKEN", "operator-token")
+	t.Setenv("MY_CUSTOM_ORCHESTRATOR", "kept")
+	t.Setenv("ORCHESTRATOR_CUSTOM", "kept")
+	t.Setenv("LC_ALL", "C")
+	env := strings.Join((Task{}).runnerEnvironment(), "\n")
+	if strings.Contains(env, "operator-secret") || strings.Contains(env, "operator-token") {
+		t.Fatalf("operator credentials leaked to the agent: %s", env)
+	}
+	if strings.Contains(env, "MY_CUSTOM_ORCHESTRATOR") {
+		t.Fatalf("unlisted variable crossed the trust boundary: %s", env)
+	}
+	for _, want := range []string{"PATH=", "LC_ALL=C", "ORCHESTRATOR_CUSTOM=kept"} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("missing allowed variable %q in %s", want, env)
+		}
 	}
 }
 
@@ -518,7 +541,7 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	if err = s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
 		t.Fatal(err)
 	}

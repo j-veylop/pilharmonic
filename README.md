@@ -4,7 +4,7 @@ pilharmonic is a local terminal application for submitting work to coding agents
 
 ## Run
 
-Use Go 1.24 or newer and an interactive terminal. For the default executor, install [Pi](https://github.com/badlogic/pi-mono) and configure its model credentials. From the repository root, run:
+Use Go 1.27 or newer and an interactive terminal. The built-in executor drives models in-process through [Fantasy](https://charm.land/fantasy), so it needs a provider API key — either in the environment (for example `OPENAI_API_KEY` or `DEEPSEEK_API_KEY`) or stored with the `/login <provider>` command in the UI — and a `provider/model` selector in `profiles.json` or through `-model`. From the repository root, run:
 
 ```sh
 go run .
@@ -17,13 +17,13 @@ go build -o pilharmonic .
 go install .
 ```
 
-pilharmonic opens on the **NEW REQUEST** form. Type a request and press **Enter**. The local policy checks the request; when accepted it becomes a task, selects an executor and requests execution. Start the request with `@NAME` to choose a registered executor, for example `@tester add regression tests`; without an explicit mention it uses `general`. Typing `@` shows the matching executors and **Tab** completes the first match. The mention is routing metadata and is not part of the recorded mandate. By default two agents can run at once. Additional start requests wait in FIFO order. The form also lists **NEEDS ACTION** and **RECENT TASKS**. Press **Esc** for the task board, **/** to open a new request, or **?** for help; help starts with **Concepts**.
+pilharmonic opens on the **NEW REQUEST** form. Type a request and press **Enter**. The local policy checks the request; when accepted it becomes a task, selects an executor and requests execution. Start the request with `@NAME` to choose a registered executor, for example `@tester add regression tests`; without an explicit mention it uses `general`. Typing `@` shows the matching executors and **Tab** completes the first match. The mention is routing metadata and is not part of the recorded mandate. By default four agents can run at once. Additional start requests wait in FIFO order. The form also lists **NEEDS ACTION** and **RECENT TASKS**. Press **Esc** for the task board, **/** to open a new request, or **?** for help; help starts with **Concepts**.
 
 On the task board, the **! action** hint jumps to the next task needing action: blocked, waiting, awaiting review, input undelivered, merge failed, failed or interrupted. **n** creates a task directly as a draft without routing. Choose an executor with **A**, then start it with **r**.
 
 Composers and the request input wrap long drafts and scroll as you move the cursor. Press **Ctrl-J** (or **Alt-Enter**) to insert a newline, then **Enter** to submit. Use **PgUp** and **PgDn** to move through long input.
 
-Use `go run . -help` for all startup flags. Common options are `-workspace` for the source directory, `-state` for the JSON state file and `-max-concurrent` for the process limit. The defaults are the current directory and `orchestrator/state.json` under the user config directory. That state location is retained for compatibility with existing installs. Use a separate state file for each running instance. The state file contains prompts, recent output (up to 256 KiB per attempt), routing decisions and history in plain text.
+Use `go run . -help` for all startup flags. Common options are `-workspace` for the source directory, `-state` for the JSON state file, `-max-concurrent` for the process limit (four by default), `-idle-timeout` to cancel an agent that produces no output and `-attempt-retention` to bound how many attempt transcripts a task keeps in full (`8` by default, `0` keeps every attempt). The defaults are the current directory and `orchestrator/state.json` under the user config directory. That state location is retained for compatibility with existing installs. Each state file supports one running instance: the CLI holds an instance lock and refuses to open a state file another instance is already using. The state file contains prompts, recent output (up to 256 KiB per attempt), routing decisions and history in plain text. `-version` prints the build version.
 
 ## Compatibility with existing installs
 
@@ -73,7 +73,7 @@ Agents run with the host user's permissions. A running task can delegate with `b
 
 ## Built-in specialists
 
-Every launch registers six Pi specialists from `internal/orchestrator/specialists.go`.
+Every launch registers six Fantasy specialists from `internal/orchestrator/specialists.go`.
 
 | Specialist | Use it for |
 | --- | --- |
@@ -101,7 +101,8 @@ details.
 Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
 instructions. They are embedded at build time. Run `./pilharmonic` from this directory to load the
 [provided configuration](profiles.json). Startup reads `profiles.json` from
-the current directory if present. Use `-profiles PATH` to select another file. It selects the built-in
+beside the state file (the user config directory) if present, never from the
+current directory. Use `-profiles PATH` to select another file. It selects the built-in
 `coordinator` profile as the routing default, applies Astra to it and sets
 DeepSeek Flash for the explorer, implementer and tester. To coordinate a task
 with Astra, create a draft and select `general` with **A**.
@@ -118,17 +119,26 @@ Child tasks appear beneath their parent on the board, labeled by specialist.
 Task details show the execution profile and the model requested for the latest
 attempt when the adapter recorded an explicit model.
 The specialist model takes precedence over the task profile model for both
-direct and delegated work. Pi supplies its default model when both are omitted.
-Use `pi --list-models` to see the provider/model IDs available locally.
+direct and delegated work. A profile that names no model uses the `-model`
+fallback, and an attempt with neither fails with an explanatory error.
+A model is a `provider/model` selector such as `openai/gpt-6.1-sol` or
+`deepseek/deepseek-flash`; the provider prefix selects the endpoint and where
+its API key is read from. Built-in prefixes: `openai`, `deepseek`, `openrouter`,
+`groq`, and `hyper` (Charm's model router, e.g. `hyper/prism`). Keys are stored
+with `/login <provider>` (or the matching environment variable) and are kept in
+a owner-only `credentials.json` beside the state file, never in task state.
 
 Open the task board, create a draft with **n**, then press **A** to see their
 descriptions. A delegating parent can select one by name. They use the same
-Pi installation and credentials as the default executor. A command configured
-with the same name in `-agents` takes precedence.
+in-process Fantasy adapter, provider credentials and model fallback as the
+default executor. A command configured with the same name in `-agents` takes
+precedence.
 
 ## Run a command executor without credentials
 
-Save the following as `agents.json` and run `go run . -agents agents.json`. On the task board, create a draft with `n`, choose `echo-test` with `A`, then start it with `r`.
+Configured command executors are a separate opt-in that runs alongside the
+built-in Fantasy adapter; they are useful for smoke tests and for wrapping an
+existing program. Save the following as `agents.json` and run `go run . -agents agents.json`. On the task board, create a draft with `n`, choose `echo-test` with `A`, then start it with `r`.
 
 ```json
 {
@@ -140,7 +150,7 @@ Save the following as `agents.json` and run `go run . -agents agents.json`. On t
 
 Each executor can have an optional `description`. Prefix a request with `@echo-test` to select a configured command executor. Parents with delegation enabled see the registered names and descriptions and can pass `--agent NAME` to the subagent helper. Omitting the flag selects from the child mandate, with the parent’s executor as fallback.
 
-The command receives the mandate and queued context on stdin. Its stdout and stderr appear in the output view. Configure only trusted executables and supply the configuration again on later launches. Pi also supports live follow-ups, structured tool activity and reports. See the [executor contract](docs/executors.md).
+The command receives the mandate and queued context on stdin. Its stdout and stderr appear in the output view. Configure only trusted executables and supply the configuration again on later launches. The built-in Fantasy adapter supports live follow-ups, structured tool activity and reports; a configured command executor is one-shot and offers none of them. See the [executor contract](docs/executors.md).
 
 ## Profiles
 
@@ -179,7 +189,7 @@ Omitted fields keep their built-in values; an explicitly empty value clears one.
 New names start empty. `default_profile` selects the routing default. Overriding
 the built-in profile changes the default settings for every executor, including
 delegated runs that inherit them. Tool names are executor-specific, so
-`inspect-only` above is meaningful for Pi. An executor that cannot honor a
+`inspect-only` above is meaningful for the built-in Fantasy adapter. An executor that cannot honor a
 profile's tools or model fails the start rather than silently ignoring them. A
 profile is not a sandbox: agents keep the host user's permissions.
 

@@ -16,14 +16,14 @@ An explicit start request is distinct from a task that merely exists. A schedule
 
 Per-task pause/resume and per-attempt delivery records are implemented: every contextual hand-off retains its trigger, attempt, outcome, reason and timestamps, while the current attempt alone drives the attention stage.
 
-Executor capabilities and adapter-generated structured reports are implemented for the built-in Pi adapter: the registry reports live context, tool activity and structured reports, and Pi records progress/failed observations from its structured lifecycle rather than parsing assistant prose. Command adapters remain one-shot and do not emit reports.
+Executor capabilities and adapter-generated structured reports are implemented for the built-in Fantasy adapter: the registry reports live context, tool activity and structured reports, and Fantasy records progress, waiting and failed observations from its streamed lifecycle rather than parsing assistant prose. Command adapters remain one-shot and do not emit reports.
 
 Subagent delegation is implemented as a separate acceptance path (`subagent-1`), not as an expansion of the parent mandate. Agent-initiated requests require a running task with valid, attempt-scoped credentials. The trusted local UI can also delegate from a running parent. The child receives a new trigger, thread and decision, inherits the parent's execution workspace and falls back to its executor when no specialist matches, and is subject to depth and per-parent limits. The control socket is owner-only, request size is bounded, and credentials are never persisted. The spawn and its child are stored before the child starts; failing to start leaves a visible queued child rather than pretending execution began.
 
 ## Next milestones
 
 1. Add explicit authorization policies and auditable decisions before introducing external sources. The policy gate and audit evidence exist; policy configuration, rejected-request records and external-source authentication remain open.
-2. Extend structured reports to configured command adapters and richer assignment policy; Pi capabilities and adapter reports exist, and explicit operator reports already support waiting, blocked, ready and failed attention states.
+2. Extend structured reports to configured command adapters and richer assignment policy; Fantasy capabilities and adapter reports exist, and explicit operator reports already support waiting, blocked, ready and failed attention states.
 3. Extend isolated-worktree handling. Mandates that request changes can use worktree isolation while read-only and ambiguous work shares the source workspace; review-gated merging of successful work and worktree cleanup on task deletion exist; explicit discard is available for clean, integrated worktrees. An in-app diff and conflict resolution remain open.
 4. Add external sources and model-assisted evaluation only after the deterministic authorization gate; evaluator output is untrusted and cannot authorize itself.
 

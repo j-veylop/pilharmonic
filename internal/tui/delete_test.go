@@ -69,7 +69,7 @@ func TestDeleteCompletedConfirmationAndAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", finishedRunner{})
 	done, err := s.CreateTask("done", "completed work", dir)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestFollowUpComposerRecordsContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	task, err := s.CreateTask("work", "original mandate", dir)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestFollowUpComposerRecordsContext(t *testing.T) {
 		t.Fatalf("follow-up composer not shown: %s", m.View())
 	}
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("also update docs")})
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	got, _ := s.GetTask(task.ID)
 	if got.Prompt != "original mandate" || len(got.Context) != 1 || got.Context[0].Text != "also update docs" {
 		t.Fatalf("follow-up not recorded correctly: %+v", got)
@@ -151,7 +151,7 @@ func TestPendingCleanupKeepsTargetAndAllowsNavigation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	for _, title := range []string{"one", "two"} {
 		if _, err := s.CreateTask(title, title, t.TempDir()); err != nil {
 			t.Fatal(err)

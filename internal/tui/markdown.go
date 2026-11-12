@@ -3,7 +3,6 @@ package tui
 import (
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/charmbracelet/glamour"
 	glamouransi "github.com/charmbracelet/glamour/ansi"
@@ -11,10 +10,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Cache only the most recent output so repeated layout/scroll calculations do
-// not rebuild the Markdown renderer, without retaining prior task transcripts.
-var markdownCache struct {
-	sync.Mutex
+// markdownCache keeps only the most recent output so repeated layout/scroll
+// calculations do not rebuild the Markdown renderer, without retaining prior
+// task transcripts. It belongs to the model so no process-wide state is shared
+// between terminals or tests.
+type markdownCache struct {
 	text     string
 	width    int
 	thinking bool
@@ -96,16 +96,29 @@ func renderedOutputWithGlyph(text string, width int, glyph string) []string {
 // blocks are visible. The cached lines keep a placeholder so animation does not
 // force a full Glamour re-render per frame.
 func renderedOutputWithThinking(text string, width int, glyph string, showThinking bool) []string {
+	cache := &markdownCache{}
+	return cache.render(text, width, glyph, showThinking)
+}
+
+// renderedOutputFor renders through the model's cache so a view pass reuses the
+// last transcript instead of re-running Glamour for every geometry query.
+func (m model) renderedOutputFor(text string, width int, glyph string, showThinking bool) []string {
+	cache := m.markdown
+	if cache == nil {
+		cache = &markdownCache{}
+	}
+	return cache.render(text, width, glyph, showThinking)
+}
+
+func (c *markdownCache) render(text string, width int, glyph string, showThinking bool) []string {
 	if width < 1 {
 		return nil
 	}
-	markdownCache.Lock()
-	defer markdownCache.Unlock()
-	if markdownCache.lines == nil || markdownCache.text != text || markdownCache.width != width || markdownCache.thinking != showThinking {
-		lines := renderTranscriptWithThinking(text, width, showThinking)
-		markdownCache.text, markdownCache.width, markdownCache.thinking, markdownCache.lines = text, width, showThinking, lines
+	if c.lines == nil || c.text != text || c.width != width || c.thinking != showThinking {
+		c.lines = renderTranscriptWithThinking(text, width, showThinking)
+		c.text, c.width, c.thinking = text, width, showThinking
 	}
-	result := append([]string(nil), markdownCache.lines...)
+	result := append([]string(nil), c.lines...)
 	if glyph == "" {
 		glyph = defaultRunningGlyph
 	}
@@ -253,7 +266,7 @@ func transcriptStyle() glamouransi.StyleConfig {
 	style.Code.Suffix = " "
 	style.CodeBlock.Color = stringPtr(colorInk)
 	style.CodeBlock.Margin = uintPtr(0)
-	style.Table.StylePrimitive.Color = stringPtr(colorMuted)
+	style.Table.Color = stringPtr(colorMuted)
 	style.Table.ColumnSeparator = stringPtr(" │ ")
 	style.Table.CenterSeparator = stringPtr("─┼─")
 	style.Table.RowSeparator = stringPtr("─")

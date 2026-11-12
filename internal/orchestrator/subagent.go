@@ -44,18 +44,31 @@ func (s *Service) SetSubagentLimits(maxDepth, maxChildren int) error {
 // attempt. It does not inherit the parent's context or authority beyond the
 // delegated mandate, and its lifecycle is independent after creation.
 func (s *Service) SpawnSubagent(parentID, title, prompt, agent string) (Task, error) {
-	return s.spawnSubagent(parentID, title, prompt, agent, "", "")
+	return s.SpawnSubagentAsOperator(parentID, title, prompt, agent)
+}
+
+// SpawnSubagentAsOperator is the trusted in-process entry point used by the CLI
+// and terminal UI. Control-socket callers must present the parent attempt's
+// credential through spawnSubagent instead.
+func (s *Service) SpawnSubagentAsOperator(parentID, title, prompt, agent string) (Task, error) {
+	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, "", "", true)
 }
 
 // SpawnSubagentWithProfile requests a child with a named profile. The child
 // profile must not grant more than the parent's recorded profile; see
 // checkDelegatedProfile.
 func (s *Service) SpawnSubagentWithProfile(parentID, title, prompt, agent, profile string) (Task, error) {
-	return s.spawnSubagent(parentID, title, prompt, agent, profile, "")
+	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, profile, "", true)
 }
 
+// spawnSubagent handles control-socket requests. The credential is mandatory so
+// a request cannot borrow the parent's authority merely by omitting its token.
 func (s *Service) spawnSubagent(parentID, title, prompt, agent, profile, token string) (Task, error) {
-	task, err := s.createSubagent(parentID, title, prompt, agent, profile, token)
+	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, profile, token, false)
+}
+
+func (s *Service) spawnSubagentWithCredential(parentID, title, prompt, agent, profile, token string, operator bool) (Task, error) {
+	task, err := s.createSubagent(parentID, title, prompt, agent, profile, token, operator)
 	if err != nil {
 		return Task{}, err
 	}
@@ -68,7 +81,7 @@ func (s *Service) spawnSubagent(parentID, title, prompt, agent, profile, token s
 	return current, nil
 }
 
-func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token string) (Task, error) {
+func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token string, operator bool) (Task, error) {
 	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -98,7 +111,10 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token 
 	if parent == nil {
 		return Task{}, errors.New("parent task not found")
 	}
-	if token != "" {
+	if !operator {
+		if token == "" {
+			return Task{}, errors.New("subagent credential required")
+		}
 		if parent.controlToken == "" || subtle.ConstantTimeCompare([]byte(parent.controlToken), []byte(token)) != 1 {
 			return Task{}, errors.New("invalid subagent credential")
 		}
@@ -351,20 +367,33 @@ func (t Task) controlEnvironment() []string {
 	return env
 }
 
-// runnerEnvironment removes inherited control credentials before adding the
-// current attempt's credentials. This prevents an orchestrator started inside
-// another task from forwarding stale credentials to its own agents.
+// runnerEnvironment returns a minimal, deterministic environment for an agent
+// subprocess. The agent is untrusted and must not inherit operator credentials
+// (API keys, cloud tokens, SSH agents) from the orchestrator's own environment.
+// Only locale, terminal and temp-path variables cross the trust boundary, plus
+// the orchestrator's own namespace and this attempt's control credentials.
 func (t Task) runnerEnvironment() []string {
-	env := os.Environ()
-	filtered := make([]string, 0, len(env)+4)
-	for _, item := range env {
+	env := make([]string, 0, 16)
+	for _, item := range os.Environ() {
 		key, _, _ := strings.Cut(item, "=")
 		if controlEnvironmentKeys[key] {
+			// Replace any inherited credential with this attempt's own below.
 			continue
 		}
-		filtered = append(filtered, item)
+		if runnerEnvironmentKey(key) {
+			env = append(env, item)
+		}
 	}
-	return append(filtered, t.controlEnvironment()...)
+	slices.Sort(env)
+	return append(env, t.controlEnvironment()...)
+}
+
+func runnerEnvironmentKey(key string) bool {
+	switch key {
+	case "PATH", "HOME", "LANG", "TERM", "SHELL", "TMPDIR", "TMP", "TEMP":
+		return true
+	}
+	return strings.HasPrefix(key, "LC_") || strings.HasPrefix(key, "ORCHESTRATOR_")
 }
 
 // waitForSubagent waits for a child to finish. If capacity is unavailable, a

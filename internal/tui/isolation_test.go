@@ -10,12 +10,12 @@ import (
 )
 
 func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
-	dir := t.TempDir()
-	s, err := orchestrator.Open(filepath.Join(dir, "state.json"))
+	dir := reviewRepo(t)
+	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	task, err := s.CreateTask("work", "mandate", dir)
 	if err != nil {
 		t.Fatal(err)

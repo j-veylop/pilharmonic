@@ -21,24 +21,57 @@ var (
 	testerPrompt string
 )
 
+// builtinSpecialistRole describes one bundled specialist executor.
+type builtinSpecialistRole struct {
+	name, description, instructions string
+	tools                           []string
+}
+
+// builtinSpecialistRoles defines the bundled specialists: the role name,
+// description, compiled instructions and least-privilege tool palette.
+var builtinSpecialistRoles = []builtinSpecialistRole{
+	{"debugger", "Reproduce a failure and isolate its cause.", debuggerPrompt, []string{"read", "bash", "grep", "find", "ls"}},
+	{"explorer", "Trace code paths and explain how the repository works.", explorerPrompt, []string{"read", "grep", "find", "ls"}},
+	{"implementer", "Implement a scoped change and verify its behavior.", implementerPrompt, []string{"read", "edit", "write", "grep", "find", "ls", "bash"}},
+	{"gitter", "Inspect Git history and handle scoped branch, commit, and merge work.", gitterPrompt, []string{"read", "bash", "edit", "write", "grep", "find", "ls"}},
+	{"reviewer", "Review changes for bugs and missing tests.", reviewerPrompt, []string{"read", "grep", "find", "ls"}},
+	{"tester", "Design and run focused regression tests.", testerPrompt, []string{"read", "grep", "find", "ls", "bash"}},
+}
+
 // LoadBuiltinSpecialists fills unused executor names after loading the
-// operator's command configuration and before resuming queued work.
+// operator's command configuration and before resuming queued work. Each
+// bundled role starts from a least-privilege tool palette so a specialist
+// cannot edit, write or run commands beyond what its charge needs.
 func (s *Service) LoadBuiltinSpecialists() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, role := range []struct{ name, description, instructions string }{
-		{"debugger", "Reproduce a failure and isolate its cause.", debuggerPrompt},
-		{"explorer", "Trace code paths and explain how the repository works.", explorerPrompt},
-		{"implementer", "Implement a scoped change and verify its behavior.", implementerPrompt},
-		{"gitter", "Inspect Git history and handle scoped branch, commit, and merge work.", gitterPrompt},
-		{"reviewer", "Review changes for bugs and missing tests.", reviewerPrompt},
-		{"tester", "Design and run focused regression tests.", testerPrompt},
-	} {
+	for _, role := range builtinSpecialistRoles {
 		if _, exists := s.runners[role.name]; exists {
 			continue
 		}
-		s.runners[role.name] = PiRunner{instructions: strings.TrimSpace(role.instructions)}
+		s.runners[role.name] = FantasyRunner{instructions: strings.TrimSpace(role.instructions), defaultTools: append([]string(nil), role.tools...), ModelFactory: s.fantasyModelFactory, modelClass: modelClassFor[role.name]}
 		s.agentDescriptions[role.name] = role.description
+	}
+	s.applyModelSelectionLocked()
+}
+
+// SetDefaultModel fills the model on any Fantasy runner that does not already
+// carry one. A profile with an explicit model always wins over this fallback,
+// which exists so an operator can run without a profiles file that names a
+// model.
+func (s *Service) SetDefaultModel(model string) {
+	if model == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for name, r := range s.runners {
+		fr, ok := r.(FantasyRunner)
+		if !ok || fr.model != "" {
+			continue
+		}
+		fr.model = model
+		s.runners[name] = fr
 	}
 }
 

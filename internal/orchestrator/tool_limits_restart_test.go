@@ -23,7 +23,7 @@ func TestAcceptedSpecialistCeilingSurvivesRestart(t *testing.T) {
 		t.Fatalf("unexpected accepted limits: %+v", task)
 	}
 	task.SpecialistTools[0] = "bash"
-	s.Shutdown()
+	_ = s.Shutdown()
 
 	restarted := openTestService(t, path)
 	started := make(chan Task, 1)

@@ -15,7 +15,7 @@ func TestSubmitRequestAcceptsAssignsAndStarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		_, err := io.WriteString(out, "done")
 		return err
@@ -47,7 +47,7 @@ func TestSubmitRequestAcceptsAssignsAndStarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Shutdown()
+	defer func() { _ = restored.Shutdown() }()
 	reloaded, _ := restored.GetTask(task.ID)
 	if reloaded.Decision.PolicyVersion != LocalPolicyVersion || reloaded.Status != Completed {
 		t.Fatalf("routing decision was not durable: %+v", reloaded.Decision)
@@ -111,7 +111,7 @@ func TestSubmitRequestSchedulesAtCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	if err = s.SetConcurrencyLimit(1); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestSubmitRequestRejectsEmptyOrInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	dir := t.TempDir()
 	if _, err := s.SubmitRequest("  \n ", dir); err == nil {
 		t.Fatal("empty request accepted")
@@ -184,7 +184,7 @@ func TestSubmitRequestDefaultsToSharedWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	seen := make(chan Task, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
@@ -218,7 +218,7 @@ func TestSubmitRequestIsolatesChangeRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	seen := make(chan Task, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task

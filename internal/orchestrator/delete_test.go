@@ -100,7 +100,7 @@ func TestDeleteRefusesParentWithSubagents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	started := make(chan struct{}, 2)
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		started <- struct{}{}
@@ -143,7 +143,7 @@ func TestDeleteCompletedTasksKeepsIncompleteWorkAndWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	workspace := t.TempDir()
 	file := filepath.Join(workspace, "keep.txt")
 	if err := os.WriteFile(file, []byte("keep"), 0600); err != nil {
@@ -224,7 +224,7 @@ func TestDeleteCompletedTasksKeepsIncompleteWorkAndWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reloaded.Shutdown()
+	defer func() { _ = reloaded.Shutdown() }()
 	if count := len(reloaded.CompletedDeletionCandidates()); count != 0 {
 		t.Fatalf("deleted tasks restored: %d deletable", count)
 	}
@@ -238,7 +238,7 @@ func TestDeleteCompletedTasksRollsBackFailedSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	task, err := s.CreateTask("done", "completed work", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -257,5 +257,50 @@ func TestDeleteCompletedTasksRollsBackFailedSave(t *testing.T) {
 	}
 	if count := len(s.CompletedDeletionCandidates()); count != 1 {
 		t.Fatalf("failed save changed deletion eligibility: %d", count)
+	}
+}
+
+// A prepared commit that nobody has reviewed must survive bulk deletion: the
+// worktree holds the only copy of that work.
+func TestDeleteCompletedTasksKeepsUnreviewedPreparedWork(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		return os.WriteFile(filepath.Join(task.Workspace, "prepared.txt"), []byte("prepared"), 0600)
+	}))
+	task, err := s.CreateTask("review", "prepare work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, task.ID, Completed)
+	if !done.AwaitingReview() || done.WorktreeCommit == "" {
+		t.Fatalf("task did not stop at review: %+v", done)
+	}
+	for _, id := range s.CompletedDeletionCandidates() {
+		if id == task.ID {
+			t.Fatal("unreviewed prepared work was offered for bulk deletion")
+		}
+	}
+	deleted, skipped, err := s.DeleteCompletedTasksDetailed([]string{task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted %d task(s) with unreviewed work", deleted)
+	}
+	if len(skipped) != 1 || skipped[0].ID != task.ID || !strings.Contains(skipped[0].Reason, "review") {
+		t.Fatalf("skipped deletion not explained: %+v", skipped)
+	}
+	if _, err = os.Stat(done.ExecutionWorkspace); err != nil {
+		t.Fatalf("prepared worktree was removed: %v", err)
+	}
+	if _, ok := s.GetTask(task.ID); !ok {
+		t.Fatal("task with unreviewed work was deleted")
 	}
 }

@@ -5,12 +5,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
+
+func TestTerminalTextDropsFormatAndLineSeparators(t *testing.T) {
+	input := "vis\u200bible\u202eoverride\u2028sep\u2029more\u2066iso\u2069end"
+	out := terminalText(input)
+	want := "visibleoverridesepmoreisoend"
+	if out != want {
+		t.Fatalf("terminalText = %q, want %q", out, want)
+	}
+	if lipgloss.Width(out) != lipgloss.Width(want) {
+		t.Fatalf("width changed: %d vs %d", lipgloss.Width(out), lipgloss.Width(want))
+	}
+	for _, r := range out {
+		if unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
+			t.Fatalf("format rune %U survived: %q", r, out)
+		}
+	}
+}
 
 func TestViewFitsTerminal(t *testing.T) {
 	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 10}, {20, 5}} {

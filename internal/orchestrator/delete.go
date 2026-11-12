@@ -102,25 +102,40 @@ func (s *Service) CompletedDeletionCandidates() []string {
 	return ids
 }
 
+// SkippedDeletion explains why a requested task was left in place.
+type SkippedDeletion struct {
+	ID     string
+	Reason string
+}
+
 // DeleteCompletedTasks permanently removes the still-eligible confirmed tasks, their
 // threads when no remaining task uses them, and their dedicated worktrees.
 // Files in the source workspace are not touched. It returns the number of
 // deleted tasks. Cleanup continues for every task and reports joined failures;
 // the deletions are already durable when a cleanup error is returned.
 func (s *Service) DeleteCompletedTasks(ids []string) (int, error) {
+	deleted, _, err := s.DeleteCompletedTasksDetailed(ids)
+	return deleted, err
+}
+
+// DeleteCompletedTasksDetailed is DeleteCompletedTasks plus an explanation for
+// every requested task it left in place, so the caller can report which tasks
+// were skipped and why instead of silently dropping stale IDs.
+func (s *Service) DeleteCompletedTasksDetailed(ids []string) (int, []SkippedDeletion, error) {
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
-		return 0, errors.New("service is shutting down")
+		return 0, nil, errors.New("service is shutting down")
 	}
 	confirmed := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		confirmed[id] = true
 	}
 	eligible := s.deletableCompletedLocked(confirmed)
+	skipped := s.skippedDeletionsLocked(ids, eligible)
 	if len(eligible) == 0 {
 		s.mu.Unlock()
-		return 0, nil
+		return 0, skipped, nil
 	}
 	tasks := make([]Task, 0, len(s.data.Tasks)-len(eligible))
 	deleted := make([]Task, 0, len(eligible))
@@ -144,7 +159,7 @@ func (s *Service) DeleteCompletedTasks(ids []string) (int, error) {
 	if err := s.save(); err != nil {
 		s.data.Tasks, s.data.Threads = oldTasks, oldThreads
 		s.mu.Unlock()
-		return 0, err
+		return 0, skipped, err
 	}
 	s.wg.Add(1)
 	defer s.wg.Done()
@@ -157,9 +172,60 @@ func (s *Service) DeleteCompletedTasks(ids []string) (int, error) {
 		}
 	}
 	if cleanupErr != nil {
-		return len(deleted), fmt.Errorf("deleted %d completed task(s) but workspace cleanup failed: %w", len(deleted), cleanupErr)
+		return len(deleted), skipped, fmt.Errorf("deleted %d completed task(s) but workspace cleanup failed: %w", len(deleted), cleanupErr)
 	}
-	return len(deleted), nil
+	return len(deleted), skipped, nil
+}
+
+// skippedDeletionsLocked explains every requested task that is not eligible.
+// Caller holds mu.
+func (s *Service) skippedDeletionsLocked(ids []string, eligible map[string]bool) []SkippedDeletion {
+	seen := make(map[string]bool, len(ids))
+	skipped := make([]SkippedDeletion, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] || eligible[id] {
+			continue
+		}
+		seen[id] = true
+		reason := "task not found"
+		for i := range s.data.Tasks {
+			if s.data.Tasks[i].ID == id {
+				reason = s.deletionSkipReasonLocked(s.data.Tasks[i])
+				break
+			}
+		}
+		skipped = append(skipped, SkippedDeletion{ID: id, Reason: reason})
+	}
+	return skipped
+}
+
+// deletionSkipReasonLocked names the first rule that keeps a task from bulk
+// deletion. Caller holds mu.
+func (s *Service) deletionSkipReasonLocked(t Task) string {
+	switch {
+	case t.Status != Completed:
+		return "task is not completed"
+	case t.MergeStatus == MergeWaiting:
+		return "worktree integration is waiting for subagents"
+	case t.ReviewStatus == ReviewPending:
+		return "prepared worktree commit awaits review"
+	case unmergedWorktree(t):
+		return "prepared worktree commit is not merged"
+	case t.DiscardPending:
+		return "worktree discard is pending"
+	case t.integrating:
+		return "worktree integration is in progress"
+	}
+	if _, stopping := s.cancel[t.ID]; stopping {
+		return "task is still stopping"
+	}
+	return "a completed child task must be deleted first"
+}
+
+// unmergedWorktree reports prepared work that is not in the source checkout
+// yet, so its worktree still holds the only copy of it.
+func unmergedWorktree(t Task) bool {
+	return t.WorktreeCommit != "" && t.MergeStatus != MergeMerged && t.MergeStatus != MergeUpToDate
 }
 
 // deletableCompletedLocked computes the set of completed tasks whose children,
@@ -174,6 +240,11 @@ func (s *Service) deletableCompletedLocked(confirmed map[string]bool) map[string
 	eligible := make(map[string]bool)
 	for _, task := range s.data.Tasks {
 		if task.Status != Completed || task.MergeStatus == MergeWaiting || (confirmed != nil && !confirmed[task.ID]) {
+			continue
+		}
+		// Prepared work that is unreviewed, rejected or unmerged lives only in
+		// the task's worktree; bulk deletion would remove it with --force.
+		if task.ReviewStatus == ReviewPending || unmergedWorktree(task) {
 			continue
 		}
 		if _, stopping := s.cancel[task.ID]; !stopping && !task.DiscardPending && !task.integrating {

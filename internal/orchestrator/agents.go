@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 )
 
 // AgentCapabilities describes behavior an adapter actually implements. The
@@ -109,13 +108,13 @@ type AgentConfig struct {
 	Args        []string `json:"args,omitempty"`
 }
 
-// LoadAgents loads trusted local command definitions atomically. Pi remains built in.
+// LoadAgents loads trusted local command definitions atomically. The Fantasy adapter remains built in.
 func (s *Service) LoadAgents(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return err
@@ -136,8 +135,8 @@ func (s *Service) LoadAgents(path string) error {
 	}
 	runners := map[string]Runner{}
 	for _, a := range config.Agents {
-		if a.Name == "" || a.Name != strings.TrimSpace(a.Name) || strings.IndexFunc(a.Name, unicode.IsControl) >= 0 {
-			return errors.New("agent name must be nonempty and contain no surrounding whitespace or control characters")
+		if !validProfileName(a.Name) {
+			return fmt.Errorf("agent name %q must be 1-64 characters of letters, digits, '.', '-' or '_'", a.Name)
 		}
 		if a.Name == DefaultRouteAgent {
 			return fmt.Errorf("agent name %s is reserved", DefaultRouteAgent)
@@ -210,6 +209,8 @@ func (r CommandRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 	}
 	input.WriteString(t.controlGuidance)
 	cmd := exec.CommandContext(ctx, r.Command, r.Args...)
+	// Bound cancellation when a grandchild keeps the inherited pipes open.
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = t.Workspace
 	cmd.Env = t.runnerEnvironment()
 	cmd.Stdin = strings.NewReader(input.String())

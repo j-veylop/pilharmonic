@@ -45,7 +45,7 @@ func selectionRow(text string, width int) string {
 }
 
 func (m model) taskPanel(width, height int) string {
-	inner := width - 4
+	inner := m.layout().panelInner(width)
 	var lines []string
 	lines = append(lines, accentStyle.Render("TASKS")+mutedStyle.Render(fmt.Sprintf("  / %02d", len(m.tasks))))
 	lines = append(lines, "")
@@ -83,11 +83,7 @@ func (m model) taskPanel(width, height int) string {
 // sidebarVisible reports whether View renders the task sidebar. The selected
 // task position is only needed when the sidebar is hidden.
 func (m model) sidebarVisible() bool {
-	w := m.width
-	if w <= 0 {
-		w = 80
-	}
-	return w >= 76 && !m.fullscreen
+	return m.layout().sidebar
 }
 
 // selectedPosition returns the selected task's one-based position in grouped

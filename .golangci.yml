@@ -8,3 +8,26 @@ linters:
     - errcheck
     - ineffassign
     - unused
+    - gosec
+    - errorlint
+    - copyloopvar
+    - misspell
+    - perfsprint
+  settings:
+    errcheck:
+      # CLI output and log-style writes have no recovery path; dropping them on
+      # a closed pipe is the terminal's problem, not a handled error.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    gosec:
+      excludes:
+        # G304: file paths under explicit operator control (state, profiles,
+        # agents, specialist tool config) are read by design.
+        - G304
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

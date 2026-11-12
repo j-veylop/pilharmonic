@@ -32,7 +32,7 @@ func (m *model) activityKey(key string) bool {
 	if !m.activity {
 		return false
 	}
-	if key == "v" {
+	if key == "f" {
 		m.activityFilter = (m.activityFilter + 1) % 3
 		m.activityID = ""
 		m.activityAttempt = ""
@@ -115,7 +115,7 @@ func (m model) activityContent(width int) []string {
 		return lines
 	}
 	scope := []string{"all attempts", "latest attempt", "errors only"}[m.activityFilter]
-	add(mutedStyle.Render("Filter: " + scope + " (v)"))
+	add(mutedStyle.Render("Filter: " + scope + " (f)"))
 	if len(activities) == 0 {
 		if m.activityFilter == 0 {
 			add("No tool calls yet.")

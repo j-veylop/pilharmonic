@@ -46,6 +46,14 @@ func TestTaskMakesChangesClassification(t *testing.T) {
 		{"git worktree list", "git worktree list", false},
 		{"git worktree mutation", "git worktree add ../review-tree", true},
 		{"check out mutation", "check out a new branch", true},
+		{"polite let's", "let's add tests", true},
+		{"polite would like", "I'd like to update the docs", true},
+		{"polite let me", "let me update the changelog", true},
+		{"polite we should", "we should refactor this", true},
+		{"polite help me", "help me fix the parser", true},
+		{"subject auxiliary", "we could add regression tests", true},
+		{"polite inspection stays shared", "I'll review the parser", false},
+		{"subject inspection stays shared", "we should review the parser", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

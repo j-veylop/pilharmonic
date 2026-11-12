@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -54,6 +56,9 @@ func recoverStartupState(s *Service) (bool, error) {
 		if t.settleAllPendingDeliveries("orchestrator stopped before acknowledgement", time.Now().UTC()) {
 			changed = true
 		}
+		if reconcileMissingWorktree(t, time.Now().UTC()) {
+			changed = true
+		}
 		if t.Status == Running {
 			if len(t.Attempts) > 0 {
 				a := &t.Attempts[len(t.Attempts)-1]
@@ -70,4 +75,28 @@ func recoverStartupState(s *Service) (bool, error) {
 		}
 	}
 	return changed, nil
+}
+
+// reconcileMissingWorktree drops review and integration state that refers to a
+// worktree deleted while the service was not running. Without this the task
+// keeps asking the operator to approve work that is no longer on disk, and the
+// merge it would unlock can never run.
+func reconcileMissingWorktree(t *Task, now time.Time) bool {
+	if t.ExecutionWorkspace == "" {
+		return false
+	}
+	if t.ReviewStatus != ReviewPending && t.MergeStatus != MergeWaiting {
+		return false
+	}
+	if _, err := os.Stat(t.ExecutionWorkspace); err == nil || !errors.Is(err, os.ErrNotExist) {
+		// A worktree that is still present, or a stat failure that does not
+		// prove it is gone, is left for the operator.
+		return false
+	}
+	t.resetReview()
+	t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
+	t.MergedAt = time.Time{}
+	t.UpdatedAt = now
+	t.Events = append(t.Events, Event{now, "worktree_missing", "Prepared worktree " + t.ExecutionWorkspace + " is missing; cleared pending review and integration state"})
+	return true
 }

@@ -1,0 +1,279 @@
+package orchestrator
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"unicode/utf8"
+
+	"charm.land/fantasy"
+)
+
+const (
+	// maxToolReadBytes bounds a single file read so a huge file cannot blow up
+	// the model's context (or the persisted tool activity).
+	maxToolReadBytes = 256 << 10
+	// maxToolOutputBytes bounds captured command output. The shared capped
+	// buffer keeps half the head and half the tail, because a failing command
+	// usually explains itself in its last lines.
+	maxToolOutputBytes = 64 << 10
+)
+
+// fantasyToolNames is the complete palette this adapter can expose. A profile
+// or a role's default palette narrows it; nothing outside the list is available.
+var fantasyToolNames = []string{"read", "bash", "write", "edit", "grep", "find", "ls"}
+
+// fantasyTools builds the agent-side tool set for one attempt. The palette
+// selects a subset of fantasyToolNames; unknown names are ignored so a Pi
+// profile that mentions a tool this adapter lacks still runs with the rest.
+// Every tool is confined to workspace: file paths are resolved inside it and
+// commands run with it as their working directory.
+func fantasyTools(workspace string, palette []string, env []string) []fantasy.AgentTool {
+	selected := make(map[string]bool, len(palette))
+	if len(palette) == 0 {
+		palette = fantasyToolNames
+	}
+	for _, name := range palette {
+		selected[name] = true
+	}
+	tools := make([]fantasy.AgentTool, 0, len(palette))
+	for _, name := range fantasyToolNames {
+		if !selected[name] {
+			continue
+		}
+		switch name {
+		case "read":
+			tools = append(tools, fantasyReadTool(workspace))
+		case "bash":
+			tools = append(tools, fantasyBashTool(workspace, env))
+		case "write":
+			tools = append(tools, fantasyWriteTool(workspace))
+		case "edit":
+			tools = append(tools, fantasyEditTool(workspace))
+		case "grep":
+			tools = append(tools, fantasyGrepTool(workspace, env))
+		case "find":
+			tools = append(tools, fantasyFindTool(workspace, env))
+		case "ls":
+			tools = append(tools, fantasyLsTool(workspace, env))
+		}
+	}
+	return tools
+}
+
+// workspacePath resolves a model-supplied path inside the workspace. Absolute
+// paths and parent traversal are refused so a tool cannot read or write outside
+// the workspace the orchestrator prepared for the task.
+func workspacePath(workspace, path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("path is required")
+	}
+	if filepath.IsAbs(path) {
+		return "", fmt.Errorf("path %q must be relative to the workspace", path)
+	}
+	full := filepath.Join(workspace, path)
+	rel, err := filepath.Rel(workspace, full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes the workspace", path)
+	}
+	return full, nil
+}
+
+// runWorkspaceCommand runs one program with explicit arguments inside the
+// workspace. Only the bash tool passes a command string; every other caller
+// supplies fixed arguments, so model input is never interpolated into shell
+// text here.
+func runWorkspaceCommand(ctx context.Context, workspace string, env []string, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = workspace
+	if len(env) > 0 {
+		cmd.Env = env
+	}
+	output := newCappedBuffer(maxToolOutputBytes / 2)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err := cmd.Run()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
+	}
+	return sanitizeTranscript(output.String()), err
+}
+
+// commandResponse renders a bounded command result for the model. A failing
+// command is a message rather than a hard error: the model can read the output
+// and try another approach, exactly like a shell user would.
+func commandResponse(name, text string, err error) fantasy.ToolResponse {
+	text = strings.TrimSpace(text)
+	if err != nil {
+		if text == "" {
+			text = fmt.Sprintf("%s failed: %v", name, err)
+		}
+		return fantasy.NewTextErrorResponse(text)
+	}
+	if text == "" {
+		return fantasy.NewTextResponse(name + ": no output")
+	}
+	return fantasy.NewTextResponse(text)
+}
+
+type readToolInput struct {
+	Path string `json:"path" description:"Workspace-relative path of the file to read"`
+}
+
+type bashToolInput struct {
+	Command string `json:"command" description:"Shell command to run with the workspace as its working directory"`
+}
+
+type writeToolInput struct {
+	Path    string `json:"path" description:"Workspace-relative path of the file to write"`
+	Content string `json:"content" description:"Complete new contents of the file"`
+}
+
+type editToolInput struct {
+	Path    string `json:"path" description:"Workspace-relative path of the file to edit"`
+	OldText string `json:"old_text" description:"Exact text to replace; must occur in the file"`
+	NewText string `json:"new_text" description:"Replacement text"`
+}
+
+type grepToolInput struct {
+	Pattern string `json:"pattern" description:"Regular expression to search for"`
+	Path    string `json:"path,omitempty" description:"Optional workspace-relative file or directory to search; defaults to the whole workspace"`
+}
+
+type findToolInput struct {
+	Name string `json:"name" description:"File name or glob pattern to locate, for example *service.go"`
+}
+
+type lsToolInput struct {
+	Path string `json:"path,omitempty" description:"Optional workspace-relative directory to list; defaults to the workspace root"`
+}
+
+func fantasyReadTool(workspace string) fantasy.AgentTool {
+	return fantasy.NewAgentTool("read", "Read a file from the workspace. Returns at most 256 KiB.",
+		func(_ context.Context, in readToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			path, err := workspacePath(workspace, in.Path)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			defer func() { _ = file.Close() }()
+			data, err := io.ReadAll(io.LimitReader(file, maxToolReadBytes+1))
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			// File contents are returned verbatim: they are the model's own
+			// working data (an edit must match them exactly), and this text
+			// travels through the provider API, never through the terminal.
+			if len(data) > maxToolReadBytes {
+				cut := maxToolReadBytes
+				for cut > 0 && !utf8.RuneStart(data[cut]) {
+					cut--
+				}
+				return fantasy.NewTextResponse(string(data[:cut]) + "\n[file truncated at 256 KiB]"), nil
+			}
+			return fantasy.NewTextResponse(string(data)), nil
+		})
+}
+
+func fantasyBashTool(workspace string, env []string) fantasy.AgentTool {
+	return fantasy.NewAgentTool("bash", "Run a shell command with the workspace as its working directory and return its combined output.",
+		func(ctx context.Context, in bashToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			// This is the adapter's only shell path, mirroring Pi's bash tool:
+			// the command is the model's own, and it runs in the workspace the
+			// orchestrator prepared. It is never composed from task or trigger
+			// text by the orchestrator itself.
+			text, err := runWorkspaceCommand(ctx, workspace, env, "bash", "-c", in.Command)
+			return commandResponse("bash", text, err), nil
+		})
+}
+
+func fantasyWriteTool(workspace string) fantasy.AgentTool {
+	return fantasy.NewAgentTool("write", "Write a file in the workspace, replacing it if it exists.",
+		func(_ context.Context, in writeToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			path, err := workspacePath(workspace, in.Path)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			if err := os.WriteFile(path, []byte(in.Content), 0o644); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			return fantasy.NewTextResponse(fmt.Sprintf("wrote %d bytes to %s", len(in.Content), in.Path)), nil
+		})
+}
+
+func fantasyEditTool(workspace string) fantasy.AgentTool {
+	return fantasy.NewAgentTool("edit", "Replace the first occurrence of exact text in a workspace file.",
+		func(_ context.Context, in editToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			path, err := workspacePath(workspace, in.Path)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			if in.OldText == "" {
+				return fantasy.NewTextErrorResponse("old_text is required"), nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			if !strings.Contains(string(data), in.OldText) {
+				return fantasy.NewTextErrorResponse("old_text not found in " + in.Path), nil
+			}
+			updated := strings.Replace(string(data), in.OldText, in.NewText, 1)
+			if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			return fantasy.NewTextResponse(fmt.Sprintf("replaced 1 occurrence in %s (%d bytes removed, %d bytes added)",
+				in.Path, len(in.OldText), len(in.NewText))), nil
+		})
+}
+
+func fantasyGrepTool(workspace string, env []string) fantasy.AgentTool {
+	return fantasy.NewAgentTool("grep", "Search workspace files for a regular expression and return matching lines.",
+		func(ctx context.Context, in grepToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			args := []string{"-n", "--", in.Pattern}
+			if path := strings.TrimSpace(in.Path); path != "" {
+				args = append(args, path)
+			}
+			text, err := runWorkspaceCommand(ctx, workspace, env, "grep", args...)
+			return commandResponse("grep", text, err), nil
+		})
+}
+
+func fantasyFindTool(workspace string, env []string) fantasy.AgentTool {
+	return fantasy.NewAgentTool("find", "Find workspace entries by name or glob pattern.",
+		func(ctx context.Context, in findToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			name := strings.TrimSpace(in.Name)
+			if name == "" {
+				return fantasy.NewTextErrorResponse("name is required"), nil
+			}
+			text, err := runWorkspaceCommand(ctx, workspace, env, "find", ".", "-name", name)
+			return commandResponse("find", text, err), nil
+		})
+}
+
+func fantasyLsTool(workspace string, env []string) fantasy.AgentTool {
+	return fantasy.NewAgentTool("ls", "List a workspace directory.",
+		func(ctx context.Context, in lsToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			path := strings.TrimSpace(in.Path)
+			if path == "" {
+				path = "."
+			}
+			if _, err := workspacePath(workspace, path); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			text, err := runWorkspaceCommand(ctx, workspace, env, "ls", "-la", path)
+			return commandResponse("ls", text, err), nil
+		})
+}

@@ -109,7 +109,7 @@ func TestIsolatedExecutionRunsInCommittedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Shutdown()
+	defer func() { _ = restored.Shutdown() }()
 	got, ok := restored.GetTask(task.ID)
 	if !ok || !got.Isolated || got.ExecutionWorkspace != run.Workspace || got.IsolationCommit != head {
 		t.Fatalf("isolation not durable: %+v", got)
@@ -171,33 +171,48 @@ func TestIsolatedRetryReusesPreparedWorktree(t *testing.T) {
 func TestIsolatedExecutionRequiresRepository(t *testing.T) {
 	requireGit(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	called := make(chan struct{}, 1)
-	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
-		called <- struct{}{}
-		return nil
-	}))
 	dir := t.TempDir()
 	task, err := s.CreateTask("plain", "do work", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+	// Isolation is validated when it is requested, not when the attempt starts.
+	err = s.SetTaskIsolation(task.ID, true)
+	if err == nil || !strings.Contains(err.Error(), "cannot be isolated") {
+		t.Fatalf("isolation accepted for a non-repository: %v", err)
+	}
+	got, _ := s.GetTask(task.ID)
+	if got.Isolated || got.IsolationAuto {
+		t.Fatalf("refused isolation changed the task: %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(s.path), "workspaces", task.ID)); !os.IsNotExist(err) {
+		t.Fatalf("refused isolation created a reservation: %v", err)
+	}
+	found := false
+	for _, event := range got.Events {
+		if event.Kind == "workspace" && strings.Contains(event.Message, "Isolation unavailable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("isolation refusal was not recorded: %+v", got.Events)
+	}
+}
+
+func TestIsolatedExecutionRequiresCommit(t *testing.T) {
+	requireGit(t)
+	repo := t.TempDir()
+	testGit(t, repo, "init", "-q")
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	task, err := s.CreateTask("unborn", "do work", repo)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
+	if err = s.SetTaskIsolation(task.ID, true); err == nil || !strings.Contains(err.Error(), "committed HEAD") {
+		t.Fatalf("isolation accepted for an unborn repository: %v", err)
 	}
-	done := await(t, s, task.ID, Failed)
-	select {
-	case <-called:
-		t.Fatal("runner ran without a prepared worktree")
-	default:
-	}
-	if !strings.Contains(done.Error, "prepare isolated workspace") {
-		t.Fatalf("unexpected error: %q", done.Error)
-	}
-	if done.ExecutionWorkspace != "" {
-		t.Fatalf("recorded workspace after failed preparation: %q", done.ExecutionWorkspace)
+	if got, _ := s.GetTask(task.ID); got.Isolated {
+		t.Fatalf("unborn repository task was isolated: %+v", got)
 	}
 }
 
@@ -594,5 +609,91 @@ func TestDefaultIsolationCanBeDisabled(t *testing.T) {
 	await(t, s, task.ID, Completed)
 	if run := <-seen; run.Workspace != repo {
 		t.Fatalf("runner cwd %q, want shared source %q", run.Workspace, repo)
+	}
+}
+
+// A crash between creating the reservation directory and writing its ownership
+// record must not block every later attempt.
+func TestEmptyReservationIsRecreated(t *testing.T) {
+	repo := committedRepo(t)
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	s := openTestService(t, statePath)
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+	task, err := s.CreateTask("empty", "do work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	reservation := filepath.Join(filepath.Dir(statePath), "workspaces", task.ID)
+	if err = os.MkdirAll(reservation, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, s, task.ID, Completed)
+	if done.ExecutionWorkspace == "" {
+		t.Fatalf("empty reservation was not recreated: %+v", done)
+	}
+	if _, err := os.Stat(filepath.Join(done.ExecutionWorkspace, "tracked.txt")); err != nil {
+		t.Fatalf("worktree was not prepared: %v", err)
+	}
+}
+
+// An interrupted worktree add leaves a directory Git does not recognise and a
+// stale registration; a retry must repair both instead of failing forever.
+func TestBrokenWorktreeIsRepaired(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	var mu sync.Mutex
+	attempts := 0
+	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
+		mu.Lock()
+		attempts++
+		first := attempts == 1
+		mu.Unlock()
+		if first {
+			return errors.New("first attempt failed")
+		}
+		return nil
+	}))
+	task, err := s.CreateTask("broken", "do work", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	failed := await(t, s, task.ID, Failed)
+	tree := failed.ExecutionWorkspace
+	if tree == "" {
+		t.Fatal("worktree was not prepared")
+	}
+	if err = os.RemoveAll(tree); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(tree, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(tree, "partial"), []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Retry(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	await(t, s, task.ID, Completed)
+	if _, err = os.Stat(filepath.Join(tree, "tracked.txt")); err != nil {
+		t.Fatalf("broken worktree was not repaired: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(tree, "partial")); !os.IsNotExist(err) {
+		t.Fatalf("partial worktree content survived repair: %v", err)
 	}
 }

@@ -13,7 +13,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	if err := s.SetConcurrencyLimit(1); err != nil {
 		t.Fatal(err)
 	}

@@ -224,7 +224,7 @@ func TestApprovedMergeIntentResumesAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Shutdown()
+	defer func() { _ = restored.Shutdown() }()
 	stored, _ := restored.GetTask(task.ID)
 	if stored.ReviewStatus != ReviewApproved || stored.MergeStatus != "" {
 		t.Fatalf("approval intent was not durable: %+v", stored)

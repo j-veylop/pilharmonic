@@ -229,7 +229,7 @@ func TestFollowUpRunningTaskUsesLiveContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	task, err := s.CreateTask("work", "original mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestFollowUpRequeuesTerminalTaskWithoutChangingMandate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	task, err := s.CreateTask("work", "original mandate", t.TempDir())
 	if err != nil {
@@ -305,7 +305,7 @@ func TestFollowUpRequeuesTerminalTaskWithoutChangingMandate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reloaded.Shutdown()
+	defer func() { _ = reloaded.Shutdown() }()
 	got, _ = reloaded.GetTask(task.ID)
 	if len(got.Context) != 1 || got.Context[0].Text != "please also update the documentation" {
 		t.Fatalf("follow-up did not persist: %+v", got)

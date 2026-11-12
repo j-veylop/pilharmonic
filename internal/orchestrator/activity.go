@@ -36,6 +36,14 @@ type ToolActivityRecorder interface{ RecordToolActivity(ToolActivity) error }
 const maxActivities = 200
 const maxActivityPayload = 16 * 1024
 
+// Activity status values recorded for observed tool execution.
+const (
+	activityRunning     = "running"
+	activityFinished    = "finished"
+	activityFailed      = "failed"
+	activityInterrupted = "interrupted"
+)
+
 func boundedPayload(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return nil
@@ -43,16 +51,15 @@ func boundedPayload(raw json.RawMessage) json.RawMessage {
 	if len(raw) <= maxActivityPayload && json.Valid(raw) {
 		return append(json.RawMessage(nil), raw...)
 	}
-	preview := string(raw)
-	if len(preview) > maxActivityPayload {
-		preview = preview[:maxActivityPayload]
-	}
+	// Truncate on a rune boundary: a payload cut mid-rune would be persisted as
+	// a replacement character and could no longer be read back verbatim.
+	preview := trimToRuneStart(string(raw), maxActivityPayload)
 	for {
 		result, _ := json.Marshal(map[string]any{"truncated": true, "preview": preview})
 		if len(result) <= maxActivityPayload {
 			return result
 		}
-		preview = preview[:len(preview)/2]
+		preview = trimToRuneStart(preview, len(preview)/2)
 	}
 }
 func cloneActivities(items []ToolActivity) []ToolActivity {
@@ -105,7 +112,7 @@ func (w outputWriter) RecordToolActivity(activity ToolActivity) error {
 		n := *activity.DurationMS
 		a.DurationMS = &n
 	}
-	if a.Status == "finished" || a.Status == "failed" {
+	if a.Status == activityFinished || a.Status == activityFailed {
 		a.FinishedAt = time.Now().UTC()
 	}
 	if len(task.Activities) > maxActivities {
@@ -120,8 +127,8 @@ func (w outputWriter) RecordToolActivity(activity ToolActivity) error {
 func interruptActivities(task *Task) {
 	for i := range task.Activities {
 		a := &task.Activities[i]
-		if a.Status == "running" {
-			a.Status = "interrupted"
+		if a.Status == activityRunning {
+			a.Status = activityInterrupted
 			a.FinishedAt = time.Now().UTC()
 		}
 	}

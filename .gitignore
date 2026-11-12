@@ -1,2 +1,8 @@
 /pilharmonic
 /orchestrator
+/dist/
+*.test
+coverage.out
+coverage.html
+/.gocache/
+/.gotmp/

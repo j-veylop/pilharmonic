@@ -142,7 +142,7 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 
 	activity := base
 	activity.activity = true
-	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "enter expand") || !strings.Contains(footer, "v filter") || strings.Contains(footer, "esc collapse") || strings.Contains(footer, "c cancel") {
+	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "enter expand") || !strings.Contains(footer, "f filter") || strings.Contains(footer, "esc collapse") || strings.Contains(footer, "c cancel") {
 		t.Fatalf("activity list footer changed: %q", footer)
 	}
 	activity.activityExpanded = true
@@ -217,7 +217,7 @@ func TestAttentionShortcutResetsDetailState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	first, err := s.CreateTask("first", "work", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +247,7 @@ func TestAttentionShortcutNoAttentionShowsNotice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	if _, err := s.CreateTask("first", "work", t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
@@ -309,5 +309,53 @@ func TestHelpDocumentsAttentionJump(t *testing.T) {
 	plain := ansi.Strip(m.View())
 	if !strings.Contains(plain, "Next task needing action") {
 		t.Fatalf("help does not document the action jump: %q", plain)
+	}
+}
+
+func TestTickKeepsSelectionByIDWhenANewerTaskArrives(t *testing.T) {
+	dir := t.TempDir()
+	s, err := orchestrator.Open(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+	selected, err := s.CreateTask("selected", "work", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
+	selectTask(t, &m, selected.ID)
+
+	if _, err := s.CreateTask("newer", "work", dir); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := m.Update(tickMsg(time.Now()))
+	m = next.(model)
+	if m.selectedID() != selected.ID {
+		t.Fatalf("tick moved selection from %q to %q", selected.ID, m.selectedID())
+	}
+	if len(m.tasks) != 2 || m.tasks[0].Title != "newer" {
+		t.Fatalf("task insertion not reflected in the snapshot: %+v", m.tasks)
+	}
+}
+
+func TestNoticeExpiresAfterRepeatedTicks(t *testing.T) {
+	m := model{notice: "saved"}
+	for i := 0; i < 4; i++ {
+		next, _ := m.Update(tickMsg(time.Now()))
+		m = next.(model)
+	}
+	if m.notice == "" {
+		t.Fatal("notice expired too early")
+	}
+	next, _ := m.Update(tickMsg(time.Now()))
+	m = next.(model)
+	if m.notice != "" {
+		t.Fatalf("stale notice survived five ticks: %q", m.notice)
+	}
+	m.notice = "fresh"
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if m.notice != "fresh" {
+		t.Fatalf("unrelated key cleared the notice: %q", m.notice)
 	}
 }

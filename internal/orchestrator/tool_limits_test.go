@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,10 +46,9 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 			if strings.Contains(piPrompt(run), lead) {
 				t.Fatal("specialist received parent coordinator instructions")
 			}
-			args := (PiRunner{}).piArgs("rpc", run.ProfileSpec)
-			i := slices.Index(args, "--tools")
-			if run.ID != id || run.Agent != agent || i < 0 || i+1 >= len(args) || args[i+1] != tools {
-				t.Fatalf("unexpected worker %s, executor %q, arguments %v", run.ID, run.Agent, args)
+			got := strings.Join((FantasyRunner{}).toolPalette(run.ProfileSpec), ",")
+			if run.ID != id || run.Agent != agent || got != tools {
+				t.Fatalf("unexpected worker %s, executor %q, tools %q", run.ID, run.Agent, got)
 			}
 		case <-time.After(3 * time.Second):
 			t.Fatal("worker did not start")

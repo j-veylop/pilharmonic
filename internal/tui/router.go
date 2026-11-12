@@ -69,6 +69,7 @@ func routeNotice(task orchestrator.Task) string {
 
 // routerKey handles the unified entry point. Typing goes to the composer; Tab
 // moves to the attention list so it can be inspected without leaving the router.
+// Login key entry is intercepted in Update before the router sees any key.
 func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
@@ -76,9 +77,6 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case "esc":
 		m.router = false
 		m.routerFocus = 0
-		m.routerDraft = ""
-		m.routerCursor = 0
-		m.routerScroll = 0
 		m.clampScroll()
 		return m, nil
 	case "tab":
@@ -102,18 +100,18 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 			attention := m.attentionTasks()
 			if len(attention) > 0 {
 				target := attention[min(m.routerSelected, len(attention)-1)]
-				m.tasks = m.service.ListTasks()
+				m.refreshTasks()
 				m.router = false
 				m.routerFocus = 0
 				m.historyOffset = 0
 				m.detailFocus = false
-				m.clamp()
 				for i, task := range m.tasks {
 					if task.ID == target.ID {
 						m.selected = i
 						break
 					}
 				}
+				m.clamp()
 				m.notice = "Inspecting " + terminalText(target.Title)
 			}
 		}
@@ -123,6 +121,11 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		text := strings.TrimSpace(m.routerDraft)
+		if strings.HasPrefix(text, "/") {
+			m = m.slashCommand(text)
+			m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
+			return m, nil
+		}
 		if text == "" {
 			m.notice = "Enter a request first."
 			return m, nil
@@ -131,33 +134,19 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 			m.notice = "Request form is not connected to a service."
 			return m, nil
 		}
-		task, err := m.service.SubmitRequest(text, m.workspace)
-		if task.ID == "" {
-			// Nothing was accepted, so the draft is still the operator's only
-			// copy of the request. Keep it, and the cursor, for correction.
-			if err != nil {
-				m.notice = err.Error()
-			}
+		// Nothing can be routed without a usable provider, so route the
+		// operator to the login menu instead of accepting the draft.
+		if !m.service.AnyProviderConfigured() {
+			m.loginMenu = true
+			m.loginIndex = 0
+			m.notice = forcedLoginNotice
 			return m, nil
 		}
-		if err != nil {
-			m.notice = err.Error()
-		} else {
-			m.notice = routeNotice(task)
+		service, workspace := m.service, m.workspace
+		return m, func() tea.Msg {
+			task, err := service.SubmitRequest(text, workspace)
+			return routerResultMsg{task: task, err: err}
 		}
-		m.tasks = m.service.ListTasks()
-		m.routerDraft = ""
-		m.routerCursor = 0
-		m.routerScroll = 0
-		m.routerSelected = 0
-		for i, current := range m.tasks {
-			if current.ID == task.ID {
-				m.selected = i
-				break
-			}
-		}
-		m.clamp()
-		m.clampScroll()
 	default:
 		e := m.routerEditor()
 		e.handleKey(msg, m.routerComposerWidth(), m.routerComposerHeight())
@@ -256,6 +245,9 @@ func (m *model) completeRouterMention(query mentionQuery) {
 // routerMentionHintLines shows available executors while the leading mention is
 // being edited. The composer keeps the first matching name for Tab completion.
 func (m model) routerMentionHintLines(width int) []string {
+	if m.loginProvider != "" {
+		return nil
+	}
 	query, ok := m.routerMentionQuery()
 	if !ok {
 		return nil
@@ -368,13 +360,12 @@ func (m model) routerPanel(width, height int) string {
 	return panel(strings.Join(lines, "\n"), width, height)
 }
 
-func (m model) routerComposer() string {
-	return strings.Join(m.routerComposerLines(max(1, m.width-4)), "\n")
-}
-
 func (m model) routerComposerLines(width int) []string {
 	prefix := accentStyle.Render("▸ ")
 	pad := strings.Repeat(" ", lipgloss.Width("▸ "))
+	if m.loginProvider != "" {
+		return m.loginComposerLines(width)
+	}
 	if m.routerFocus == 1 {
 		prefix = mutedStyle.Render("▸ ")
 	}

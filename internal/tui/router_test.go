@@ -19,12 +19,13 @@ type routerRunner struct{}
 func (routerRunner) Run(context.Context, orchestrator.Task, io.Writer) error { return nil }
 
 func TestRouterRoutesRequestAndReturnsToBoard(t *testing.T) {
+	configureTestProvider(t)
 	dir := t.TempDir()
 	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", routerRunner{})
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), router: true, width: 120, height: 35}
 	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("write tests")})
@@ -68,7 +69,7 @@ func TestRouterAttentionListOpensTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	task, err := s.CreateTask("fix login", "work", dir)
 	if err != nil {
 		t.Fatal(err)
@@ -161,12 +162,13 @@ func TestRouterFitsTerminal(t *testing.T) {
 }
 
 func TestRouterMentionHintsAndCompletes(t *testing.T) {
+	configureTestProvider(t)
 	dir := t.TempDir()
 	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", routerRunner{})
 	s.RegisterRunner("reviewer", routerRunner{})
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), router: true, width: 120, height: 35}
@@ -209,12 +211,13 @@ func TestRouterRejectedMentionPreservesDraftAndCursor(t *testing.T) {
 	}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			configureTestProvider(t)
 			dir := t.TempDir()
 			s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer s.Shutdown()
+			defer func() { _ = s.Shutdown() }()
 			s.RegisterRunner("general", routerRunner{})
 			s.RegisterRunner("reviewer", routerRunner{})
 			m := model{service: s, workspace: dir, tasks: s.ListTasks(), router: true, width: 120, height: 35}
@@ -242,5 +245,23 @@ func TestRouterRejectedMentionPreservesDraftAndCursor(t *testing.T) {
 				t.Fatalf("draft missing from router after rejection: %s", view)
 			}
 		})
+	}
+}
+
+func TestRouterEscapePreservesDraftForReopen(t *testing.T) {
+	m := model{router: true, routerDraft: "long request", routerCursor: len("long request")}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.router {
+		t.Fatal("escape did not leave the router")
+	}
+	if m.routerDraft != "long request" || m.routerCursor != len("long request") {
+		t.Fatalf("escape discarded the draft: %q at %d", m.routerDraft, m.routerCursor)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	if !m.router || m.routerDraft != "long request" {
+		t.Fatalf("reopen did not restore the draft: router=%v draft=%q", m.router, m.routerDraft)
+	}
+	if m.routerCursor != len("long request") {
+		t.Fatalf("reopen cursor = %d, want end of draft", m.routerCursor)
 	}
 }

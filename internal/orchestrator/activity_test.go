@@ -19,7 +19,7 @@ func TestActivityPersistenceAndSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	writers := make(chan outputWriter, 1)
 	finish := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {

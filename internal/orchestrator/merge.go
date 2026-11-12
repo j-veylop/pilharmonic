@@ -21,6 +21,11 @@ const (
 
 const mergeTimeout = 30 * time.Second
 
+// blockerMergeError prefixes a merge failure caused by an unsuccessful
+// descendant subagent rather than by Git. It marks a failure an operator can
+// clear by resolving the child task instead of re-running the agent.
+const blockerMergeError = "Inspect inherited worktree and resolve unsuccessful subagent "
+
 type mergeOutcome struct {
 	Status         string
 	WorktreeCommit string
@@ -49,7 +54,7 @@ func (s *Service) integrationBlockerLocked(owner Task) (mergeOutcome, bool) {
 			continue
 		}
 		if child.Status == Failed || child.Status == Interrupted || child.Status == Canceled || child.MergeStatus == MergeFailed {
-			return mergeOutcome{Status: MergeFailed, Error: "Inspect inherited worktree and resolve unsuccessful subagent " + child.ID + " before retrying integration"}, true
+			return mergeOutcome{Status: MergeFailed, Error: blockerMergeError + child.ID + " before retrying integration"}, true
 		}
 	}
 	return mergeOutcome{}, false

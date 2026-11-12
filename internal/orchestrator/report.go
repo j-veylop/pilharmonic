@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Report is an explicit observation, separate from process execution status.
@@ -12,29 +13,50 @@ import (
 type Report struct {
 	Kind      string    `json:"kind"`
 	Message   string    `json:"message"`
+	Truncated bool      `json:"truncated,omitempty"`
 	Source    string    `json:"source,omitempty"`
 	AttemptID string    `json:"attempt_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// normalizeReport bounds the vocabulary so every observation has a known meaning.
-func normalizeReport(kind, message string) (string, string, error) {
+// maxReportMessage bounds one observation so a verbose adapter cannot bloat the
+// durable state file.
+const maxReportMessage = 4 << 10
+
+// normalizeReport bounds the vocabulary and size of an observation so every
+// observation has a known meaning. It reports whether the message was
+// truncated to the size bound.
+func normalizeReport(kind, message string) (string, string, bool, error) {
 	switch kind {
 	case "progress", "waiting", "blocked", "ready", "failed":
 	default:
-		return "", "", fmt.Errorf("unknown report kind %q", kind)
+		return "", "", false, fmt.Errorf("unknown report kind %q", kind)
 	}
 	message = strings.TrimSpace(message)
 	if message == "" {
-		return "", "", errors.New("report message is required")
+		return "", "", false, errors.New("report message is required")
 	}
-	return kind, message, nil
+	message, truncated := truncateReportMessage(message)
+	return kind, message, truncated, nil
+}
+
+// truncateReportMessage keeps the beginning of an over-long message, which is
+// where the observation usually is, and marks the cut.
+func truncateReportMessage(message string) (string, bool) {
+	if len(message) <= maxReportMessage {
+		return message, false
+	}
+	cut := maxReportMessage
+	for cut > 0 && !utf8.RuneStart(message[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(message[:cut]), true
 }
 
 // RecordReport records a local operator observation. Agent prose is never
 // interpreted as a report automatically.
 func (s *Service) RecordReport(taskID, kind, message string) error {
-	kind, message, err := normalizeReport(kind, message)
+	kind, message, truncated, err := normalizeReport(kind, message)
 	if err != nil {
 		return err
 	}
@@ -51,17 +73,17 @@ func (s *Service) RecordReport(taskID, kind, message string) error {
 		if t.Status == Canceled {
 			return errors.New("cannot report on canceled task")
 		}
-		return s.appendReportLocked(t, kind, message, "operator", "")
+		return s.appendReportLocked(t, kind, message, "operator", "", truncated)
 	}
 	return errors.New("task not found")
 }
 
 // appendReportLocked persists one report and its history event. The caller
 // holds s.mu.
-func (s *Service) appendReportLocked(t *Task, kind, message, source, attemptID string) error {
+func (s *Service) appendReportLocked(t *Task, kind, message, source, attemptID string, truncated bool) error {
 	old := clone(*t)
 	now := time.Now().UTC()
-	t.Reports = append(t.Reports, Report{Kind: kind, Message: message, Source: source, AttemptID: attemptID, CreatedAt: now})
+	t.Reports = append(t.Reports, Report{Kind: kind, Message: message, Truncated: truncated, Source: source, AttemptID: attemptID, CreatedAt: now})
 	t.UpdatedAt = now
 	eventMessage := message
 	if source != "" && source != "operator" {
@@ -83,7 +105,7 @@ type ReportRecorder interface {
 
 // RecordReport records an adapter observation for the task's running attempt.
 func (w outputWriter) RecordReport(kind, message string) error {
-	kind, message, err := normalizeReport(kind, message)
+	kind, message, truncated, err := normalizeReport(kind, message)
 	if err != nil {
 		return err
 	}
@@ -96,7 +118,7 @@ func (w outputWriter) RecordReport(kind, message string) error {
 	if err != nil {
 		return err
 	}
-	return w.s.appendReportLocked(t, kind, message, "adapter", w.attemptID)
+	return w.s.appendReportLocked(t, kind, message, "adapter", w.attemptID, truncated)
 }
 
 // CurrentReport excludes observations made before the current attempt began.

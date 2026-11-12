@@ -10,7 +10,7 @@ and [execution design](https://github.com/deepseek-ai/dsh-superagent-prototype/b
 The CLI opens the service, configures executors and delegation, resumes pending
 starts and runs the terminal. The service owns routing, scheduling, history
 and workspace management. The terminal displays snapshots and submits
-operator actions. Each executor owns its subprocess invocation and protocol.
+operator actions. Each executor owns its own invocation and protocol.
 See the [executor contract](executors.md).
 
 ## Terminal vocabulary
@@ -65,16 +65,28 @@ and workspace and retains earlier attempts. On restart, the service marks
 running attempts interrupted and pending live deliveries unknown. Persisted
 start requests resume after the executor registry and concurrency limit are
 configured. Output, reports, activity and live acknowledgements are scoped to
-the running attempt so a late callback cannot change a retry.
+the running attempt so a late callback cannot change a retry. An optional idle
+timeout cancels an attempt whose runner produces no output for the configured
+duration; every streamed chunk resets the timer, so a thinking agent is never
+interrupted.
 
 Each hand-off has a trigger and an attempt. Queued context travels with the
-initial mandate. For live context, the service records whether Pi accepted or
-rejected the command, or whether acknowledgement is unknown. Pi's
-acknowledgement establishes command receipt only. Operator and adapter reports
+initial mandate. For live context, the service records whether the adapter
+accepts or rejects the follow-up, or whether acknowledgement is unknown. That
+acknowledgement establishes receipt only. Operator and adapter reports
 can flag a task as needing action independently of process status.
 
-The JSON state file is for one application instance. The service protects
-in-memory state with a mutex and replaces the file on save. UI snapshots and
+The JSON state file is for one application instance. The CLI holds an
+exclusive instance lock (`.lock` beside the state file) so a second process
+fails to start instead of racing the first. A task keeps the transcripts of its
+newest attempts in full; older attempt records keep their identity, status,
+timing and error while their copied output is dropped, so retries cannot grow
+the file without bound. The service protects
+in-memory state with a mutex and replaces the file on save, fsyncing the file
+and its parent directory so a replacement survives power loss. Lifecycle
+changes persist before they are acknowledged. Streamed output batches and
+persists once 8 KiB accumulates, which bounds output loss to 8 KiB while
+keeping every decision, event and attempt durable. UI snapshots and
 worker inputs must be independent copies wherever callers can mutate them.
 
 The public name changed to pilharmonic without a storage migration. The default
@@ -130,8 +142,9 @@ the task IDs at confirmation and runs cleanup in a Bubble Tea command.
 
 ## Output and tool activity
 
-Pi translates structured events into assistant text, thinking boundaries,
-tool markers, reports and activity records. Transcript markers control display
+The Fantasy adapter translates streamed agent events into assistant text,
+thinking boundaries, tool markers, reports and activity records. Transcript
+markers control display
 only. The activity view uses recorded calls keyed by attempt and tool-call ID.
 A call retains its arguments, result, status and duration when available.
 Unfinished calls become interrupted when an attempt ends or the service
@@ -140,9 +153,10 @@ capped at 16 KiB before JSON wrapping. Output retains the latest 256 KiB per
 attempt.
 
 The terminal renders assistant prose as Markdown, collapses thinking by
-default and combines tool start and finish markers into status rows. Pi closes
-an open thinking block before emitting prose or tool activity to handle late
-thinking-end events. Agent output is untrusted display data. Task status uses
+default and combines tool start and finish markers into status rows. The
+adapter closes an open thinking block before emitting prose or tool activity to
+handle late thinking-end events. Agent output is untrusted display data. Task
+status uses
 semantic colours and glyphs: running is blue, while a running parent whose child
 is still queued, running or integrating is displayed as waiting for subagents.
 This changes display state only; the parent process and its persisted status are
@@ -183,8 +197,9 @@ contains `implementer`, the routing default and compatibility key, and
 configuration. Both start without tools, a model or instructions, so they
 inherit adapter defaults and the compiled coordinator guidance. The terminal
 omits a built-in profile name from summaries when its snapshot supplies no
-overrides. Each bundled specialist uses the Pi adapter with role-specific system
-instructions. Explicit command definitions take precedence over bundled names.
+overrides. Each bundled specialist uses the Fantasy adapter with role-specific
+system instructions. Explicit command definitions take precedence over bundled
+names.
 
 A profiles JSON entry overlays the matching built-in definition field by field;
 an omitted field keeps the compiled value and an explicitly empty field clears
@@ -193,7 +208,7 @@ selects the routing default. Validation covers the whole file before any entry
 is registered, and the service snapshots the resolved profile with the accepted
 task, so later configuration edits do not change existing tasks or attempts.
 
-An optional `-specialist-tools` JSON file can configure nonempty Pi tool
+An optional `-specialist-tools` JSON file can configure nonempty tool
 allowlists for bundled specialists, for example
 `{"reviewer":["read","grep","find","ls"]}`. Entries for non-bundled
 specialists are invalid. The effective tools are the intersection of the
@@ -205,10 +220,11 @@ and attempts record the effective tools. A newly configured limit can further
 narrow a retry. Disjoint lists prevent the executor from starting.
 
 The profiles JSON can select the default profile, modify built-in profiles and
-assign models and tools to bundled Pi specialists. Startup registers executors
-before validating these settings and resuming queued work. The Pi adapter passes
-the specialist model, or the task profile model when omitted, on each execution.
-The attempt records that selector independently of the inherited profile name.
+assign models and tools to bundled specialists. Startup registers executors
+before validating these settings and resuming queued work. The Fantasy adapter
+resolves the model for each attempt as the specialist model, else the task
+profile model, else the `-model` fallback, and fixes that selector on the
+attempt independently of the inherited profile name.
 
 A profile may add coordinator instructions for the top-level general task. The
 canonical delegation workflow is compiled in, so the shipped profiles file does

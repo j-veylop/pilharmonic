@@ -56,12 +56,13 @@ t              Toggle tool activity
 T              Show / hide thinking blocks
 j / k          Select activity in detail focus
 Enter          Expand / collapse selected tool call
-v              All calls / latest attempt / errors
+f              All calls / latest attempt / errors
 Ctrl-u / d     Scroll expanded arguments and results`},
-	{"General", `esc            Close request form / return to tasks
+	{"General", `m              Choose the big and small models
+L              Choose a provider and store its API key
+esc            Close request form / return to tasks
 ?              Open / close this help
-q              Quit (closes help when open)
-Ctrl-c         Quit application
+q / Ctrl-c     Quit (closes help when open)
 Drag details   Select text; release copies via OSC 52
 Paste          Use the terminal shortcut in composers
 

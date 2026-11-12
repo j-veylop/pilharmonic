@@ -82,7 +82,7 @@ func (m model) cleanupKey(key string) (model, tea.Cmd) {
 	return m, nil
 }
 
-func (r cleanupRequest) run(service *orchestrator.Service) string {
+func (r cleanupRequest) run(service Service) string {
 	switch r.kind {
 	case deleteTask:
 		if err := service.DeleteTask(r.ids[0]); err != nil {
@@ -95,11 +95,14 @@ func (r cleanupRequest) run(service *orchestrator.Service) string {
 		}
 		return "Worktree discarded; task history kept."
 	case deleteCompleted:
-		count, err := service.DeleteCompletedTasks(r.ids)
+		count, skipped, err := service.DeleteCompletedTasksDetailed(r.ids)
 		if err != nil {
 			return err.Error()
 		}
-		return fmt.Sprintf("Deleted %d completed task(s) and their history.", count)
+		if len(skipped) == 0 {
+			return fmt.Sprintf("Deleted %d completed task(s) and their history.", count)
+		}
+		return fmt.Sprintf("Deleted %d completed task(s); kept %d (%s).", count, len(skipped), skipped[0].Reason)
 	case discardMerged:
 		count, err := service.DiscardMergedWorktrees(r.ids)
 		if err != nil {

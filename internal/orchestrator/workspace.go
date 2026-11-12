@@ -18,6 +18,16 @@ import (
 // An operator choice is explicit and disables later automatic changes. Worktrees
 // are preserved while the task exists, including across retries and review.
 func (s *Service) SetTaskIsolation(id string, enabled bool) error {
+	if enabled {
+		// Validation runs Git, so it must not hold the service mutex.
+		workspace, err := s.taskWorkspace(id)
+		if err != nil {
+			return err
+		}
+		if !workspaceIsolatable(workspace) {
+			return s.recordIsolationUnavailable(id)
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
@@ -66,12 +76,61 @@ func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 	return errors.New("task not found")
 }
 
+// taskWorkspace reads a task's source workspace without holding the mutex while
+// Git validation runs.
+func (s *Service) taskWorkspace(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return "", errors.New("service is shutting down")
+	}
+	for _, t := range s.data.Tasks {
+		if t.ID == id {
+			return t.Workspace, nil
+		}
+	}
+	return "", errors.New("task not found")
+}
+
+// recordIsolationUnavailable persists why an explicit isolation request was
+// refused so the operator can see the reason in the task history.
+func (s *Service) recordIsolationUnavailable(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return errors.New("service is shutting down")
+	}
+	for i := range s.data.Tasks {
+		t := &s.data.Tasks[i]
+		if t.ID != id {
+			continue
+		}
+		old := clone(*t)
+		t.UpdatedAt = time.Now().UTC()
+		t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Isolation unavailable: workspace is not a Git repository with a committed HEAD"})
+		if err := s.save(); err != nil {
+			*t = old
+			return err
+		}
+		return errors.New("workspace cannot be isolated: it is not a Git repository with a committed HEAD")
+	}
+	return errors.New("task not found")
+}
+
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// A fixed locale keeps Git's diagnostics matchable by describeMergeFailure;
+	// disabling the terminal prompt keeps a missing credential from blocking a
+	// worker forever.
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "GIT_TERMINAL_PROMPT=0")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(output)))
+		command := "git"
+		if len(args) > 0 {
+			command += " " + args[0]
+		}
+		return "", fmt.Errorf("%s: %w: %s", command, err, strings.TrimSpace(string(output)))
 	}
 	return strings.TrimSpace(string(output)), nil
 }
@@ -121,6 +180,85 @@ func readWorkspaceOwner(reservation, taskID string) (workspaceOwner, error) {
 		return owner, errors.New("workspace ownership does not match task")
 	}
 	return owner, nil
+}
+
+// emptyReservation reports a reservation an interrupted attempt left without an
+// ownership record and without a worktree. Recreating it loses nothing.
+func emptyReservation(reservation string) bool {
+	if _, err := os.Lstat(filepath.Join(reservation, "tree")); !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(reservation, "owner.json"))
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// writeWorkspaceOwner persists the ownership record atomically so a crash never
+// leaves a truncated record that every later attempt would reject.
+func writeWorkspaceOwner(reservation string, owner workspaceOwner) error {
+	b, err := json.Marshal(owner)
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(reservation), ".owner-*.json")
+	if err != nil {
+		return err
+	}
+	temp := file.Name()
+	defer os.Remove(temp)
+	if _, err = file.Write(b); err != nil {
+		file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temp, filepath.Join(reservation, "owner.json"))
+}
+
+// removeReservation deletes an ownership record and its directory without
+// touching a worktree.
+func removeReservation(reservation string) {
+	_ = os.Remove(filepath.Join(reservation, "owner.json"))
+	_ = os.Remove(reservation)
+}
+
+// discardBrokenWorktree removes a worktree directory and prunes the registration
+// Git keeps for it, which an interrupted worktree add can leave behind.
+func discardBrokenWorktree(ctx context.Context, source, tree string) error {
+	if err := os.RemoveAll(tree); err != nil {
+		return err
+	}
+	_, _ = gitOutput(ctx, source, "worktree", "prune")
+	return nil
+}
+
+func addReservedWorktree(ctx context.Context, source, tree, commit string) error {
+	_, err := gitOutput(ctx, source, "worktree", "add", "--detach", "--", tree, commit)
+	return err
+}
+
+// checkReservedWorktree verifies that path is still the reserved worktree of the
+// repository Git reports as common.
+func checkReservedWorktree(ctx context.Context, path, common string) error {
+	actual, err := gitPath(ctx, path, "--git-common-dir")
+	if err != nil {
+		return err
+	}
+	if actual != common {
+		return errors.New("execution workspace belongs to a different repository")
+	}
+	top, err := gitPath(ctx, path, "--show-toplevel")
+	if err != nil {
+		return err
+	}
+	if top != path {
+		return errors.New("execution workspace is not the reserved worktree")
+	}
+	return nil
 }
 
 const workspaceCleanupTimeout = 30 * time.Second
@@ -218,51 +356,69 @@ func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, st
 	reservation := filepath.Join(base, t.ID)
 	tree := filepath.Join(reservation, "tree")
 	owner := workspaceOwner{TaskID: t.ID, Source: root, CommonDir: common}
+	created := false
 	if err = os.Mkdir(reservation, 0700); err == nil {
-		owner.Commit, err = gitOutput(ctx, root, "rev-parse", "--verify", "HEAD^{commit}")
-		if err != nil {
-			return "", "", err
-		}
-		b, _ := json.Marshal(owner)
-		if err = os.WriteFile(filepath.Join(reservation, "owner.json"), b, 0600); err != nil {
-			return "", "", err
-		}
+		created = true
 	} else if errors.Is(err, os.ErrExist) {
 		info, statErr := os.Lstat(reservation)
 		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return "", "", errors.New("workspace reservation is not a regular directory")
 		}
-		saved, err := readWorkspaceOwner(reservation, t.ID)
-		if err != nil {
-			return "", "", err
+		saved, readErr := readWorkspaceOwner(reservation, t.ID)
+		switch {
+		case readErr == nil:
+			if saved.Source != root || saved.CommonDir != common {
+				return "", "", errors.New("workspace ownership does not match source")
+			}
+			owner = saved
+		case emptyReservation(reservation):
+			// A crash between Mkdir and the ownership write leaves a reservation
+			// with no record and no worktree. Recreate it instead of failing
+			// every later attempt.
+			created = true
+		default:
+			return "", "", readErr
 		}
-		if saved.Source != root || saved.CommonDir != common {
-			return "", "", errors.New("workspace ownership does not match source")
-		}
-		owner = saved
 	} else {
 		return "", "", err
+	}
+	// A reservation this attempt created must not survive a failure, otherwise
+	// it blocks every later attempt.
+	defer func() {
+		if !created {
+			return
+		}
+		if _, statErr := os.Lstat(tree); statErr == nil {
+			_ = discardBrokenWorktree(ctx, root, tree)
+		}
+		removeReservation(reservation)
+	}()
+	if created {
+		if owner.Commit, err = gitOutput(ctx, root, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+			return "", "", err
+		}
+		if err = writeWorkspaceOwner(reservation, owner); err != nil {
+			return "", "", err
+		}
 	}
 	if info, statErr := os.Lstat(tree); statErr == nil {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return "", "", errors.New("execution workspace is not a regular directory")
 		}
-		actual, gitErr := gitPath(ctx, tree, "--git-common-dir")
-		if gitErr != nil {
-			return "", "", gitErr
-		}
-		if actual != common {
-			return "", "", errors.New("execution workspace belongs to a different repository")
-		}
-		top, gitErr := gitPath(ctx, tree, "--show-toplevel")
-		if gitErr != nil {
-			return "", "", gitErr
-		}
-		if top != tree {
-			return "", "", errors.New("execution workspace is not the reserved worktree")
+		if err = checkReservedWorktree(ctx, tree, common); err != nil {
+			// An interrupted worktree add can leave a tree Git does not
+			// recognize, and its stale registration blocks every retry. Remove
+			// it, prune and add it once more.
+			if removeErr := discardBrokenWorktree(ctx, root, tree); removeErr != nil {
+				return "", "", fmt.Errorf("%w: %w; delete %s and retry", err, removeErr, tree)
+			}
+			if err = addReservedWorktree(ctx, root, tree, owner.Commit); err != nil {
+				return "", "", fmt.Errorf("execution workspace %s is unusable: %w; delete the directory and retry", tree, err)
+			}
 		}
 	} else if errors.Is(statErr, os.ErrNotExist) {
-		if _, err = gitOutput(ctx, root, "worktree", "add", "--detach", "--", tree, owner.Commit); err != nil {
+		if err = addReservedWorktree(ctx, root, tree, owner.Commit); err != nil {
+			_ = discardBrokenWorktree(ctx, root, tree)
 			return "", "", err
 		}
 	} else {
@@ -273,7 +429,16 @@ func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, st
 	if err != nil || !info.IsDir() {
 		return "", "", errors.New("source subdirectory does not exist in committed snapshot")
 	}
+	created = false
 	return cwd, owner.Commit, nil
+}
+
+// prepareTaskWorkspace serializes worktree creation with merge and discard,
+// which mutate the same source repository.
+func (s *Service) prepareTaskWorkspace(ctx context.Context, statePath string, t Task) (string, string, error) {
+	s.mergeMu.Lock()
+	defer s.mergeMu.Unlock()
+	return prepareWorkspace(ctx, statePath, t)
 }
 
 func (s *Service) prepareExecution(ctx context.Context, t Task) (Task, error) {
@@ -283,7 +448,7 @@ func (s *Service) prepareExecution(ctx context.Context, t Task) (Task, error) {
 	s.mu.Lock()
 	path := s.path
 	s.mu.Unlock()
-	cwd, commit, err := prepareWorkspace(ctx, path, t)
+	cwd, commit, err := s.prepareTaskWorkspace(ctx, path, t)
 	if err != nil {
 		return t, fmt.Errorf("prepare isolated workspace: %w", err)
 	}

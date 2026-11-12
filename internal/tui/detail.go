@@ -10,25 +10,11 @@ import (
 )
 
 func (m model) detailGeometry() (int, int) {
-	w, h := m.width, m.height
-	if w <= 0 {
-		w = 80
-	}
-	if h <= 0 {
-		h = 24
-	}
-	if w < 30 || h < 10 {
+	l := m.layout()
+	if l.width < 30 || l.height < 10 || l.bodyHeight < 3 {
 		return 0, 0
 	}
-	body := h - 1 - (strings.Count(m.footer(w), "\n") + 1)
-	if body < 3 {
-		return 0, 0
-	}
-	if w >= 76 && !m.fullscreen {
-		left := min(34, max(24, w/4))
-		return w - left - 1, body
-	}
-	return w, body
+	return l.detailWidth, l.bodyHeight
 }
 
 // detailContent wraps every line by display cells so long output remains readable.
@@ -199,7 +185,7 @@ func (m model) detailContent(width int) []string {
 		if t.Output == "" {
 			add(mutedStyle.Render("Waiting for output…"))
 		} else {
-			lines = append(lines, renderedOutputWithThinking(t.Output, width, m.runningGlyph(), m.thinking)...)
+			lines = append(lines, m.renderedOutputFor(t.Output, width, m.runningGlyph(), m.thinking)...)
 		}
 	}
 	return lines
@@ -245,7 +231,7 @@ func (m model) detailPanel(width, height int) string {
 	if m.profilePicker.target != "" {
 		return m.profilePanel(width, height)
 	}
-	inner := width - 4
+	inner := m.layout().panelInner(width)
 	if len(m.tasks) == 0 {
 		return panel(titleStyle.Render("TASK DETAILS")+"\n\n"+mutedStyle.Render("Select a task to view details."), width, height)
 	}
@@ -259,7 +245,7 @@ func (m model) detailPanel(width, height int) string {
 	}
 	lines := []string{m.detailTabRow(t, inner), fit(titleLine, inner, 1)}
 	content := m.detailContent(inner)
-	available := max(0, height-2-len(lines)-1)
+	available := max(0, m.layout().detailRows(height))
 	offset := min(max(0, m.historyOffset), max(0, len(content)-available))
 	end := len(content) - offset
 	start := max(0, end-available)

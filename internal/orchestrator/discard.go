@@ -66,14 +66,28 @@ func (s *Service) DiscardWorktree(id string) error {
 			continue
 		}
 		old := clone(*current)
+		// A Git refusal leaves the worktree in place; only an interrupted
+		// attempt is worth reporting as an interruption.
+		kind := "worktree_discard_interrupted"
+		if err != nil && reconcileErr == nil {
+			kind = "worktree_discard_refused"
+		}
 		message := "Worktree retained"
 		if err != nil {
 			message += ": " + err.Error()
 		}
-		current.finishDiscard(gone, message)
+		current.finishDiscardWithKind(gone, kind, message)
 		if saveErr := s.save(); saveErr != nil {
 			*current = old
+			if gone {
+				return saveErr
+			}
 			return errors.Join(err, saveErr)
+		}
+		if gone {
+			// Git already removed the tree, so the discard succeeded even when the
+			// invocation reported an error; keep it only in the event message.
+			return nil
 		}
 		return err
 	}
@@ -81,14 +95,22 @@ func (s *Service) DiscardWorktree(id string) error {
 }
 
 func (t *Task) finishDiscard(gone bool, message string) {
+	t.finishDiscardWithKind(gone, "worktree_discard_interrupted", message)
+}
+
+// finishDiscardWithKind records the outcome and clears the durable intent. A
+// clean refusal is a distinct event kind so the history does not claim an
+// interruption that never happened.
+func (t *Task) finishDiscardWithKind(gone bool, kind, message string) {
 	t.DiscardPending = false
 	t.UpdatedAt = time.Now().UTC()
-	kind := "worktree_discard_interrupted"
 	if gone {
 		kind = "worktree_discarded"
 		message = "Discarded retained worktree " + t.ExecutionWorkspace
 		t.ExecutionWorkspace = ""
 		t.IsolationCommit = ""
+	} else if kind == "" {
+		kind = "worktree_discard_interrupted"
 	}
 	t.Events = append(t.Events, Event{t.UpdatedAt, kind, message})
 }

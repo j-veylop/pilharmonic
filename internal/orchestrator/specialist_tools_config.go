@@ -19,7 +19,7 @@ func (s *Service) LoadSpecialistTools(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	body, err := io.ReadAll(io.LimitReader(f, maxSpecialistToolsConfigSize+1))
 	if err != nil {
 		return err
@@ -73,9 +73,9 @@ func (s *Service) LoadSpecialistTools(path string) error {
 		return errors.New("service is shutting down")
 	}
 	for name := range loaded {
-		runner, ok := s.runners[name].(PiRunner)
+		runner, ok := s.runners[name].(FantasyRunner)
 		if !ok || runner.instructions == "" {
-			return fmt.Errorf("specialist %q is not a bundled Pi specialist", name)
+			return fmt.Errorf("specialist %q is not a bundled specialist", name)
 		}
 	}
 	s.specialistTools = loaded

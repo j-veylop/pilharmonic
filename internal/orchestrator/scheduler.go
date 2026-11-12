@@ -8,7 +8,12 @@ import (
 	"time"
 )
 
-const defaultConcurrency = 2
+// DefaultConcurrency is the number of agent processes the service runs at once
+// unless the operator sets a different limit. It matches the CLI default so the
+// library and the launcher agree.
+const DefaultConcurrency = 4
+
+const defaultConcurrency = DefaultConcurrency
 
 type pendingRequest struct {
 	ctx  context.Context
@@ -122,6 +127,9 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 		attempt.RequestedModel = selector.RequestedModel(&profile)
 	}
 	t.Attempts = append(t.Attempts, attempt)
+	if dropped := retainAttemptOutputs(t, s.attemptRetention); dropped > 0 {
+		t.Events = append(t.Events, retentionEvent(t, dropped, s.attemptRetention))
+	}
 	t.recordStartDeliveries(id, t.UpdatedAt)
 	t.Events = append(t.Events, Event{t.UpdatedAt, "started", "Agent started (attempt " + id + ")"})
 	if err := s.save(); err != nil {
@@ -147,6 +155,12 @@ func (s *Service) scheduleLocked() error {
 		return nil
 	}
 	defer s.resumeMergesLocked()
+	// Diagnose unrunnable requests before looking for free capacity, so a task
+	// whose executor is missing is reported even while every slot is busy.
+	if err := s.failUnavailableAgentsLocked(); err != nil {
+		s.persistErr = err
+		return err
+	}
 	for len(s.cancel) < s.limit {
 		next := -1
 		for i := range s.data.Tasks {
@@ -155,6 +169,7 @@ func (s *Service) scheduleLocked() error {
 				continue
 			}
 			if _, ok := s.runners[t.Agent]; !ok {
+				// Already diagnosed by failUnavailableAgentsLocked.
 				continue
 			}
 			if next < 0 || t.ScheduledAt.Before(s.data.Tasks[next].ScheduledAt) {
@@ -194,6 +209,26 @@ func (s *Service) scheduleLocked() error {
 				continue
 			}
 			s.persistErr = err
+			return err
+		}
+	}
+	return nil
+}
+
+// failUnavailableAgentsLocked fails scheduled tasks whose executor is not
+// registered in this run. Nothing else revisits such a request, so skipping it
+// would strand it silently. Failing is per task: it stays visible and can be
+// requeued once the executor is available. Caller holds mu.
+func (s *Service) failUnavailableAgentsLocked() error {
+	for i := range s.data.Tasks {
+		t := &s.data.Tasks[i]
+		if t.Status != Queued || !t.ScheduleRequested {
+			continue
+		}
+		if _, ok := s.runners[t.Agent]; ok {
+			continue
+		}
+		if err := s.failIneligibleLocked(t, fmt.Errorf("agent %q unavailable", t.Agent)); err != nil {
 			return err
 		}
 	}
@@ -265,8 +300,8 @@ func (s *Service) watchPending(id string, request *pendingRequest) {
 		if t.ID == id && t.Status == Queued && t.ScheduleRequested {
 			if err := s.cancelQueuedLocked(t, request.ctx.Err()); err != nil {
 				s.persistErr = err
-			} else {
-				_ = s.scheduleLocked()
+			} else if schedErr := s.scheduleLocked(); schedErr != nil {
+				s.persistErr = schedErr
 			}
 			return
 		}

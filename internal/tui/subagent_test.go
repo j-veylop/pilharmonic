@@ -18,7 +18,7 @@ func TestSubagentComposerSpawnsChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	started := make(chan struct{}, 1)
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task orchestrator.Task, _ io.Writer) error {
 		if task.ParentID != "" {

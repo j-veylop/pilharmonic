@@ -26,7 +26,7 @@ func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		_, err := io.WriteString(out, "done")
 		return err
@@ -78,7 +78,7 @@ func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Shutdown()
+	defer func() { _ = restored.Shutdown() }()
 	reloaded, ok := restored.GetTask(task.ID)
 	if !ok || reloaded.Decision.PolicyID != decision.PolicyID ||
 		reloaded.Decision.PolicyVersion != decision.PolicyVersion ||
@@ -94,7 +94,7 @@ func TestAuthorizationRejectionCreatesNoTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	if err = s.RegisterPolicy(LocalPolicySource, fakePolicy{
 		id:      "reject-local",
 		version: "reject-1",

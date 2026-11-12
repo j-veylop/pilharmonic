@@ -17,7 +17,7 @@ func TestDiscardWorktreeConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", reviewChangeRunner{})
 	done := startIsolatedReviewTask(t, s, repo, "discard")
 	// Merge is blocked while the review is pending, so discard requires the
@@ -54,7 +54,7 @@ func TestDiscardAllMergedWorktreesConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Shutdown()
+	defer func() { _ = s.Shutdown() }()
 	s.RegisterRunner("general", reviewChangeRunner{})
 	first := startIsolatedReviewTask(t, s, repo, "first")
 	first = approveReviewAndAwaitMerge(t, s, first)

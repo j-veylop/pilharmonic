@@ -25,6 +25,7 @@ type textPosition struct {
 type textSelection struct {
 	active   bool
 	dragging bool
+	button   tea.MouseButton
 	anchor   textPosition
 	focus    textPosition
 	lines    []string
@@ -201,9 +202,10 @@ func (m model) detailViewport() (detailViewport, bool) {
 	if paneWidth < 4 || paneHeight < 5 {
 		return detailViewport{}, false
 	}
-	inner := paneWidth - 4
+	l := m.layout()
+	inner := l.panelInner(paneWidth)
 	content := m.detailContent(inner)
-	available := max(0, paneHeight-5)
+	available := max(0, l.detailRows(paneHeight))
 	if inner < 1 || available < 1 || len(content) == 0 {
 		return detailViewport{}, false
 	}
@@ -211,13 +213,8 @@ func (m model) detailViewport() (detailViewport, bool) {
 	end := len(content) - offset
 	start := max(0, end-available)
 	x := 0
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	if width >= 76 && !m.fullscreen {
-		left := min(34, max(24, width/4))
-		x = left + 1
+	if l.sidebar {
+		x = l.taskWidth + 1
 	}
 	return detailViewport{
 		x:       x + 2,
@@ -255,7 +252,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.Action == tea.MouseActionRelease {
-		if !m.selection.dragging {
+		if !m.selection.dragging || m.selection.button != tea.MouseButtonLeft || msg.Button != tea.MouseButtonLeft {
 			return m, nil
 		}
 		if !m.selectionMappingIntact() {
@@ -295,6 +292,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.selection = textSelection{
 			active:   true,
 			dragging: true,
+			button:   msg.Button,
 			anchor:   position,
 			focus:    position,
 			lines:    append([]string(nil), viewport.content...),

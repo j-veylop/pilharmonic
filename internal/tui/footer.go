@@ -40,6 +40,8 @@ func (m model) boardFooter(w int) string {
 	add("q quit", false)
 	add("/ request", true)
 	add("n new", true)
+	add("L login", true)
+	add("m model", true)
 	if w < 76 {
 		add("j/k tasks", true)
 		add("l details", true)
@@ -58,9 +60,9 @@ func (m model) footer(w int) string {
 		}
 	case m.activity:
 		if m.activityExpanded {
-			footerText = "esc collapse · t output · v filter · ? help · q quit"
+			footerText = "esc collapse · t output · f filter · ? help · q quit"
 		} else {
-			footerText = "enter expand · t output · v filter · ? help · q quit"
+			footerText = "enter expand · t output · f filter · ? help · q quit"
 		}
 	case m.detailFocus || m.fullscreen:
 		footerText = "j/k scroll · T thinking · h tasks · ? help · q quit"

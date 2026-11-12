@@ -21,15 +21,20 @@ in one JSON file. The terminal UI reads snapshots from the service.
 | --- | --- | --- |
 | `-state` | `<user config dir>/orchestrator/state.json` | durable state file (legacy location retained) |
 | `-workspace` | current directory | working directory for newly created tasks |
-| `-max-concurrent` | `2` | maximum simultaneously running agents |
+| `-max-concurrent` | `4` | maximum simultaneously running agents |
+| `-idle-timeout` | `0` | cancel an agent that produces no output for this long; `0` disables |
 | `-isolation` | `true` | allow automatic Git worktrees for mandates that request changes |
 | `-agents` | none | optional trusted command-executor configuration |
-| `-profiles` | `./profiles.json` if present | profile and specialist configuration from the launch directory, or an explicit file |
-| `-profile` | `implementer` | default profile for routed work and tasks without an explicit choice |
+| `-specialist-tools` | none | optional JSON file that sets per-specialist tool limits |
+| `-model` | none | fallback model selector (`provider/model`) for profiles that do not name one |
+| `-profiles` | `profiles.json` beside the state file | profile and specialist configuration, or an explicit file |
+| `-profile` | `(unset)` | default profile for routed work and tasks without an explicit choice; falls back to the profile selected by `-profiles`, else `implementer` |
 | `-subagents` | `true` | allow running agents to delegate child tasks |
 | `-subagent-socket` | `subagent.sock` beside the state file | owner-only local control socket |
 | `-max-subagent-depth` | `2` | maximum delegation depth below a root task |
 | `-max-subagents` | `4` | maximum child tasks one task may spawn |
+| `-attempt-retention` | `8` | attempt transcripts kept in full per task; `0` keeps every attempt |
+| `-version` | n/a | print the build version and exit |
 
 The state file is opened read-only first, then repaired in memory and saved if
 anything changed:
@@ -39,7 +44,7 @@ anything changed:
 - legacy tasks without `ThreadID` are given one and a thread record;
 - legacy tasks without attempts get one synthesized attempt from their history;
 - tasks that were `running` become `interrupted`, and their latest attempt gets
-  a finish time and an error. No subprocess is assumed to have survived.
+  a finish time and an error. No worker is assumed to have survived.
 
 The state file is opened, then configured command executors are loaded, the
 subagent limits and control socket are configured, and the concurrency limit is
@@ -95,15 +100,21 @@ not decompose requests or evaluate them with a model.
    matching subdirectory of the worktree. Preparation failures fail the attempt
    and the source workspace is not modified.
 5. **Execution.** The runner is looked up by agent name (`general` by default).
-   `PiRunner` implements `LiveRunner`, so `RunLive` (`pi_rpc.go`) starts
-   `pi --mode rpc --no-session` in the execution workspace. It sends one initial
-   prompt containing the mandate plus any context under an explicit
-   "not authority to expand the mandate" heading, then streams assistant text
-   deltas, thinking-block markers and tool start/end markers to the output
-   writer. The non-live `Run` path uses `pi --mode json --` and is kept for
-   other runners/tests.
+   `FantasyRunner` implements `LiveRunner`, so `RunLive`
+   (`fantasy_runner.go`) drives the attempt in-process through
+   `charm.land/fantasy` with the workspace as its directory. It resolves the
+   attempt's model from the profile snapshot (a specialist model, the task
+   profile model, or the `-model` fallback) and builds one initial prompt
+   containing the mandate plus any context under an explicit "not authority to
+   expand the mandate" heading. It then streams assistant text deltas,
+   thinking-block markers and tool start/end markers to the output writer while
+   the seven workspace tools (`read`, `bash`, `edit`, `write`, `grep`, `find`,
+   `ls`) run inside the orchestrator process. The non-live `Run` path is the
+   same loop without a follow-up channel.
 6. **Output.** Each write appends to the task output, trims it to the newest
-   256 KiB, mirrors it onto the latest attempt, and saves the whole state file.
+   256 KiB without splitting a UTF-8 rune, and mirrors it onto the latest
+   attempt. Output batches: it is persisted once 8 KiB has accumulated or on
+   the next lifecycle change, not on every chunk.
    In the output view, assistant text is rendered as Markdown while inline tool
    markers become compact status rows with a coloured rail and glyph; a
    directly paired start/finish collapses into one finished row. Thinking
@@ -124,9 +135,9 @@ not decompose requests or evaluate them with a model.
    pausing affects only future thread follow-ups.
    Delivery is recorded per recipient and per attempt:
    - queued tasks get `at_start` when the attempt starts;
-   - running tasks get `pending`, then `accepted` or `rejected` after Pi
-     acknowledges the RPC command, or `unknown` if the execution ends or the
-     orchestrator stops first;
+   - running tasks get `pending`, then `accepted` or `rejected` after the
+     adapter acknowledges the follow-up, or `unknown` if the execution ends or
+     the orchestrator stops first;
    - running tasks with no live channel or a full queue get `rejected` with a
      reason.
    Each hand-off keeps a durable `Delivery` record with its trigger, execution
@@ -157,10 +168,12 @@ not decompose requests or evaluate them with a model.
    `blocked`, `ready` or `failed`, with a message (`report.go`). A runner may
    also record an explicit adapter observation through its output sink; this is
    accepted only while the attempt is running and is stored with an `adapter`
-   source and attempt ID. The built-in Pi adapter records a `progress` report
-   when Pi accepts the initial prompt and a `failed` report when Pi reports an
-   error, without parsing assistant prose. Reports are
-   separate from process status. `Task.Stage()` derives an action stage from
+   source and attempt ID. The built-in Fantasy adapter records a `progress`
+   report when it accepts the initial prompt, a `waiting` report when it
+   retries after a provider error, and a `failed` report on a provider failure
+   or when it produces no assistant response, without parsing assistant prose.
+   Reports are separate from process status. `Task.Stage()` derives an action
+   stage from
    the latest current-attempt report, ignoring reports made before that attempt
    and clearing `blocked`/`waiting`/`failed` once newer context arrives. The
    terminal additionally displays a running parent as `waiting for subagents`
@@ -240,9 +253,9 @@ not decompose requests or evaluate them with a model.
   same ownership validation but refusing dirty or unmerged worktrees.
 
 Statuses: `queued`, `running`, `completed`, `failed`, `canceled`,
-`interrupted`. A `completed` task means the process exited successfully (for
-Pi, also that it reported an assistant response); it does not mean the work is
-correct or reviewed. For an isolated task, `merge_status` separately records
+`interrupted`. A `completed` task means the attempt finished successfully (for
+the Fantasy adapter, also that it reported an assistant response); it does not
+mean the work is correct or reviewed. For an isolated task, `merge_status` separately records
 whether its changes were merged, were already up to date, or failed to merge;
 a merge failure leaves the execution attempt completed but makes the task need
 action.
@@ -274,12 +287,13 @@ task for an explicit start without expanding its mandate.
 - At most `-max-concurrent` runners execute at once, including when starts and
   completions race; capacity changes do not interrupt running work.
 - A new execution starts only after its attempt is durable in the state file.
-- Prompts are passed as an argument or RPC input, never through a shell.
+- Prompts are passed to the adapter as an argument, model message or stdin,
+  never through a shell.
 - Agent output is untrusted: it is stored and displayed, never executed, and is
   sanitized before terminal layout.
-- Delivery acknowledgement is reported honestly: Pi accepting a command is not
-  proof that the model consumed it, and crashes leave `unknown` rather than
-  success. Delivery records are scoped to the attempt that received them; a
+- Delivery acknowledgement is reported honestly: an adapter accepting a
+  follow-up is not proof that the model consumed it, and crashes leave
+  `unknown` rather than success. Delivery records are scoped to the attempt that received them; a
   retry starts new records and does not inherit an older rejection or unknown
   outcome.
 - An isolated attempt runs only in the worktree reserved for that task and
@@ -322,9 +336,11 @@ task for an explicit start without expanding its mandate.
   trusted source; there is no policy file, chooser or per-request policy
   selection, no persistence of rejected requests, no dedicated audit export,
   no external trigger authentication and no model-assisted routing.
-- The state file is intended for one running instance. Concurrent instances
-  sharing a path would clobber each other. Whole-file rewrites happen on every
-  output chunk, so large or chatty runs rewrite frequently.
+- The state file is intended for one running instance. An instance lock
+  (see `instance.go`) refuses a second instance on the same path; concurrent
+  instances are not supported. The whole state file is rewritten on each save,
+  but streamed output batches to 8 KiB, so chatty runs do not rewrite on every
+  byte.
 - Tasks share the source workspace unless their mandate contains a detected
   change action. Automatic isolation is enabled by default when the source
   workspace is a Git repository with a committed `HEAD`, and can be disabled
@@ -346,23 +362,25 @@ task for an explicit start without expanding its mandate.
   failure names the overlapping files and the worktree is kept for retry after
   the source is cleaned. Tasks in workspaces that cannot be isolated, or that
   are explicitly opted out, share their workspace.
-- There is no Pi session continuity across restarts or retries; every attempt is
-  a fresh process. Follow-up RPC messages accepted by Pi are queued inside Pi
-  and are not replayed after a restart.
+- There is no session continuity across restarts or retries: every attempt
+  starts a fresh conversation. Follow-ups accepted during an attempt are not
+  replayed after a restart.
 - Output is capped at the newest 256 KiB per task/attempt; older text is
   discarded. State may contain sensitive prompts and output and is stored
   unencrypted (directory `0700`, file `0600`).
-- Operator reports and Pi adapter reports exist; configured command adapters
+- Operator reports and Fantasy adapter reports exist; configured command adapters
   do not emit structured reports and there is no report-driven routing policy.
   Free-form agent output is never parsed into reports. Capability declarations
-  are informational; only Pi currently declares tool activity and reports.
+  are informational; only the built-in Fantasy adapter currently declares tool
+  activity and reports.
 - Running live context is bounded (64 pending messages per task) and sends are
   rejected rather than blocked when full. Delivery records are retained with
   task history and are not compacted independently.
 - The TUI text input supports append and backspace only.
-- Pi is built in; configured command executors can be added with `-agents`. They
-  run behind `Runner`/`LiveRunner`. Only Pi supports live follow-ups and
-  structured tool activity.
+- The Fantasy adapter is built in; configured command executors can be added
+  with `-agents` as a separate opt-in. Both run behind `Runner`/`LiveRunner`:
+  Fantasy supports live follow-ups and structured tool activity, while a
+  configured command executor is one-shot.
 - The router is deterministic and creates one task per request. It does not
   interpret or decompose requests with a model. It uses a leading `@NAME` to
   select a registered executor and otherwise falls back to general. An unknown
@@ -374,8 +392,8 @@ task for an explicit start without expanding its mandate.
   permissions and shares the parent's workspace, so concurrent file edits are
   not coordinated. A child is not canceled when its parent ends, and the parent
   helper receives the child's final output only when the child completes.
-  Subprocesses that a Pi extension spawns on its own are not pilharmonic tasks
-  and remain outside these tracking, limit and cancellation rules.
+  Commands that an agent spawns through its own `bash` tool are not pilharmonic
+  tasks and remain outside these tracking, limit and cancellation rules.
 - The control socket uses a Unix socket, so agent-driven delegation is not
   available on platforms without Unix-domain sockets.
 
@@ -387,10 +405,13 @@ output sink while a goroutine requests task snapshots at 10 Hz. The two
 fixtures contain zero or 32 completed tasks, each with 64 KiB of output
 mirrored in its attempt. The active transcript grows until it reaches its cap.
 
-On a Linux amd64 i7-10610U, one local run measured 1.47 ms and 1.48 MB
-allocated per write with no history, versus 14.17 ms and 17.90 MB with 32
-completed tasks. These figures include JSON encoding and replacing the state
-file on local temp storage. Disk type, history size and stream length affect
-the result. Output and lifecycle updates still save synchronously. A future
-batching proposal should specify the maximum output loss on a crash and keep
-lifecycle decisions durable before acknowledgement.
+Streamed output batches: the writer persists once 8 KiB has accumulated since
+the last save, so the benchmark measures one write every eight chunks. On a
+Linux amd64 i7-10610U, one local run measured 0.09 ms and 0.18 MB allocated
+per 1 KiB chunk with no history, versus 1.31 ms and 1.55 MB with 32 completed
+tasks. These figures include JSON encoding and replacing the state file on
+local temp storage, and the rename is followed by a directory fsync. Disk
+type, history size and stream length affect the result. Lifecycle changes
+still save synchronously and carry any buffered output with them, so a crash
+can lose at most 8 KiB of streamed output while every decision, event and
+attempt result remains durable.

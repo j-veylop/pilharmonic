@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -145,7 +146,7 @@ func TestProfileCatalogSnapshotAndSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Shutdown()
+	defer func() { _ = restored.Shutdown() }()
 	got, _ = restored.GetTask(task.ID)
 	if got.ProfileName != "gitter" || got.ProfileSpec == nil {
 		t.Fatalf("profile not persisted: %+v", got)
@@ -241,7 +242,7 @@ func TestProfileAdapterSupportIsEnforced(t *testing.T) {
 	if err := s.RegisterProfile(Profile{Name: "explorer", Tools: []string{"read", "grep"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateProfileForRunner(PiRunner{}, Profile{Name: "explorer", Tools: []string{"read"}, Model: "provider/model"}); err != nil {
+	if err := validateProfileForRunner(FantasyRunner{}, Profile{Name: "explorer", Tools: []string{"read"}, Model: "provider/model"}); err != nil {
 		t.Fatalf("general executor rejected a translatable profile: %v", err)
 	}
 	if err := validateProfileForRunner(CommandRunner{Command: "cat"}, Profile{Name: "note", Instructions: "Be brief."}); err != nil {
@@ -452,31 +453,31 @@ func TestNoSubagentsProfileWithholdsCredentials(t *testing.T) {
 	await(t, s, parent.ID, Completed)
 }
 
-func TestPiArgsCarryProfile(t *testing.T) {
-	args := strings.Join((PiRunner{}).piArgs("json", &Profile{
-		Name:         "explorer",
-		Tools:        []string{"read", "grep"},
-		Model:        "provider/model",
-		Instructions: "Read only; never edit.",
-	}), "\x00")
-	for _, want := range []string{"--tools\x00read,grep", "--model\x00provider/model", "Read only; never edit."} {
-		if !strings.Contains(args, want) {
-			t.Fatalf("missing %q in %v", want, args)
-		}
+func TestFantasyToolPaletteAndModel(t *testing.T) {
+	profile := &Profile{Name: "explorer", Tools: []string{"read", "grep"}, Model: "provider/model"}
+	if got := (FantasyRunner{}).toolPalette(profile); !slices.Equal(got, []string{"read", "grep"}) {
+		t.Fatalf("profile tool palette = %v", got)
 	}
-	defaults := strings.Join((PiRunner{}).piArgs("rpc", nil), "\x00")
-	if !strings.Contains(defaults, "--tools\x00"+piTools) || strings.Contains(defaults, "--model") {
-		t.Fatalf("default arguments changed: %v", defaults)
+	if got := (FantasyRunner{}).RequestedModel(profile); got != "provider/model" {
+		t.Fatalf("profile model = %q, want provider/model", got)
 	}
-	if strings.Contains(defaults, "Read only") {
-		t.Fatalf("default arguments carry role text: %v", defaults)
+	if got := (FantasyRunner{}).toolPalette(nil); !slices.Equal(got, fantasyToolNames) {
+		t.Fatalf("default tool palette = %v, want %v", got, fantasyToolNames)
+	}
+	if prompt := (FantasyRunner{}).systemPrompt(&Profile{Name: "explorer", Instructions: "Read only; never edit."}); !strings.Contains(prompt, "Read only; never edit.") {
+		t.Fatalf("profile guidance missing from system prompt: %q", prompt)
 	}
 }
 
 func TestSpecialistAndProfileCompose(t *testing.T) {
-	runner := PiRunner{instructions: "Locate the regression.", model: "specialist/model"}
-	args := strings.Join(runner.piArgs("rpc", &Profile{Name: "audit", Instructions: "Record evidence.", Model: "profile/model"}), "\x00")
-	if strings.Count(args, "--append-system-prompt") != 1 || !strings.Contains(args, runner.instructions) || !strings.Contains(args, "Record evidence.") || !strings.Contains(args, "--model\x00specialist/model") || strings.Contains(args, "profile/model") {
-		t.Fatalf("unexpected combined Pi arguments: %q", args)
+	runner := FantasyRunner{instructions: "Locate the regression.", model: "specialist/model"}
+	prompt := runner.systemPrompt(&Profile{Name: "audit", Instructions: "Record evidence."})
+	for _, want := range []string{"Locate the regression.", "Record evidence.", piToolGuidance} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("missing %q in system prompt %q", want, prompt)
+		}
+	}
+	if got := runner.RequestedModel(&Profile{Name: "audit", Model: "profile/model"}); got != "specialist/model" {
+		t.Fatalf("runner model = %q, want specialist/model", got)
 	}
 }

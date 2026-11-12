@@ -15,7 +15,7 @@ func TestActivityFiltersAndCurrentAction(t *testing.T) {
 	if m.currentAction(task) != "⠋ bash: go test ./..." {
 		t.Fatal(m.currentAction(task))
 	}
-	m.activityKey("v")
+	m.activityKey("f")
 	if len(m.visibleActivities()) != 1 || m.visibleActivities()[0].AttemptID != "new" {
 		t.Fatal("latest filter")
 	}
@@ -23,11 +23,11 @@ func TestActivityFiltersAndCurrentAction(t *testing.T) {
 	if !m.activityExpanded || m.activityAttempt != "new" {
 		t.Fatal("wrong expanded attempt")
 	}
-	m.activityKey("v")
+	m.activityKey("f")
 	if m.activityExpanded || len(m.visibleActivities()) != 1 || m.visibleActivities()[0].Status != "failed" {
 		t.Fatal("error filter")
 	}
-	m.activityKey("v")
+	m.activityKey("f")
 	if len(m.visibleActivities()) != 2 {
 		t.Fatal("all filter")
 	}

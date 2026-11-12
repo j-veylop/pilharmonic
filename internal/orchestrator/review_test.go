@@ -107,7 +107,7 @@ func TestReviewStatePersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Shutdown()
+	defer func() { _ = restored.Shutdown() }()
 	got, ok := restored.GetTask(task.ID)
 	if !ok {
 		t.Fatal("task missing after reopen")
@@ -290,7 +290,7 @@ func TestServiceReviewDecisionIsPersistedAndAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Shutdown()
+	defer func() { _ = restored.Shutdown() }()
 	got, _ := restored.GetTask(task.ID)
 	if got.ReviewStatus != ReviewApproved || got.ReviewCommit != "abc123" || got.ReviewNote != "looks good" {
 		t.Fatalf("review decision not durable: %+v", got)

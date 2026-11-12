@@ -238,7 +238,7 @@ func (s *Service) LoadProfiles(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return err
@@ -295,9 +295,9 @@ func (s *Service) LoadProfiles(path string) error {
 	seen := make(map[string]bool)
 	for _, specialist := range config.Specialists {
 		name := specialist.Name
-		runner, ok := s.runners[name].(PiRunner)
+		runner, ok := s.runners[name].(FantasyRunner)
 		if !ok || runner.instructions == "" {
-			return fmt.Errorf("%q is not a bundled Pi specialist", name)
+			return fmt.Errorf("%q is not a bundled specialist", name)
 		}
 		if seen[name] {
 			return fmt.Errorf("duplicate specialist %q", name)
@@ -317,9 +317,10 @@ func (s *Service) LoadProfiles(path string) error {
 	}
 	for _, specialist := range config.Specialists {
 		if specialist.Model != "" {
-			runner := s.runners[specialist.Name].(PiRunner)
-			runner.model = specialist.Model
-			s.runners[specialist.Name] = runner
+			if runner, ok := s.runners[specialist.Name].(FantasyRunner); ok {
+				runner.model = specialist.Model
+				s.runners[specialist.Name] = runner
+			}
 		}
 		if specialist.Tools != nil {
 			if s.specialistTools == nil {
@@ -337,6 +338,7 @@ func (s *Service) LoadProfiles(path string) error {
 	for name, p := range loaded {
 		s.profiles[name] = p
 	}
+	s.applyModelSelectionLocked()
 	return nil
 }
 

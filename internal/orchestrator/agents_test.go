@@ -59,7 +59,18 @@ func TestAgentConfigurationAndSelection(t *testing.T) {
 	}
 }
 func TestAgentConfigAtomicValidation(t *testing.T) {
-	for _, text := range []string{`{"agents":[{"name":"general","command":"cat"}]}`, `{"agents":[{"name":"x","command":"cat"},{"name":"x","command":"cat"}]}`, `{"agents":[{"name":"x","command":"cat"},{"name":"y","command":"/missing-agent-command"}]}`, `{"agents":[{"name":"x","command":"cat","unknown":true}]}`, `{"agents":[]} {}`} {
+	for _, text := range []string{
+		`{"agents":[{"name":"general","command":"cat"}]}`,
+		`{"agents":[{"name":"x","command":"cat"},{"name":"x","command":"cat"}]}`,
+		`{"agents":[{"name":"x","command":"cat"},{"name":"y","command":"/missing-agent-command"}]}`,
+		`{"agents":[{"name":"x","command":"cat","unknown":true}]}`,
+		`{"agents":[]} {}`,
+		`{"agents":[{"name":"","command":"cat"}]}`,
+		`{"agents":[{"name":"bad name","command":"cat"}]}`,
+		`{"agents":[{"name":"bad\"name","command":"cat"}]}`,
+		`{"agents":[{"name":"bad%name","command":"cat"}]}`,
+		`{"agents":[{"name":"` + strings.Repeat("a", 65) + `","command":"cat"}]}`,
+	} {
 		s, _ := Open(filepath.Join(t.TempDir(), "state.json"))
 		if err := s.LoadAgents(writeAgentConfig(t, text)); err == nil {
 			t.Fatalf("accepted %s", text)
@@ -108,8 +119,8 @@ func TestBuiltinSpecialistsRespectConfiguredExecutor(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.LoadBuiltinSpecialists()
-	reviewer, ok := s.runners["reviewer"].(PiRunner)
-	if !ok || reviewer.instructions == "" || !strings.Contains(strings.Join(reviewer.piArgs("rpc", nil), " "), reviewer.instructions) {
+	reviewer, ok := s.runners["reviewer"].(FantasyRunner)
+	if !ok || reviewer.instructions == "" || !strings.Contains(reviewer.systemPrompt(nil), reviewer.instructions) {
 		t.Fatal("missing built-in review instructions")
 	}
 	if _, ok := s.runners["tester"].(CommandRunner); !ok || s.agentDescriptions["tester"] != "Custom test runner" {
@@ -121,9 +132,31 @@ func TestBuiltinSpecialistCatalog(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	s.LoadBuiltinSpecialists()
 	for _, name := range []string{"debugger", "explorer", "implementer", "gitter", "reviewer", "tester"} {
-		runner, ok := s.runners[name].(PiRunner)
+		runner, ok := s.runners[name].(FantasyRunner)
 		if !ok || runner.instructions == "" || s.agentDescriptions[name] == "" {
 			t.Errorf("missing specialist instructions or description for %q", name)
+		}
+	}
+}
+
+func TestBuiltinSpecialistsUseLeastPrivilegeTools(t *testing.T) {
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.LoadBuiltinSpecialists()
+	for name, want := range map[string]string{
+		"reviewer":    "read,grep,find,ls",
+		"explorer":    "read,grep,find,ls",
+		"tester":      "read,grep,find,ls,bash",
+		"implementer": "read,edit,write,grep,find,ls,bash",
+		"debugger":    "read,bash,grep,find,ls",
+		"gitter":      "read,bash,edit,write,grep,find,ls",
+	} {
+		runner, ok := s.runners[name].(FantasyRunner)
+		if !ok {
+			t.Fatalf("specialist %q is not a fantasy runner", name)
+		}
+		got := strings.Join(runner.toolPalette(nil), ",")
+		if got != want {
+			t.Errorf("specialist %q tools = %q, want %q", name, got, want)
 		}
 	}
 }
@@ -151,10 +184,8 @@ func TestSpecialistSelectionAndModel(t *testing.T) {
 			t.Fatalf("tester tool limit: %v", task.SpecialistTools)
 		}
 	}
-	for _, mode := range []string{"rpc", "json"} {
-		args := s.runners["tester"].(PiRunner).piArgs(mode, &Profile{Model: "provider/parent"})
-		if args[len(args)-2] != "--model" || args[len(args)-1] != "provider/example" {
-			t.Fatalf("unexpected args %v", args)
-		}
+	runner := s.runners["tester"].(FantasyRunner)
+	if got := runner.RequestedModel(&Profile{Model: "provider/parent"}); got != "provider/example" {
+		t.Fatalf("tester model = %q, want provider/example", got)
 	}
 }

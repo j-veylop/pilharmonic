@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -174,5 +175,69 @@ func TestApprovalWaitsForInheritedWorktreeAndMergesReviewedCommit(t *testing.T) 
 	}
 	if status := testGit(t, owner.ExecutionWorkspace, "status", "--porcelain"); status == "" {
 		t.Fatal("later child content was committed or removed from the worktree")
+	}
+}
+
+// Deleting the unsuccessful child that blocked a deferred integration lets the
+// operator prepare the retained worktree again without re-running the agent.
+func TestDeletingFailedChildReopensIntegration(t *testing.T) {
+	repo := committedRepo(t)
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	if err := s.SetConcurrencyLimit(1); err != nil {
+		t.Fatal(err)
+	}
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		if task.Depth > 0 {
+			return errors.New("child failed")
+		}
+		if err := os.WriteFile(filepath.Join(task.Workspace, "parent.txt"), []byte("parent\n"), 0600); err != nil {
+			return err
+		}
+		_, err := s.SpawnSubagent(task.ID, "child", "child work", "")
+		return err
+	}))
+	parent, err := s.CreateTask("parent", "fix the inherited tree", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(parent.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		blocked, _ := s.GetTask(parent.ID)
+		if blocked.MergeStatus == MergeFailed && blocked.ReviewStatus == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("integration never reported the failed child: %+v", blocked)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	var child Task
+	for _, task := range s.ListTasks() {
+		if task.ParentID == parent.ID {
+			child = task
+			break
+		}
+	}
+	if child.ID == "" {
+		t.Fatal("child task missing")
+	}
+	if err = s.DeleteTask(child.ID); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		reopened, _ := s.GetTask(parent.ID)
+		if reopened.AwaitingReview() && reopened.WorktreeCommit != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deleting the failed child did not reopen integration: %+v", reopened)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

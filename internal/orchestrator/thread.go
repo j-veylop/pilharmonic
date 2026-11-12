@@ -156,8 +156,10 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 	base := Trigger{ID: triggerID, Source: "manual", Text: text, CreatedAt: now}
 	oldTasks := make(map[int]Task)
 	type delivery struct {
-		ch      chan Trigger
-		trigger Trigger
+		ch        chan Trigger
+		trigger   Trigger
+		taskID    string
+		attemptID string
 	}
 	var deliveries []delivery
 	for i := range s.data.Tasks {
@@ -184,7 +186,7 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 			default:
 				trigger.Delivery = DeliveryPending
 				task.appendDelivery(trigger.ID, attemptID, DeliveryPending, "", now)
-				deliveries = append(deliveries, delivery{ch, trigger})
+				deliveries = append(deliveries, delivery{ch: ch, trigger: trigger, taskID: task.ID, attemptID: attemptID})
 			}
 		}
 		task.Context = append(task.Context, trigger)
@@ -204,11 +206,43 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 		thread.Decisions = thread.Decisions[:len(thread.Decisions)-1]
 		return err
 	}
-	// The service lock prevents competing sends; all channels were checked above.
+	// Deliver without blocking on a runner. Capacity was checked above, so a
+	// full buffer means the live reader is gone; the durable record must then
+	// report the hand-off as rejected instead of claiming it was queued.
 	for _, d := range deliveries {
-		d.ch <- d.trigger
+		select {
+		case d.ch <- d.trigger:
+		default:
+			s.rejectLiveDeliveryLocked(d.taskID, d.attemptID, d.trigger.ID, "live context queue is full", now)
+		}
 	}
 	return nil
+}
+
+// rejectLiveDeliveryLocked corrects a pending live hand-off that could not be
+// queued after all. Caller holds mu.
+func (s *Service) rejectLiveDeliveryLocked(taskID, attemptID, triggerID, reason string, now time.Time) {
+	for i := range s.data.Tasks {
+		task := &s.data.Tasks[i]
+		if task.ID != taskID {
+			continue
+		}
+		for j := range task.Context {
+			trigger := &task.Context[j]
+			if trigger.ID != triggerID || trigger.Delivery != DeliveryPending {
+				continue
+			}
+			old := clone(*task)
+			trigger.Delivery, trigger.DeliveryError = DeliveryRejected, reason
+			task.updatePendingDelivery(triggerID, attemptID, DeliveryRejected, reason, now)
+			task.Events = append(task.Events, Event{now, "context_" + DeliveryRejected, "Context " + triggerID + ": " + reason})
+			if err := s.save(); err != nil {
+				*task = old
+				s.persistErr = err
+			}
+			return
+		}
+	}
 }
 
 func (s *Service) AddManualThreadContext(taskID, text string) error {
@@ -247,6 +281,11 @@ func (s *Service) FollowUp(taskID, text string) (bool, error) {
 		case Completed, Failed, Canceled, Interrupted:
 		default:
 			return false, fmt.Errorf("cannot follow up task in %s state", t.Status)
+		}
+		// Requeueing clears the review decision, so a prepared commit awaiting
+		// the operator must be settled first or the approval would be lost.
+		if t.AwaitingReview() {
+			return false, errors.New("task has prepared work awaiting review; approve or reject it first")
 		}
 		var thread *Thread
 		for j := range s.data.Threads {

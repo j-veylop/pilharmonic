@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -62,8 +63,27 @@ func (s *Service) resumeMergesLocked() {
 			owner.integrating = true
 			s.wg.Add(1)
 			go s.finishDeferredPreparation(clone(*owner))
+			continue
+		}
+		// A deferred preparation that stopped for an unsuccessful descendant is
+		// re-entered once that descendant is gone, so deleting the child lets the
+		// operator prepare the retained worktree without re-running the agent. A
+		// Git failure keeps MergeFailed and is deliberately left for the operator.
+		if mergeBlockedByDescendant(*owner) {
+			if _, blocked := s.integrationBlockerLocked(*owner); blocked {
+				continue
+			}
+			owner.integrating = true
+			s.wg.Add(1)
+			go s.finishDeferredPreparation(clone(*owner))
 		}
 	}
+}
+
+// mergeBlockedByDescendant reports a deferred preparation that failed only
+// because an unsuccessful descendant still held the inherited worktree.
+func mergeBlockedByDescendant(t Task) bool {
+	return t.MergeStatus == MergeFailed && t.ReviewStatus == "" && strings.HasPrefix(t.MergeError, blockerMergeError)
 }
 
 func (s *Service) finishDeferredPreparation(owner Task) {
@@ -117,9 +137,11 @@ func (s *Service) finalizeIntegration(id string, merge *mergeOutcome, preparatio
 		}
 		if err := s.save(); err != nil {
 			s.persistErr = err
-		} else {
-			s.resumeMergesLocked()
 		}
+		// The in-memory task is already advanced, so resuming is safe even when
+		// the write failed: it only schedules work for other tasks and never
+		// re-enters this one while integrating is cleared above.
+		s.resumeMergesLocked()
 		return
 	}
 }
@@ -171,6 +193,10 @@ func (task *Task) recordPreparation(preparation preparationOutcome) {
 		return
 	}
 	if err := task.beginReview(preparation.WorktreeCommit); err != nil {
+		// Leaving MergeStatus empty would hide a completed task that never
+		// reached review, so surface it as a merge failure for the operator.
+		task.MergeStatus = MergeFailed
+		task.MergeError = "could not open review: " + err.Error()
 		task.Events = append(task.Events, Event{task.UpdatedAt, "review_error", "Could not open review: " + err.Error()})
 		return
 	}

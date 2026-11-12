@@ -133,12 +133,32 @@ var mandateTokenPattern = regexp.MustCompile(`[a-z0-9_]+|[.;:,!?]`)
 var requestPoliteness = []string{
 	"can you ",
 	"could you ",
+	"help me ",
 	"i need you to ",
 	"i want you to ",
+	"i'll ",
+	"i'd like to ",
+	"i would like to ",
 	"kindly ",
+	"let me ",
+	"let's ",
 	"please ",
+	"we need to ",
+	"we should ",
 	"will you ",
 	"would you ",
+}
+
+// requestLeadWords may precede a request verb without making it a noun phrase:
+// subjects ("we should add tests"), modals ("we could add tests") and the
+// auxiliary words of common contractions, which the tokenizer splits off.
+var requestLeadWords = map[string]bool{
+	"can": true, "could": true, "d": true, "had": true, "has": true,
+	"have": true, "he": true, "help": true, "i": true, "it": true,
+	"let": true, "like": true, "ll": true, "may": true, "me": true,
+	"might": true, "must": true, "need": true, "s": true, "shall": true,
+	"she": true, "should": true, "they": true, "want": true, "we": true,
+	"will": true, "would": true, "you": true,
 }
 
 func trimRequestPoliteness(text string) string {
@@ -197,6 +217,12 @@ func mandateRequestsChanges(text string) bool {
 				continue
 			}
 			if token == "run" {
+				continue
+			}
+			// A subject or auxiliary may precede the verb. Keep the request-start
+			// position so "we should refactor this" and "help me fix the parser"
+			// still count as requested work.
+			if requestLeadWords[token] && !changeVerbs[token] {
 				continue
 			}
 		}

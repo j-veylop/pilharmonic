@@ -38,8 +38,7 @@ func (m model) profilePickerKey(key string) (model, tea.Cmd) {
 			} else {
 				m.notice = "Profile selected: " + profileLabel(profile)
 			}
-			m.tasks = m.service.ListTasks()
-			m.clamp()
+			m.refreshTasks()
 		}
 		m.profilePicker = pickerState[orchestrator.Profile]{}
 	default:
@@ -62,8 +61,7 @@ func (m model) agentPickerKey(key string) (model, tea.Cmd) {
 			} else {
 				m.notice = "Agent selected: " + name
 			}
-			m.tasks = m.service.ListTasks()
-			m.clamp()
+			m.refreshTasks()
 		}
 		m.agentPicker = pickerState[orchestrator.AgentInfo]{}
 	default:

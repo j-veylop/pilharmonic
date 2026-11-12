@@ -58,6 +58,8 @@ func (m model) footer(w int) string {
 		} else {
 			footerText = "enter submit · tab actions · esc tasks · ctrl+c quit"
 		}
+	case m.input.kind != "":
+		footerText = "enter submit · ctrl+j/alt+enter newline · esc cancel"
 	case m.activity:
 		if m.activityExpanded {
 			footerText = "esc collapse · t output · f filter · ? help · q quit"
@@ -91,24 +93,6 @@ func (m model) footer(w int) string {
 	}
 	if m.cleanup.kind == discardMerged {
 		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Skips uncommitted or unmerged work; task history is kept.")
-	}
-	if m.input.kind != "" {
-		label := string(m.input.kind)
-		prefix := accentStyle.Render(label + "  › ")
-		pad := strings.Repeat(" ", lipgloss.Width(label+"  › "))
-		visible := m.input.viewLines(m.composerWidth(), m.composerHeight())
-		draft := make([]string, 0, len(visible))
-		for i, line := range visible {
-			if i == 0 {
-				draft = append(draft, prefix+line)
-			} else {
-				draft = append(draft, pad+line)
-			}
-		}
-		footer = strings.Join(draft, "\n") + "\n" + mutedStyle.Render("enter submit  ·  ctrl+j/alt+enter newline  ·  esc cancel")
-		if m.input.kind == rejectReviewInput {
-			footer += "\n" + mutedStyle.Render("Rejection keeps the worktree; F adds follow-up context and requeues.")
-		}
 	}
 	if m.agentPicker.target != "" {
 		footer = mutedStyle.Render("↑↓/j/k choose agent · enter select · esc cancel")

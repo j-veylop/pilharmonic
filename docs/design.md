@@ -28,6 +28,17 @@ and wraps at the end. Needs
 action covers blocked, waiting, awaiting review, input undelivered, merge
 failed, failed and interrupted tasks.
 
+The request form and every composer render as one input box docked at the
+bottom of the screen. Its label sits on the box's top border, the draft wraps
+inside it and grows to at most six rows, and the footer below keeps the key
+hints for that mode. The shared editor follows the usual textarea shortcuts:
+`Ctrl-w` and `Alt-backspace` delete the previous word, `Alt-d` the next one,
+`Ctrl-k` and `Ctrl-u` delete to the line end and the line start, `Delete` or
+`Ctrl-d` removes the next character, `Ctrl-arrow` or `Alt-b`/`Alt-f` move by
+word, and `Home`/`End` or `Ctrl-a`/`Ctrl-e` jump to the line bounds. Word
+operations stay on their own line, so a deletion never removes a line break; at
+a line boundary `Ctrl-k` and `Ctrl-u` join the neighbouring line.
+
 ## Requests and authority
 
 - A trigger identifies an incoming request in a thread. A compiled-in policy
@@ -174,8 +185,10 @@ counted as running. The board footer renders actions valid for the selected
 task in the current mode, using the same stage and service guards as the keys:
 review decisions for a pending commit, cancel and activity for a running task,
 start for an unscheduled queued task, and retry for a retryable task. Modal,
-composer, activity and detail-focus footers keep their own controls. Optional
-hints are dropped when they would exceed two footer lines. On the board, `!`
+activity and detail-focus footers keep their own controls, while the request
+form and composers keep their editing hints below the docked input box.
+Optional hints are dropped when they would exceed two footer lines. On the
+board, `!`
 selects the next task that needs action in grouped display order and wraps;
 request and task composers retain `!` as text. When the sidebar is hidden, the
 detail title prefixes the selected task's grouped position so narrow layouts

@@ -46,6 +46,8 @@ type layout struct {
 	sidebar       bool
 	taskWidth     int
 	detailWidth   int
+	composerDraft int // draft rows inside the docked input box
+	composerRows  int // total rows of the docked input block, hint rows included
 }
 
 func (m model) layout() layout {
@@ -60,7 +62,13 @@ func (m model) layout() layout {
 	if w < 30 || h < 10 {
 		return l
 	}
-	l.bodyHeight = h - 1 - (strings.Count(m.footer(w), "\n") + 1)
+	footerRows := strings.Count(m.footer(w), "\n") + 1
+	if m.composerOpen() {
+		extra := m.composerExtraRows()
+		l.composerDraft = m.composerDraftRows(footerRows + extra)
+		l.composerRows = l.composerDraft + 2 + extra
+	}
+	l.bodyHeight = h - 1 - footerRows - l.composerRows
 	l.sidebar = w >= 76 && !m.fullscreen
 	if l.sidebar {
 		l.taskWidth = min(34, max(24, w/4))
@@ -117,7 +125,15 @@ func (m model) View() string {
 		body = m.detailPanel(w, bodyHeight)
 	}
 
-	screen := fit(top+"\n"+body+"\n"+footer, w, h)
+	rows := []string{top}
+	if body != "" {
+		rows = append(rows, body)
+	}
+	if l.composerRows > 0 {
+		rows = append(rows, m.composerBlock(w, l.composerDraft)...)
+	}
+	rows = append(rows, footer)
+	screen := fit(strings.Join(rows, "\n"), w, h)
 	if m.loginMenu {
 		return m.loginMenuView(screen, w, h)
 	}

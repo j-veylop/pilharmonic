@@ -163,8 +163,9 @@ func (m model) loginComposerLines(width int) []string {
 	if m.loginKey != "" {
 		masked = strings.Repeat("*", utf8.RuneCountInString(m.loginKey))
 	}
-	line := "Enter API key for " + m.loginProvider + ": " + masked
-	return []string{fit(accentStyle.Render("▸ ")+line+"▏", width, 1)}
+	line := "Enter API key for " + terminalText(m.loginProvider) + ": " + masked
+	content := max(1, width-lipgloss.Width(composerPrompt)-1)
+	return []string{fit(accentStyle.Render(composerPrompt)+line, content, 1) + "▏"}
 }
 
 // trimLastRune drops the trailing character of text, keeping UTF-8 intact.

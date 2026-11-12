@@ -145,6 +145,17 @@ its API key is read from. Built-in prefixes: `openai`, `deepseek`, `openrouter`,
 with `/login <provider>` (or the matching environment variable) and are kept in
 a owner-only `credentials.json` beside the state file, never in task state.
 
+Agents run on one of two model classes, `big` (planning and heavy changes) or
+`small` (fast, focused work). Open the menu with **m** or `/model [big|small]`
+to pick a `provider/model` selector for each class from a curated catalog, or
+type a free-form selector. **/agents** toggles each agent between the two
+classes. By default only `general` runs big; `debugger`, `explorer`,
+`implementer`, `gitter`, `reviewer`, and `tester` run small. The choices are
+kept in `models.json` beside the state file, with shape
+`{"big": "provider/model", "small": "provider/model", "agents": {"implementer": "big"}}`.
+A class model overrides the profile and `-model` fallbacks; a class left empty
+uses them.
+
 Open the task board, create a draft with **n**, then press **A** to see their
 descriptions. A delegating parent can select one by name. They use the same
 in-process Fantasy adapter, provider credentials and model fallback as the

@@ -37,6 +37,8 @@ type fakeLoginService struct {
 	models        map[string][]string
 	setModelCalls []string // recorded as "class=selector"
 	setModelErr   error
+	agentClasses  []orchestrator.AgentClass
+	setClassCalls []string // recorded as "agent=class"
 }
 
 var _ Service = (*fakeLoginService)(nil)
@@ -146,6 +148,23 @@ func (f *fakeLoginService) ModelsForProvider(provider string) []string {
 
 func (f *fakeLoginService) FetchModels(_ context.Context, provider string) ([]string, error) {
 	return f.models[provider], nil
+}
+
+func (f *fakeLoginService) SetAgentClass(agent, class string) error {
+	f.setClassCalls = append(f.setClassCalls, agent+"="+class)
+	for i := range f.agentClasses {
+		if f.agentClasses[i].Agent == agent {
+			f.agentClasses[i].Class = class
+			f.agentClasses[i].Overridden = class != ""
+			return nil
+		}
+	}
+	f.agentClasses = append(f.agentClasses, orchestrator.AgentClass{Agent: agent, Class: class, Overridden: class != ""})
+	return nil
+}
+
+func (f *fakeLoginService) AgentClasses() []orchestrator.AgentClass {
+	return f.agentClasses
 }
 
 // typeSlash types a command in the router form and submits it.

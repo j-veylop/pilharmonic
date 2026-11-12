@@ -224,10 +224,14 @@ narrow a retry. Disjoint lists prevent the executor from starting.
 
 The profiles JSON can select the default profile, modify built-in profiles and
 assign models and tools to bundled specialists. Startup registers executors
-before validating these settings and resuming queued work. The Fantasy adapter
-resolves the model for each attempt as the specialist model, else the task
-profile model, else the `-model` fallback, and fixes that selector on the
-attempt independently of the inherited profile name.
+before validating these settings and resuming queued work. Each Fantasy agent
+belongs to a model class, `big` or `small`; only `general` defaults to `big`,
+the specialists to `small`. The operator picks a selector per class and can
+override any agent's class; both persist in `models.json` beside the state
+file. The Fantasy adapter resolves the model for each attempt as the class
+model, else the specialist model, else the task profile model, else the
+`-model` fallback, and fixes that selector on the attempt independently of the
+inherited profile name.
 
 A profile may add coordinator instructions for the top-level general task. The
 canonical delegation workflow is compiled in, so the shipped profiles file does

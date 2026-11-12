@@ -90,6 +90,8 @@ type Service interface {
 	ModelSelection() orchestrator.ModelSelection
 	ModelsForProvider(provider string) []string
 	FetchModels(ctx context.Context, provider string) ([]string, error)
+	SetAgentClass(agent, class string) error
+	AgentClasses() []orchestrator.AgentClass
 }
 
 var _ Service = (*orchestrator.Service)(nil)
@@ -149,6 +151,8 @@ type model struct {
 	modelList         []string // fetched models for modelProvider
 	modelListProvider string   // provider modelList belongs to
 	modelsLoading     bool     // a model fetch is in flight for modelProvider
+	agentClassMenu    bool     // the per-agent big/small menu is open
+	agentClassIndex   int      // selected row in the agent-class menu
 }
 
 // Run starts the terminal interface. The service owns task execution.
@@ -337,6 +341,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.modelMenu {
 			return m.modelMenuKey(msg.String())
+		}
+		if m.agentClassMenu {
+			return m.agentClassMenuKey(msg.String())
 		}
 		if m.help {
 			return m.helpKey(msg.String())

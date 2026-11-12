@@ -55,25 +55,39 @@ type ModelSelection struct {
 	Small string
 }
 
+// AgentClass reports the class an agent runs on and whether the operator chose
+// it explicitly (overriding the default).
+type AgentClass struct {
+	Agent      string
+	Class      string
+	Overridden bool
+}
+
+// modelConfig is the on-disk shape of models.json: the big/small model
+// selectors plus per-agent class overrides.
+type modelConfig struct {
+	Big    string            `json:"big,omitempty"`
+	Small  string            `json:"small,omitempty"`
+	Agents map[string]string `json:"agents,omitempty"`
+}
+
 // modelSelectionPathFor names the model-selection file beside the state file.
 func modelSelectionPathFor(statePath string) string {
 	return filepath.Join(filepath.Dir(statePath), "models.json")
 }
 
-func loadModelSelection(path string) (map[string]string, error) {
+func loadModelConfig(path string) (map[string]string, map[string]string, error) {
+	empty := map[string]string{}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string]string{}, nil
+		return empty, empty, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var raw struct {
-		Big   string `json:"big,omitempty"`
-		Small string `json:"small,omitempty"`
-	}
+	var raw modelConfig
 	if err := json.Unmarshal(b, &raw); err != nil {
-		return nil, fmt.Errorf("read model selection: %w", err)
+		return nil, nil, fmt.Errorf("read model config: %w", err)
 	}
 	selection := map[string]string{}
 	if raw.Big != "" {
@@ -82,19 +96,20 @@ func loadModelSelection(path string) (map[string]string, error) {
 	if raw.Small != "" {
 		selection[ModelClassSmall] = raw.Small
 	}
-	return selection, nil
+	if raw.Agents == nil {
+		raw.Agents = map[string]string{}
+	}
+	return selection, raw.Agents, nil
 }
 
-func saveModelSelection(path string, selection map[string]string) error {
+func saveModelConfig(path string, selection, agents map[string]string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	b, err := json.Marshal(struct {
-		Big   string `json:"big,omitempty"`
-		Small string `json:"small,omitempty"`
-	}{
-		Big:   selection[ModelClassBig],
-		Small: selection[ModelClassSmall],
+	b, err := json.Marshal(modelConfig{
+		Big:    selection[ModelClassBig],
+		Small:  selection[ModelClassSmall],
+		Agents: agents,
 	})
 	if err != nil {
 		return err
@@ -145,7 +160,35 @@ func (s *Service) SetModel(class, model string) error {
 	} else {
 		delete(s.modelSelection, class)
 	}
-	if err := saveModelSelection(s.modelSelectionPath, s.modelSelection); err != nil {
+	if err := saveModelConfig(s.modelSelectionPath, s.modelSelection, s.agentClasses); err != nil {
+		return err
+	}
+	s.applyModelSelectionLocked()
+	return nil
+}
+
+// SetAgentClass pins an agent to a model class ("big" or "small"), overriding
+// the default. An empty class reverts the agent to its default.
+func (s *Service) SetAgentClass(agent, class string) error {
+	agent = strings.TrimSpace(agent)
+	class = strings.TrimSpace(class)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return errors.New("service is shutting down")
+	}
+	if _, ok := s.runners[agent].(FantasyRunner); !ok {
+		return fmt.Errorf("%q is not a known agent", agent)
+	}
+	if class != "" && class != ModelClassBig && class != ModelClassSmall {
+		return fmt.Errorf("model class must be %q or %q", ModelClassBig, ModelClassSmall)
+	}
+	if class == "" {
+		delete(s.agentClasses, agent)
+	} else {
+		s.agentClasses[agent] = class
+	}
+	if err := saveModelConfig(s.modelSelectionPath, s.modelSelection, s.agentClasses); err != nil {
 		return err
 	}
 	s.applyModelSelectionLocked()
@@ -163,15 +206,42 @@ func (s *Service) ModelSelection() ModelSelection {
 	}
 }
 
-// applyModelSelectionLocked writes the class selections onto the Fantasy
-// runners. The caller holds s.mu.
+// AgentClasses returns every Fantasy agent, its effective class, and whether the
+// operator overrode the default, ordered by name.
+func (s *Service) AgentClasses() []AgentClass {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(modelClassFor))
+	for name := range modelClassFor {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	result := make([]AgentClass, 0, len(names))
+	for _, name := range names {
+		class, overridden := s.agentClasses[name]
+		if !overridden {
+			class = modelClassFor[name]
+		}
+		result = append(result, AgentClass{Agent: name, Class: class, Overridden: overridden})
+	}
+	return result
+}
+
+// applyModelSelectionLocked resolves each agent's effective class and writes
+// the corresponding model override onto the Fantasy runners. The caller holds
+// s.mu.
 func (s *Service) applyModelSelectionLocked() {
 	for name, r := range s.runners {
 		fr, ok := r.(FantasyRunner)
 		if !ok {
 			continue
 		}
-		fr.modelOverride = s.modelSelection[fr.modelClass]
+		class := s.agentClasses[name]
+		if class == "" {
+			class = modelClassFor[name]
+		}
+		fr.modelClass = class
+		fr.modelOverride = s.modelSelection[class]
 		s.runners[name] = fr
 	}
 }
@@ -196,38 +266,15 @@ func validateModelSelector(model string) error {
 	return nil
 }
 
-// modelClassFor returns the class an agent belongs to, for the model menu and
-// resolution. Unclassified agents default to the big model.
+// modelClassFor returns the default class an agent belongs to. Only the
+// coordinator (general) is big by default; every specialist is small unless the
+// operator overrides it.
 var modelClassFor = map[string]string{
 	DefaultRouteAgent: ModelClassBig,
-	"debugger":        ModelClassBig,
+	"debugger":        ModelClassSmall,
 	"explorer":        ModelClassSmall,
-	"implementer":     ModelClassBig,
-	"gitter":          ModelClassBig,
+	"implementer":     ModelClassSmall,
+	"gitter":          ModelClassSmall,
 	"reviewer":        ModelClassSmall,
 	"tester":          ModelClassSmall,
-}
-
-// AgentModelClasses returns the built-in agents and their model class, ordered
-// by name, for the model menu.
-func AgentModelClasses() []struct {
-	Agent string
-	Class string
-} {
-	names := make([]string, 0, len(modelClassFor))
-	for name := range modelClassFor {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	result := make([]struct {
-		Agent string
-		Class string
-	}, 0, len(names))
-	for _, name := range names {
-		result = append(result, struct {
-			Agent string
-			Class string
-		}{Agent: name, Class: modelClassFor[name]})
-	}
-	return result
 }

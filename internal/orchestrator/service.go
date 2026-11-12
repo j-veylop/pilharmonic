@@ -171,6 +171,7 @@ type Service struct {
 	creds              map[string]string
 	modelSelectionPath string
 	modelSelection     map[string]string
+	agentClasses       map[string]string
 	modelCache         modelListCache
 	data               state
 	runners            map[string]Runner
@@ -247,11 +248,12 @@ func Open(path string) (*Service, error) {
 	}
 	s.creds = creds
 	s.modelSelectionPath = modelSelectionPathFor(path)
-	selection, err := loadModelSelection(s.modelSelectionPath)
+	selection, agentClasses, err := loadModelConfig(s.modelSelectionPath)
 	if err != nil {
 		return nil, err
 	}
 	s.modelSelection = selection
+	s.agentClasses = agentClasses
 	s.runners[DefaultRouteAgent] = FantasyRunner{ModelFactory: s.fantasyModelFactory, modelClass: ModelClassBig, modelOverride: s.modelSelection[ModelClassBig]}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

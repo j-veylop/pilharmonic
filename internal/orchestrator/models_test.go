@@ -28,14 +28,16 @@ func TestModelSelection(t *testing.T) {
 		t.Fatal("unknown class accepted")
 	}
 
-	// The small model applies to small agents, not big ones.
+	// By default every specialist is small, so the small model applies to them.
 	explorer := s.runners["explorer"].(FantasyRunner)
 	if got := explorer.RequestedModel(&Profile{Model: "hyper/prism"}); got != "deepseek/deepseek-flash" {
 		t.Fatalf("small model not applied to explorer: %q", got)
 	}
-	implementer := s.runners["implementer"].(FantasyRunner)
-	if got := implementer.RequestedModel(&Profile{Model: "hyper/prism"}); got != "hyper/prism" {
-		t.Fatalf("small model leaked to implementer: %q", got)
+	// The coordinator (general) is big by default, so the small model does not
+	// leak to it.
+	general := s.runners[DefaultRouteAgent].(FantasyRunner)
+	if got := general.RequestedModel(&Profile{Model: "hyper/prism"}); got != "hyper/prism" {
+		t.Fatalf("small model leaked to general: %q", got)
 	}
 
 	// It persists across reopen.
@@ -60,6 +62,54 @@ func TestModelSelection(t *testing.T) {
 	}
 }
 
+func TestAgentClassOverride(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+	s.LoadBuiltinSpecialists()
+
+	// Default: everything but general is small.
+	classes := map[string]string{}
+	for _, c := range s.AgentClasses() {
+		classes[c.Agent] = c.Class
+	}
+	if classes[DefaultRouteAgent] != ModelClassBig {
+		t.Fatalf("general default class = %q", classes[DefaultRouteAgent])
+	}
+	if classes["implementer"] != ModelClassSmall || classes["explorer"] != ModelClassSmall {
+		t.Fatalf("specialist default classes: %v", classes)
+	}
+
+	// Pin implementer to the big model and set both class models.
+	if err := s.SetAgentClass("implementer", ModelClassBig); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetModel(ModelClassBig, "hyper/prism"); err != nil {
+		t.Fatal(err)
+	}
+	implementer := s.runners["implementer"].(FantasyRunner)
+	if got := implementer.RequestedModel(&Profile{Model: "hyper/prism-flash"}); got != "hyper/prism" {
+		t.Fatalf("big model not applied to overridden implementer: %q", got)
+	}
+	if err := s.SetAgentClass("bogus", ModelClassBig); err == nil {
+		t.Fatal("unknown agent accepted")
+	}
+	if err := s.SetAgentClass("implementer", "huge"); err == nil {
+		t.Fatal("invalid class accepted")
+	}
+
+	// Clearing reverts to the default (small).
+	if err := s.SetAgentClass("implementer", ""); err != nil {
+		t.Fatal(err)
+	}
+	cleared := s.runners["implementer"].(FantasyRunner)
+	if got := cleared.RequestedModel(nil); got != "" {
+		t.Fatalf("class override not cleared: %q", got)
+	}
+}
+
 func TestModelSelectionReportsClasses(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
@@ -73,13 +123,5 @@ func TestModelSelectionReportsClasses(t *testing.T) {
 	sel := s.ModelSelection()
 	if sel.Big != "hyper/prism" || sel.Small != "" {
 		t.Fatalf("unexpected selection: %+v", sel)
-	}
-
-	classes := map[string]string{}
-	for _, c := range AgentModelClasses() {
-		classes[c.Agent] = c.Class
-	}
-	if classes["implementer"] != ModelClassBig || classes["explorer"] != ModelClassSmall || classes["reviewer"] != ModelClassSmall {
-		t.Fatalf("unexpected agent classes: %v", classes)
 	}
 }

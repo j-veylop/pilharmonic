@@ -16,7 +16,7 @@ import (
 
 // slashCommandsHelp is the one-line summary shown by /help and alongside an
 // unknown command, so the operator always sees the whole vocabulary.
-const slashCommandsHelp = "/login — pick a provider (or /login <provider>), /logout <provider>, /providers, /model [big|small], /help"
+const slashCommandsHelp = "/login — pick a provider (or /login <provider>), /logout <provider>, /providers, /model [big|small], /agents, /help"
 
 // forcedLoginNotice is the standing message while no provider is configured.
 const forcedLoginNotice = "No provider configured — log in first"
@@ -61,6 +61,13 @@ func (m model) slashCommand(line string) model {
 			return m
 		}
 		m.openModelMenu(class)
+		return m
+	case "/agents":
+		m.agentClassMenu = true
+		m.agentClassIndex = 0
+		m.router = false
+		m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
+		m.notice = "Select an agent to toggle big/small"
 		return m
 	case "/logout":
 		if len(fields) < 2 || fields[1] == "" {
@@ -652,4 +659,105 @@ func (m model) modelEmptyHint() string {
 	default:
 		return "No curated models; use custom…"
 	}
+}
+
+// agentClasses lists the built-in agents and their current class for the
+// per-agent big/small menu.
+func (m model) agentClasses() []orchestrator.AgentClass {
+	if m.service == nil {
+		return nil
+	}
+	return m.service.AgentClasses()
+}
+
+// agentClassMenuKey drives the per-agent big/small menu. Enter toggles the
+// selected agent's class; nothing is written unless the operator toggles one.
+func (m model) agentClassMenuKey(key string) (model, tea.Cmd) {
+	agents := m.agentClasses()
+	last := len(agents) - 1
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.agentClassMenu = false
+		m.notice = "Agent classes closed"
+		return m, nil
+	case "up", "k":
+		m.agentClassIndex = max(0, min(last, m.agentClassIndex-1))
+		return m, nil
+	case "down", "j":
+		m.agentClassIndex = max(0, min(last, m.agentClassIndex+1))
+		return m, nil
+	case "enter":
+		if len(agents) == 0 {
+			return m, nil
+		}
+		agent := agents[max(0, min(last, m.agentClassIndex))]
+		class := orchestrator.ModelClassBig
+		if agent.Class == orchestrator.ModelClassBig {
+			class = orchestrator.ModelClassSmall
+		}
+		if m.service == nil {
+			m.notice = "Agent classes are not connected to a service."
+			return m, nil
+		}
+		if err := m.service.SetAgentClass(agent.Agent, class); err != nil {
+			m.notice = err.Error()
+			return m, nil
+		}
+		m.notice = agent.Agent + " uses the " + class + " model"
+		return m, nil
+	}
+	return m, nil
+}
+
+// agentClassMenuView draws the per-agent big/small menu as a centered modal.
+func (m model) agentClassMenuView(background string, w, h int) string {
+	agents := m.agentClasses()
+	mw, mh := min(76, w-4), min(28, h-2)
+	inner := mw - 4
+	content := []string{
+		accentStyle.Render("AGENTS") + mutedStyle.Render("  big / small model"),
+		"",
+	}
+	selected := max(0, min(len(agents)-1, m.agentClassIndex))
+	rows := max(1, mh-5)
+	start := 0
+	if selected >= rows {
+		start = min(selected-rows+1, max(0, len(agents)-rows))
+	}
+	for i := start; i < len(agents) && i < start+rows; i++ {
+		agent := agents[i]
+		marker, name := "  ", mutedStyle.Render(agent.Agent)
+		if i == selected {
+			marker, name = accentStyle.Render("› "), titleStyle.Render(agent.Agent)
+		}
+		tag := mutedStyle.Render(agent.Class)
+		if agent.Overridden {
+			tag = accentStyle.Render(agent.Class)
+		}
+		content = append(content, marker+name+strings.Repeat(" ", inner-lipgloss.Width(agent.Agent)-lipgloss.Width(ansi.Strip(tag)))+tag)
+	}
+	for len(content) < mh-3 {
+		content = append(content, "")
+	}
+	content = append(content, accentStyle.Render("j/k select · enter toggle · esc close"))
+	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
+	bg := strings.Split(background, "\n")
+	box := strings.Split(modal, "\n")
+	x, y := (w-mw)/2, (h-mh)/2
+	result := make([]string, h)
+	for row := range result {
+		line := ""
+		if row < len(bg) {
+			line = ansi.Strip(bg[row])
+		}
+		line = lipgloss.PlaceHorizontal(w, lipgloss.Left, line)
+		if row >= y && row < y+len(box) {
+			result[row] = mutedStyle.Faint(true).Render(ansi.Cut(line, 0, x)) + box[row-y] + mutedStyle.Faint(true).Render(ansi.Cut(line, x+mw, w))
+		} else {
+			result[row] = mutedStyle.Faint(true).Render(line)
+		}
+	}
+	return fit(strings.Join(result, "\n"), w, h)
 }

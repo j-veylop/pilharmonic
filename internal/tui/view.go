@@ -124,6 +124,9 @@ func (m model) View() string {
 	if m.modelMenu {
 		return m.modelMenuView(screen, w, h)
 	}
+	if m.agentClassMenu {
+		return m.agentClassMenuView(screen, w, h)
+	}
 	if m.help {
 		return m.helpView(screen, w, h)
 	}

@@ -402,11 +402,8 @@ func TestFantasyToolsCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := runFantasyTool(t, workspace, "grep", `{"pattern":"needle","path":"notes.md"}`); got.IsError || !strings.Contains(got.Content, "needle") {
+	if got := runFantasyTool(t, workspace, "grep", `{"pattern":"needle","path":"notes.md"}`); got.IsError || !strings.Contains(got.Content, "notes.md:1:needle") {
 		t.Fatalf("grep: %+v", got)
-	}
-	if got := runFantasyTool(t, workspace, "grep", `{"pattern":"absent"}`); !got.IsError {
-		t.Fatalf("grep without matches should report an error: %+v", got)
 	}
 	if got := runFantasyTool(t, workspace, "find", `{"name":"*.md"}`); got.IsError || !strings.Contains(got.Content, "notes.md") {
 		t.Fatalf("find: %+v", got)
@@ -420,6 +417,81 @@ func TestFantasyToolsCommands(t *testing.T) {
 	// The bash tool runs in the workspace, not in the orchestrator's directory.
 	if got := runFantasyTool(t, workspace, "bash", `{"command":"cat notes.md"}`); got.IsError || !strings.Contains(got.Content, "needle in a haystack") {
 		t.Fatalf("bash working directory: %+v", got)
+	}
+}
+
+func TestFantasyGrepToolSearchesWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	writeWorkspaceFile(t, workspace, "notes.md", "first line\nneedle in a haystack\n")
+	writeWorkspaceFile(t, workspace, "pkg/deep.go", "package pkg // needle\n")
+	writeWorkspaceFile(t, workspace, ".git/config", "needle in git metadata\n")
+
+	// No path: the whole workspace is searched recursively, and the default
+	// has to find the needle instead of waiting on stdin.
+	got := runFantasyTool(t, workspace, "grep", `{"pattern":"needle"}`)
+	if got.IsError {
+		t.Fatalf("grep without a path failed: %+v", got)
+	}
+	for _, want := range []string{"notes.md:2:needle in a haystack", "pkg/deep.go:1:package pkg // needle"} {
+		if !strings.Contains(got.Content, want) {
+			t.Fatalf("grep output missing %q: %q", want, got.Content)
+		}
+	}
+	if strings.Contains(got.Content, ".git/config") {
+		t.Fatalf("grep searched Git metadata: %q", got.Content)
+	}
+
+	// A directory path recurses into it and stays inside it.
+	got = runFantasyTool(t, workspace, "grep", `{"pattern":"needle","path":"pkg"}`)
+	if got.IsError || !strings.Contains(got.Content, "deep.go:1:package pkg // needle") {
+		t.Fatalf("grep of a directory: %+v", got)
+	}
+	if strings.Contains(got.Content, "notes.md") {
+		t.Fatalf("grep of a directory left that directory: %q", got.Content)
+	}
+
+	// A file path names the file in each hit.
+	got = runFantasyTool(t, workspace, "grep", `{"pattern":"needle","path":"notes.md"}`)
+	if got.IsError || !strings.Contains(got.Content, "notes.md:2:needle in a haystack") {
+		t.Fatalf("grep of a file: %+v", got)
+	}
+
+	// A search without matches is information for the model, not a failure.
+	got = runFantasyTool(t, workspace, "grep", `{"pattern":"absent"}`)
+	if got.IsError {
+		t.Fatalf("grep without matches reported an error: %+v", got)
+	}
+	if !strings.Contains(got.Content, "no matches") || !strings.Contains(got.Content, "absent") {
+		t.Fatalf("grep without matches is not explained: %q", got.Content)
+	}
+
+	// A bad path is still a real failure, not an empty result.
+	if got := runFantasyTool(t, workspace, "grep", `{"pattern":"needle","path":"missing"}`); !got.IsError {
+		t.Fatalf("grep of a missing path should report an error: %+v", got)
+	}
+
+	// An invalid pattern is still a real failure worth reporting.
+	if got := runFantasyTool(t, workspace, "grep", `{"pattern":"["}`); !got.IsError {
+		t.Fatalf("invalid pattern should report an error: %+v", got)
+	}
+	// An empty pattern is refused instead of matching every line.
+	if got := runFantasyTool(t, workspace, "grep", `{"pattern":"  "}`); !got.IsError || !strings.Contains(got.Content, "pattern is required") {
+		t.Fatalf("empty pattern not refused: %+v", got)
+	}
+	// A path outside the workspace is refused, like the read tool.
+	if got := runFantasyTool(t, workspace, "grep", `{"pattern":"needle","path":"../"}`); !got.IsError || !strings.Contains(got.Content, "escapes the workspace") {
+		t.Fatalf("traversal not refused: %+v", got)
+	}
+}
+
+func writeWorkspaceFile(t *testing.T, workspace, rel, content string) {
+	t.Helper()
+	path := filepath.Join(workspace, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

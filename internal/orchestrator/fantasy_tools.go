@@ -142,7 +142,7 @@ type editToolInput struct {
 }
 
 type grepToolInput struct {
-	Pattern string `json:"pattern" description:"Regular expression to search for"`
+	Pattern string `json:"pattern" description:"Regular expression to search for, not a file glob"`
 	Path    string `json:"path,omitempty" description:"Optional workspace-relative file or directory to search; defaults to the whole workspace"`
 }
 
@@ -240,15 +240,42 @@ func fantasyEditTool(workspace string) fantasy.AgentTool {
 }
 
 func fantasyGrepTool(workspace string, env []string) fantasy.AgentTool {
-	return fantasy.NewAgentTool("grep", "Search workspace files for a regular expression and return matching lines.",
+	return fantasy.NewAgentTool("grep", "Search workspace files recursively for a regular expression and return matching lines as file:line:text. Git metadata is skipped.",
 		func(ctx context.Context, in grepToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			args := []string{"-n", "--", in.Pattern}
-			if path := strings.TrimSpace(in.Path); path != "" {
-				args = append(args, path)
+			pattern := strings.TrimSpace(in.Pattern)
+			if pattern == "" {
+				return fantasy.NewTextErrorResponse("pattern is required"), nil
 			}
+			search := "."
+			if path := strings.TrimSpace(in.Path); path != "" {
+				if _, err := workspacePath(workspace, path); err != nil {
+					return fantasy.NewTextErrorResponse(err.Error()), nil
+				}
+				search = path
+			}
+			// -r walks directories (a directory operand is otherwise an error)
+			// and -H keeps the file name in front of every hit, which a single
+			// file operand would otherwise drop. -n numbers lines, -I skips
+			// binaries, and -- keeps a pattern that begins with a dash a
+			// pattern rather than an option.
+			args := []string{"-rnHI", "--exclude-dir=.git", "--", pattern, search}
 			text, err := runWorkspaceCommand(ctx, workspace, env, "grep", args...)
+			if isGrepNoMatch(err) {
+				// grep exits 1 to mean "selected no lines". Reporting that as a
+				// failure made an ordinary empty search look like a broken tool.
+				return fantasy.NewTextResponse(fmt.Sprintf("grep: no matches for %q in %s",
+					sanitizeTranscript(pattern), sanitizeTranscript(search))), nil
+			}
 			return commandResponse("grep", text, err), nil
 		})
+}
+
+// isGrepNoMatch reports whether grep exited with status 1, which means the
+// search ran but found no matching lines. Any other failure (status 2, a
+// missing grep binary, cancellation) is a real error.
+func isGrepNoMatch(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
 func fantasyFindTool(workspace string, env []string) fantasy.AgentTool {

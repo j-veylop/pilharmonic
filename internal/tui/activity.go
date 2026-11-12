@@ -101,7 +101,7 @@ func (m model) activityContent(width int) []string {
 			return lines
 		}
 		statusStyle, glyph := m.toolStatusStyle(a.Status)
-		add(titleStyle.Render(terminalText(a.Name)) + "  " + statusStyle.Bold(true).Render(glyph+" "+a.Status))
+		add(titleStyle.Render(terminalText(a.Name)) + "  " + statusStyle.Bold(true).Render(glyph))
 		add(mutedStyle.Render("Attempt " + a.AttemptID + "  ·  " + a.StartedAt.Local().Format("15:04:05")))
 		if a.DurationMS != nil {
 			add(fmt.Sprintf("Duration %.0f ms", *a.DurationMS))
@@ -138,7 +138,7 @@ func (m model) activityContent(width int) []string {
 		if a.DurationMS != nil {
 			duration = fmt.Sprintf(" · %.0fms", *a.DurationMS)
 		}
-		plain := marker + stamp + " " + glyph + " " + a.Status
+		plain := marker + stamp + " " + glyph
 		if summary != "" {
 			plain += " · " + summary
 		}
@@ -147,7 +147,7 @@ func (m model) activityContent(width int) []string {
 			add(selectionRow(plain, width))
 			continue
 		}
-		row := marker + mutedStyle.Render(stamp) + " " + style.Bold(true).Render(glyph+" "+a.Status)
+		row := marker + mutedStyle.Render(stamp) + " " + style.Bold(true).Render(glyph)
 		if summary != "" {
 			row += mutedStyle.Render(" · ") + styledToolSummary(a.Summary())
 		}

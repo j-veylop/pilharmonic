@@ -28,12 +28,12 @@ func TestToolActivityIsDistinctFromAssistantText(t *testing.T) {
 	lines := renderedOutput(input, 80)
 	all := strings.Join(lines, "\n")
 	plain := ansi.Strip(all)
-	for _, want := range []string{"Plan", "Checks next", "All good", "▎", "✓ finished", "bash", "go test ./...", "✗ failed", "go vet ./..."} {
+	for _, want := range []string{"Plan", "Checks next", "All good", "▎", "✓  bash  go test ./...", "✗  bash  go vet ./..."} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing %q in %q", want, plain)
 		}
 	}
-	for _, unwanted := range []string{"[running]", "[finished]", "[failed]", "⠿"} {
+	for _, unwanted := range []string{"[running]", "[finished]", "[failed]", "⠿", "running", "finished", "failed"} {
 		if strings.Contains(plain, unwanted) {
 			t.Fatalf("raw or stale marker %q in %q", unwanted, plain)
 		}
@@ -53,7 +53,7 @@ func TestToolActivityIsDistinctFromAssistantText(t *testing.T) {
 
 func TestToolActivityRunningRowStaysVisible(t *testing.T) {
 	plain := ansi.Strip(strings.Join(renderedOutput("work\n[running] read: main.go\n", 60), "\n"))
-	for _, want := range []string{"⠋ running", "read", "main.go"} {
+	for _, want := range []string{"⠋  read  main.go"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing %q in %q", want, plain)
 		}
@@ -65,12 +65,12 @@ func TestToolActivityCompletionReplacesRowAcrossBlankLines(t *testing.T) {
 	if got := strings.Count(plain, "read"); got != 1 {
 		t.Fatalf("completion created another row (%d occurrences): %q", got, plain)
 	}
-	for _, want := range []string{"✓ finished", "main.go"} {
+	for _, want := range []string{"✓  read", "main.go"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing %q in %q", want, plain)
 		}
 	}
-	if strings.Contains(plain, "⠋ running") || strings.Contains(plain, runningGlyphPlaceholder) {
+	if strings.Contains(plain, "⠋") || strings.Contains(plain, runningGlyphPlaceholder) {
 		t.Fatalf("running row was not completed: %q", plain)
 	}
 }
@@ -82,12 +82,12 @@ func TestToolActivityCompletionWithoutArgumentsReplacesRunningRow(t *testing.T) 
 	if got := strings.Count(plain, "read"); got != 1 {
 		t.Fatalf("completion without arguments created another row (%d occurrences): %q", got, plain)
 	}
-	for _, want := range []string{"✓ finished", "note.txt"} {
+	for _, want := range []string{"✓  read", "note.txt"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing %q in %q", want, plain)
 		}
 	}
-	if strings.Contains(plain, "⠋ running") || strings.Contains(plain, runningGlyphPlaceholder) {
+	if strings.Contains(plain, "⠋") || strings.Contains(plain, runningGlyphPlaceholder) {
 		t.Fatalf("running row was not completed: %q", plain)
 	}
 }
@@ -97,13 +97,91 @@ func TestToolActivityFailureExplanationReplacesRunningRow(t *testing.T) {
 	if got := strings.Count(plain, "bash"); got != 1 {
 		t.Fatalf("failure created another row (%d occurrences): %q", got, plain)
 	}
-	for _, want := range []string{"✗ failed", "exit status 1"} {
+	for _, want := range []string{"✗  bash  exit status 1"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing %q in %q", want, plain)
 		}
 	}
-	if strings.Contains(plain, "⠋ running") {
+	if strings.Contains(plain, "⠋") {
 		t.Fatalf("running row was not completed: %q", plain)
+	}
+}
+
+func TestToolActivityFailureWithoutToolNameKeepsTheToolVisible(t *testing.T) {
+	// A completion that repeats no tool name is a message about the only
+	// unfinished call, so the row keeps the tool and adds the message instead
+	// of rendering the explanation on its own.
+	plain := ansi.Strip(strings.Join(renderedOutput("[running] bash: go test ./...\n\n[failed] exit status 1\n", 80), "\n"))
+	if got := strings.Count(plain, "bash"); got != 1 {
+		t.Fatalf("failure lost or duplicated the tool (%d occurrences): %q", got, plain)
+	}
+	if !strings.Contains(plain, "✗  bash  exit status 1") {
+		t.Fatalf("failure did not show the tool and its message together: %q", plain)
+	}
+	if strings.Contains(plain, "⠋") {
+		t.Fatalf("running row was not completed: %q", plain)
+	}
+}
+
+func TestToolActivityUnnamedCompletionWithSeveralRunningCallsIsNotGuessed(t *testing.T) {
+	// With more than one unfinished call the pairing would be a guess, so the
+	// unnamed message stays its own row and both running rows keep their tool.
+	plain := ansi.Strip(strings.Join(renderedOutput("[running] read: a.go\n[running] bash: go test ./...\n\n[failed] timed out\n", 80), "\n"))
+	if !strings.Contains(plain, "⠋  read  a.go") || !strings.Contains(plain, "⠋  bash  go test ./...") {
+		t.Fatalf("running rows lost their tool: %q", plain)
+	}
+	if !strings.Contains(plain, "✗  timed out") {
+		t.Fatalf("unnamed completion was dropped: %q", plain)
+	}
+}
+
+func TestToolActivityUnmatchedCompletionKeepsItsOwnRow(t *testing.T) {
+	// A completion that repeats a tool name the block has no row for keeps its
+	// own row; pairing it with the running call would hide the tool it names.
+	plain := ansi.Strip(strings.Join(renderedOutput("[running] bash: go test ./...\n\n[finished] read\n", 80), "\n"))
+	if !strings.Contains(plain, "⠋  bash  go test ./...") || !strings.Contains(plain, "✓  read") {
+		t.Fatalf("unmatched completion took over another call: %q", plain)
+	}
+}
+
+func TestToolActivityNamedFailureWithoutStartRowIsNotMisattributed(t *testing.T) {
+	// A failure that names a tool the block has no start row for (the adapter
+	// can report a result without a call) keeps its own row: it already shows
+	// the tool that failed, and folding it into the running call would label
+	// the failure with the wrong tool and hide the running call's arguments.
+	plain := ansi.Strip(strings.Join(renderedOutput("[running] read: a.go\n\n[failed] bash: exit status 1\n", 80), "\n"))
+	if !strings.Contains(plain, "⠋  read  a.go") {
+		t.Fatalf("running call lost its tool or arguments: %q", plain)
+	}
+	if !strings.Contains(plain, "✗  bash  exit status 1") {
+		t.Fatalf("failure was misattributed: %q", plain)
+	}
+}
+
+func TestToolActivityEmptyCompletionFoldsIntoTheRunningRow(t *testing.T) {
+	// A completion with no summary and no tool name could not render anything
+	// on its own, so it completes the only running call and keeps its summary.
+	plain := ansi.Strip(strings.Join(renderedOutput("[running] read: {\"path\":\"note.txt\"}\n[finished]\n", 80), "\n"))
+	if strings.Contains(plain, "⠋") {
+		t.Fatalf("empty completion left a running row: %q", plain)
+	}
+	if strings.Count(plain, "✓") != 1 || !strings.Contains(plain, "✓  read") || !strings.Contains(plain, "note.txt") {
+		t.Fatalf("empty completion did not fold into the running row: %q", plain)
+	}
+}
+
+func TestToolActivityStatusIsTheIconOnly(t *testing.T) {
+	input := "[running] read: a.go\n[finished] read: a.go\n[running] bash: go vet ./...\n[failed] bash: exit status 1\n[running] ls: .\n[interrupted] ls: .\n"
+	plain := ansi.Strip(strings.Join(renderedOutput(input, 80), "\n"))
+	for _, word := range []string{"running", "finished", "failed", "interrupted"} {
+		if strings.Contains(plain, word) {
+			t.Fatalf("status word %q still rendered: %q", word, plain)
+		}
+	}
+	for _, glyph := range []string{"✓", "✗", "⊘"} {
+		if !strings.Contains(plain, glyph) {
+			t.Fatalf("missing status glyph %q in %q", glyph, plain)
+		}
 	}
 }
 
@@ -118,7 +196,7 @@ func TestToolActivitySequentialCallsOfSameToolKeepOneRowEach(t *testing.T) {
 			t.Fatalf("missing %q in %q", want, plain)
 		}
 	}
-	if strings.Contains(plain, "⠋ running") {
+	if strings.Contains(plain, "⠋") {
 		t.Fatalf("sequential calls left running rows: %q", plain)
 	}
 }
@@ -131,7 +209,7 @@ func TestRunningToolGlyphAdvancesWithSpinner(t *testing.T) {
 		t.Fatalf("spinner did not advance: %q", glyph)
 	}
 	plain := ansi.Strip(strings.Join(renderedOutputWithGlyph("[running] read: animated.go\n", 60, glyph), "\n"))
-	if !strings.Contains(plain, glyph+" running") {
+	if !strings.Contains(plain, glyph+"  read  animated.go") {
 		t.Fatalf("transcript did not use current frame %q: %q", glyph, plain)
 	}
 }
@@ -139,7 +217,7 @@ func TestRunningToolGlyphAdvancesWithSpinner(t *testing.T) {
 func TestToolActivityInterleavedCallsKeepOneRowPerCall(t *testing.T) {
 	input := "[running] read: a.go\n[running] bash: go test ./...\n[finished] read: a.go\n[failed] bash: go test ./...\n"
 	plain := ansi.Strip(strings.Join(renderedOutput(input, 80), "\n"))
-	for _, want := range []string{"✓ finished", "✗ failed", "read", "bash"} {
+	for _, want := range []string{"✓  read  a.go", "✗  bash  go test ./..."} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing %q in %q", want, plain)
 		}
@@ -147,7 +225,7 @@ func TestToolActivityInterleavedCallsKeepOneRowPerCall(t *testing.T) {
 	if strings.Count(plain, "read") != 1 || strings.Count(plain, "bash") != 1 {
 		t.Fatalf("interleaved calls rendered more than once: %q", plain)
 	}
-	if strings.Contains(plain, "⠋ running") {
+	if strings.Contains(plain, "⠋") {
 		t.Fatalf("interleaved calls left running rows: %q", plain)
 	}
 }

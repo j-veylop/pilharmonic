@@ -82,10 +82,25 @@ func TestActivityEmptyStateMentionsFilterOnlyWhenFiltered(t *testing.T) {
 }
 
 func TestActivityListDistinguishesStatuses(t *testing.T) {
-	view := ansi.Strip(activityModel().View())
-	for _, want := range []string{"✓", "finished", "⠋", "running", "main.go"} {
+	// The status is the icon alone: the panel keeps its rows compact and shows
+	// the arguments and result next to it instead of the status word.
+	m := activityModel()
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"✓", "⠋", "main.go", "go test ./..."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in %s", want, view)
 		}
+	}
+	rows := ansi.Strip(strings.Join(m.activityContent(80), "\n"))
+	for _, unwanted := range []string{"finished", "running"} {
+		if strings.Contains(rows, unwanted) {
+			t.Fatalf("status word %q still shown in %s", unwanted, rows)
+		}
+	}
+	m.activityID = "one"
+	m.activityExpanded = true
+	expanded := ansi.Strip(strings.Join(m.activityContent(80), "\n"))
+	if !strings.HasPrefix(expanded, "bash  ✓") || strings.Contains(expanded, "finished") {
+		t.Fatalf("expanded call did not show the status as an icon: %q", expanded)
 	}
 }

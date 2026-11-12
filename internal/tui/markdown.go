@@ -294,27 +294,31 @@ func renderMarkdown(safe string, width int) []string {
 // glyph changing from the running spinner to the final status icon. Successful
 // completions carry only the tool name, so they are paired with the earliest
 // unfinished call of the same tool; the running summary is kept rather than
-// dropping the arguments the start marker already displayed.
+// dropping the arguments the start marker already displayed. A completion that
+// carries no tool name of its own, such as a bare failure message, is paired
+// with the only unfinished call, so its row keeps the tool and the message
+// instead of showing the message alone. A completion that does name a tool the
+// block has no call for keeps its own row: it already shows that tool, and
+// folding it into another call would mislabel the failure.
 func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 	result := make([]transcriptToolCall, 0, len(calls))
 	for _, call := range calls {
 		matched := false
 		if call.status != "running" {
-			index := -1
-			for i := len(result) - 1; i >= 0; i-- {
-				if result[i].status == "running" && result[i].summary == call.summary {
-					index = i
-					break
-				}
-			}
+			name, detail := splitToolSummary(call.summary)
+			index := lastRunningWithSummary(result, call.summary)
 			if index < 0 {
-				name, _ := splitToolSummary(call.summary)
-				for i := range result {
-					runningName, _ := splitToolSummary(result[i].summary)
-					if result[i].status == "running" && name != "" && runningName == name {
-						index = i
-						break
-					}
+				index = firstRunningNamed(result, name)
+			}
+			if index < 0 && !namesTool(result, name) {
+				switch {
+				case (call.status == "failed" || call.status == "interrupted") && detail == "":
+					// The completion is a message, not a tool call of its
+					// own, so it belongs to the call that was running.
+					index = onlyUnfinishedCall(result)
+				case call.status == "finished" && name == "":
+					// An empty completion carries nothing to show on its own.
+					index = onlyUnfinishedCall(result)
 				}
 			}
 			if index >= 0 {
@@ -330,15 +334,84 @@ func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 	return result
 }
 
+// lastRunningWithSummary finds the most recent unfinished call with exactly this
+// summary, which is the usual repeat of a start marker's arguments.
+func lastRunningWithSummary(calls []transcriptToolCall, summary string) int {
+	for i := len(calls) - 1; i >= 0; i-- {
+		if calls[i].status == "running" && calls[i].summary == summary {
+			return i
+		}
+	}
+	return -1
+}
+
+// firstRunningNamed finds the earliest unfinished call of the named tool.
+func firstRunningNamed(calls []transcriptToolCall, name string) int {
+	if name == "" {
+		return -1
+	}
+	for i := range calls {
+		if runningName, _ := splitToolSummary(calls[i].summary); runningName == name && calls[i].status == "running" {
+			return i
+		}
+	}
+	return -1
+}
+
+// namesTool reports whether the block already shows a call of the named tool, so
+// a completion that repeats a tool name the block recorded keeps that meaning
+// instead of being read as a message about another call.
+func namesTool(calls []transcriptToolCall, name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := range calls {
+		if toolName, _ := splitToolSummary(calls[i].summary); toolName == name {
+			return true
+		}
+	}
+	return false
+}
+
+// onlyUnfinishedCall returns the index of the single running call, or -1 when
+// none or several are running. The adapter runs tools one at a time, so an
+// unnamed failure belongs to that call; with several candidates the pairing
+// would be a guess and is left to the named matches above.
+func onlyUnfinishedCall(calls []transcriptToolCall) int {
+	index := -1
+	for i := range calls {
+		if calls[i].status != "running" {
+			continue
+		}
+		if index >= 0 {
+			return -1
+		}
+		index = i
+	}
+	return index
+}
+
 // mergeToolSummary keeps the arguments established by a running marker when a
 // completion only repeats the tool name. A completion that carries its own
-// detail, such as a failure explanation, wins.
+// detail, such as a failure explanation, replaces the arguments but never
+// hides the tool: a completion that names no tool keeps the started name in
+// front of its message.
 func mergeToolSummary(started, completed string) string {
-	name, _ := splitToolSummary(completed)
-	if completed == name || name == "" {
+	startedName, _ := splitToolSummary(started)
+	name, detail := splitToolSummary(completed)
+	switch {
+	case completed == "":
 		return started
+	case detail == "" && name == startedName:
+		// The completion only repeats the tool name.
+		return started
+	case detail != "" && name == startedName:
+		return completed
+	case startedName != "":
+		return startedName + ": " + completed
+	default:
+		return completed
 	}
-	return completed
 }
 
 func appendToolCalls(out []string, calls []transcriptToolCall, width int) []string {
@@ -355,11 +428,13 @@ func appendToolCalls(out []string, calls []transcriptToolCall, width int) []stri
 }
 
 // toolCallLines renders one tool call as a status-coloured rail and glyph,
-// followed by the tool name and a muted summary. The rail and indentation keep
-// tool activity distinct from assistant prose at a glance.
+// followed by the tool name and a muted summary. The glyph alone carries the
+// status, so the row stays compact; the rail and indentation keep tool activity
+// distinct from assistant prose at a glance. A failure keeps the tool name in
+// front of its message, so the row never shows the explanation alone.
 func toolCallLines(call transcriptToolCall, width int) []string {
 	style, glyph := toolStatusStyle(call.status)
-	body := style.Bold(true).Render(glyph + " " + call.status)
+	body := style.Bold(true).Render(glyph)
 	name, args := splitToolSummary(call.summary)
 	if name != "" {
 		body += "  " + titleStyle.Render(name)

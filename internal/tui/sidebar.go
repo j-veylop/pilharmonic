@@ -204,8 +204,10 @@ func taskTitleRowWithIcon(task orchestrator.Task, icon string, width int, select
 }
 
 // toolStatusStyle gives tool activity a consistent visual language in the
-// output transcript. Running rows use a placeholder that the renderer replaces
-// with the current Bubble Tea spinner frame.
+// output transcript and the activity panel. The glyph is the only status the
+// terminal prints, so each status needs a distinct shape as well as colour.
+// Running rows use a placeholder that the renderer replaces with the current
+// Bubble Tea spinner frame.
 func toolStatusStyle(status string) (lipgloss.Style, string) {
 	switch status {
 	case "running":

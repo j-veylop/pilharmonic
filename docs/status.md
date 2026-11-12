@@ -118,9 +118,13 @@ not decompose requests or evaluate them with a model.
    attempt. Output batches: it is persisted once 8 KiB has accumulated or on
    the next lifecycle change, not on every chunk.
    In the output view, assistant text is rendered as Markdown while inline tool
-   markers become compact status rows with a coloured rail and glyph; a
-   start/finish pair collapses into one row whose status and glyph change in
-   place, including when the successful completion repeats only the tool name.
+   markers become compact rows with a coloured rail and a status glyph; the
+   glyph alone carries the status, and the row always keeps the tool name in
+   front of its summary, so a failed call shows the tool and its failure
+   message together. A start/finish pair collapses into one row whose glyph
+   changes in place, including when the successful completion repeats only the
+   tool name and when a failure repeats no tool name, which joins the only
+   unfinished call of its block.
    Thinking markers collapse to one `thinking hidden` row by default, and `T`
    toggles their content in a separate `THINKING` block. The adapter closes an
    open thinking block before prose or tool activity, so a late provider

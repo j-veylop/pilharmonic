@@ -169,7 +169,13 @@ capped at 16 KiB before JSON wrapping. Output retains the latest 256 KiB per
 attempt.
 
 The terminal renders assistant prose as Markdown, collapses thinking by
-default and combines tool start and finish markers into status rows. The
+default and combines tool start and finish markers into rows whose status is a
+single glyph. A completion folds into its start row, and a row names the tool
+before its summary, so a failure shows the tool and its message rather than the
+message alone; a failure that carries only a message joins the only unfinished
+call instead of becoming an orphan line, while a failure that names a tool the
+block has no start row for keeps its own row so it cannot mislabel another call.
+The activity panel uses the same glyph-only status for each recorded call. The
 adapter closes an open thinking block before emitting prose or tool activity to
 handle late thinking-end events. Agent output is untrusted display data. Task
 status uses

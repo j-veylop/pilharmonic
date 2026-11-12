@@ -21,6 +21,11 @@ func requireGit(t *testing.T) {
 
 func testGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	// An empty directory would silently run Git in the test's own working
+	// directory, which is the repository under test rather than a fixture.
+	if dir == "" {
+		t.Fatalf("git %v: directory is required", args)
+	}
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()

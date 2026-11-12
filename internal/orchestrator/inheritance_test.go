@@ -173,7 +173,13 @@ func TestApprovalWaitsForInheritedWorktreeAndMergesReviewedCommit(t *testing.T) 
 	if _, err = os.Stat(filepath.Join(repo, "child-2.txt")); !os.IsNotExist(err) {
 		t.Fatalf("later child content was merged by approval: %v", err)
 	}
-	if status := testGit(t, owner.ExecutionWorkspace, "status", "--porcelain"); status == "" {
+	// The workspace is recorded when the attempt starts, so read the task back
+	// instead of using the snapshot returned by CreateTask.
+	stored, _ := s.GetTask(owner.ID)
+	if stored.ExecutionWorkspace == "" {
+		t.Fatal("owner task has no execution workspace")
+	}
+	if status := testGit(t, stored.ExecutionWorkspace, "status", "--porcelain"); status == "" {
 		t.Fatal("later child content was committed or removed from the worktree")
 	}
 }

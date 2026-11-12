@@ -226,7 +226,7 @@ func (m model) providerMenuKey(key string) (model, tea.Cmd) {
 		// The masked key prompt lives in the request composer, so key entry
 		// always happens there regardless of where the menu was opened.
 		m.router = true
-		m.routerFocus = 0
+		m.routerFocus = routerFocusComposer
 		m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
 		m.notice = "Enter API key for " + provider + " (Enter to save, Esc to cancel)"
 		m.clampRouter()

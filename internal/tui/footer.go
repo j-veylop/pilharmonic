@@ -53,10 +53,12 @@ func (m model) footer(w int) string {
 	footerText := m.boardFooter(w)
 	switch {
 	case m.router:
-		if _, ok := m.routerMentionQuery(); ok {
+		if m.routerFocus != routerFocusComposer {
+			footerText = "j/k move · enter open · tab next · esc tasks"
+		} else if _, ok := m.routerMentionQuery(); ok {
 			footerText = "tab complete · enter submit · esc tasks · ctrl+c quit"
 		} else {
-			footerText = "enter submit · tab actions · esc tasks · ctrl+c quit"
+			footerText = "enter submit · tab lists · esc tasks · ctrl+c quit"
 		}
 	case m.input.kind != "":
 		footerText = "enter submit · ctrl+j/alt+enter newline · esc cancel"

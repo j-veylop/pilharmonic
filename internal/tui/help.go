@@ -72,8 +72,9 @@ Up / Down      One wrapped line (also Ctrl-p / Ctrl-n)
 Home / End     Line start / line end (also Ctrl-a / Ctrl-e)
 PgUp / PgDn    Move through long input
 Enter          Submit; Ctrl-j or Alt-enter inserts a newline
-Esc            Cancel the draft
-Tab            Leave the request draft for the action list
+Esc            Cancel input; the request draft is kept
+Tab            Focus the action or recent list; Shift-Tab reverses
+j / k          Select a row in that list; Enter opens the task
 Word deletion stays on the line you are editing.`},
 	{"General", `m              Choose the big and small models
 L              Choose a provider and store its API key

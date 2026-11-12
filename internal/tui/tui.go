@@ -117,6 +117,7 @@ type model struct {
 	routerScroll      int
 	routerFocus       int
 	routerSelected    int
+	recentSelected    int // selected row in the router recent list
 	width, height     int
 	input             composer
 	historyOffset     int
@@ -244,6 +245,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.routerCursor = 0
 		m.routerScroll = 0
 		m.routerSelected = 0
+		m.recentSelected = 0
 		for i, current := range m.tasks {
 			if current.ID == msg.task.ID {
 				m.selected = i
@@ -479,7 +481,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modelClass, m.modelProvider, m.modelCustomInput = "", "", ""
 		case "/":
 			m.router = true
-			m.routerFocus = 0
+			m.routerFocus = routerFocusComposer
 			m.routerCursor = len(m.routerDraft)
 			m.routerScroll = 0
 			m.notice = ""
@@ -605,6 +607,7 @@ func (m *model) clamp() {
 // would otherwise shift the selected slice index to a different task.
 func (m *model) refreshTasks() {
 	selected := m.selectedID()
+	recent := m.recentSelectedID()
 	if m.service == nil {
 		m.clamp()
 		return
@@ -619,6 +622,7 @@ func (m *model) refreshTasks() {
 		}
 	}
 	m.clamp()
+	m.anchorRecentSelection(recent)
 }
 
 // expireNotice clears a notice that has stayed unchanged for about five

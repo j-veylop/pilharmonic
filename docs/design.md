@@ -21,12 +21,16 @@ login menu instead.
 The local policy checks a submitted request before it becomes a task. `n` creates
 a task directly as a queued draft without the request form's automatic routing;
 its request is still checked by the local policy. The form lists
-**NEEDS ACTION** and **RECENT TASKS**. Help (`?`) opens on **Concepts**, which
-defines request, task, route, action and attempt. On the task board, the
-`! action` hint selects the next task needing action in grouped display order
-and wraps at the end. Needs
-action covers blocked, waiting, awaiting review, input undelivered, merge
-failed, failed and interrupted tasks.
+**NEEDS ACTION** and **RECENT TASKS**, each showing up to eight rows. Tab moves
+from the draft to a list, skipping an empty one, `j`/`k` select a row and Enter
+opens that task on the board; the focused list scrolls inside the panel so the
+selected row stays visible. Tab and Shift-Tab cycle the focus back to the
+draft, which keeps its text while a list owns the keys. Help (`?`) opens on
+**Concepts**, which defines request, task, route, action and attempt. On the
+task board, the `! action` hint selects the next task needing action in
+grouped display order and wraps at the end. Needs action covers blocked,
+waiting, awaiting review, input undelivered, merge failed, failed and
+interrupted tasks.
 
 The request form and every composer render as one input box docked at the
 bottom of the screen. Its label sits on the box's top border, the draft wraps

@@ -55,10 +55,10 @@ func (m model) composerOpen() bool {
 }
 
 // composerFocused reports whether keys reach the draft. The request form hands
-// focus to its attention list with Tab, which dims the box.
+// focus to its action or recent list with Tab, which dims the box.
 func (m model) composerFocused() bool {
 	if m.router {
-		return m.routerFocus == 0
+		return m.routerFocus == routerFocusComposer
 	}
 	return true
 }

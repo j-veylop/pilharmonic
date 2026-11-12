@@ -68,8 +68,11 @@ rejected. The decision records the local policy ID/version (`local` / `local-1`)
 the trusted local source and actor, and a versioned digest of the policy input. A
 `routed` event records the assignment (selected executor, an isolated worktree or shared
 workspace as applicable, execution requested). The router then calls `Start`
-immediately. The same form lists **NEEDS ACTION** and **RECENT TASKS**. One request becomes one task: the router does
-not decompose requests or evaluate them with a model.
+immediately. The same form lists **NEEDS ACTION** and **RECENT TASKS**, each
+drawn up to eight rows. Tab moves from the draft to a list, skipping an empty
+one; `j`/`k` select a row, the focused list scrolls to keep the selection
+visible, and Enter opens that task on the board. One request becomes one task:
+the router does not decompose requests or evaluate them with a model.
 
 1. **Manual submission.** Pressing `n` creates a draft through `CreateTask`
    (`service.go`) instead of routing immediately. It validates title/prompt/

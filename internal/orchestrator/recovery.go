@@ -94,7 +94,7 @@ func reconcileMissingWorktree(t *Task, now time.Time) bool {
 		return false
 	}
 	t.resetReview()
-	t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
+	t.MergeStatus, t.MergeError, t.MergeWarning, t.MergeCommit, t.WorktreeCommit = "", "", "", "", ""
 	t.MergedAt = time.Time{}
 	t.UpdatedAt = now
 	t.Events = append(t.Events, Event{now, "worktree_missing", "Prepared worktree " + t.ExecutionWorkspace + " is missing; cleared pending review and integration state"})

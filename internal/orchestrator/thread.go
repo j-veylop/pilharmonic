@@ -308,7 +308,7 @@ func (s *Service) FollowUp(taskID, text string) (bool, error) {
 		t.ScheduledAt = time.Time{}
 		t.UpdatedAt = now
 		t.Error = ""
-		t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
+		t.MergeStatus, t.MergeError, t.MergeWarning, t.MergeCommit, t.WorktreeCommit = "", "", "", "", ""
 		t.MergedAt = time.Time{}
 		t.resetReview()
 		t.Events = append(t.Events, Event{now, "followup", "Follow-up context recorded"}, Event{now, "requeued", "Task requeued for follow-up"})

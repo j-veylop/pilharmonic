@@ -149,6 +149,7 @@ func (s *Service) finalizeIntegration(id string, merge *mergeOutcome, preparatio
 func (task *Task) recordMerge(merge mergeOutcome) {
 	task.MergeStatus = merge.Status
 	task.MergeError = merge.Error
+	task.MergeWarning = merge.Warning
 	task.MergeCommit = merge.MergeCommit
 	if merge.WorktreeCommit != "" {
 		task.WorktreeCommit = merge.WorktreeCommit
@@ -171,6 +172,9 @@ func (task *Task) recordMerge(merge mergeOutcome) {
 		message = "Isolated workspace merge failed: " + merge.Error
 	}
 	task.Events = append(task.Events, Event{task.UpdatedAt, eventKind, message})
+	if merge.Status == MergeMerged && merge.Warning != "" {
+		task.Events = append(task.Events, Event{task.UpdatedAt, "merge_warning", "Merge succeeded with a warning: " + merge.Warning})
+	}
 }
 
 // recordPreparation records a commit prepared by an isolated attempt. A new
@@ -179,6 +183,7 @@ func (task *Task) recordMerge(merge mergeOutcome) {
 func (task *Task) recordPreparation(preparation preparationOutcome) {
 	task.WorktreeCommit = preparation.WorktreeCommit
 	task.MergeError = ""
+	task.MergeWarning = ""
 	task.MergeCommit = ""
 	task.MergedAt = time.Time{}
 	if preparation.UpToDate {

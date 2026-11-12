@@ -73,6 +73,13 @@ func TestDetailShowsAutomaticMergeResult(t *testing.T) {
 	if !strings.Contains(view, "MERGE FAILED") || !strings.Contains(view, "conflict in tracked.txt") {
 		t.Fatalf("merge failure not surfaced: %s", view)
 	}
+	m.tasks[0].MergeStatus = orchestrator.MergeMerged
+	m.tasks[0].MergeError = ""
+	m.tasks[0].MergeWarning = "uncommitted source changes are kept in the autostash entry stash@{0}"
+	view = m.View()
+	if !strings.Contains(view, "Merge warning") || !strings.Contains(view, "stash@{0}") {
+		t.Fatalf("merge warning not surfaced: %s", view)
+	}
 }
 
 func TestDetailShowsPreparedIsolatedWorkspace(t *testing.T) {

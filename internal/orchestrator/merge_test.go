@@ -438,21 +438,25 @@ func TestCanceledIsolatedAttemptIsNotMerged(t *testing.T) {
 	}
 }
 
-// A dirty source checkout blocks a merge that overlaps those files. Git aborts
-// without touching the operator's changes, the worktree is retained, and the
-// failure explains what to do; after resolving the source, the task merges on
-// retry.
-func TestMergeBlockedByDirtySourceExplainsAndRetries(t *testing.T) {
+// An operator who keeps editing the source checkout no longer blocks the merge.
+// Git stashes the overlapping edits, merges, and reapplies them, so the change
+// lands and the uncommitted work stays uncommitted.
+func TestMergeKeepsOverlappingUncommittedSourceEdits(t *testing.T) {
 	repo := committedRepo(t)
+	base := "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte(base), 0600); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, repo, "commit", "-qam", "expand the tracked file")
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		started <- struct{}{}
 		<-release
-		return os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("worktree change\n"), 0600)
+		return os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("one\ntwo\nthree\nfour\nfive\nsix\nSEVEN\n"), 0600)
 	}))
-	task, err := s.CreateTask("blocked", "change the tracked file", repo)
+	task, err := s.CreateTask("dirty", "append to the tracked file", repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +471,9 @@ func TestMergeBlockedByDirtySourceExplainsAndRetries(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("runner did not start")
 	}
-	if err = os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("local edit\n"), 0600); err != nil {
+	// The operator edits the same file while the task runs.
+	local := "LOCAL\ntwo\nthree\nfour\nfive\nsix\nseven\n"
+	if err = os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte(local), 0600); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -476,35 +482,144 @@ func TestMergeBlockedByDirtySourceExplainsAndRetries(t *testing.T) {
 		t.Fatalf("completion did not open review: %+v", prepared)
 	}
 	done := approveReview(t, s, task.ID)
-	if done.MergeStatus != MergeFailed {
-		t.Fatalf("merge status = %s, want failed: %+v", done.MergeStatus, done)
+	if done.MergeStatus != MergeMerged || done.MergeWarning != "" || done.MergeError != "" {
+		t.Fatalf("merge over uncommitted source edits = %+v", done)
 	}
-	for _, want := range []string{"uncommitted changes", "commit or stash", "retry the task"} {
-		if !strings.Contains(done.MergeError, want) {
-			t.Fatalf("merge error %q does not mention %q", done.MergeError, want)
+	want := "LOCAL\ntwo\nthree\nfour\nfive\nsix\nSEVEN\n"
+	if b, readErr := os.ReadFile(filepath.Join(repo, "tracked.txt")); readErr != nil || string(b) != want {
+		t.Fatalf("source after merge = %q, %v; want %q", b, readErr, want)
+	}
+	if status := testGit(t, repo, "status", "--porcelain"); status != "M tracked.txt" {
+		t.Fatalf("the local edit was committed instead of kept uncommitted: %q", status)
+	}
+	if stash := testGit(t, repo, "stash", "list"); stash != "" {
+		t.Fatalf("a clean reapply left a stash behind: %q", stash)
+	}
+	if parents := strings.Fields(testGit(t, repo, "rev-list", "--parents", "-n", "1", "HEAD")); len(parents) != 3 {
+		t.Fatalf("expected a merge commit, parents: %v", parents)
+	}
+}
+
+// When an uncommitted source edit cannot be reapplied on the merged content the
+// merge still lands: Git keeps the edit in an autostash, leaves the conflict in
+// the file, and the task records a warning instead of losing the work.
+func TestMergeReportsRetainedAutostashForConflictingSourceEdits(t *testing.T) {
+	repo := committedRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("alpha\nbeta\ngamma\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, repo, "commit", "-qam", "expand the tracked file")
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		started <- struct{}{}
+		<-release
+		return os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("alpha\nWORKTREE\ngamma\n"), 0600)
+	}))
+	task, err := s.CreateTask("stashed", "rewrite the middle line", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Start(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("runner did not start")
+	}
+	// The operator rewrites the same line the worktree changes.
+	if err = os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("alpha\nLOCAL\ngamma\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	await(t, s, task.ID, Completed)
+	done := approveReview(t, s, task.ID)
+	if done.MergeStatus != MergeMerged || done.MergeCommit == "" {
+		t.Fatalf("merge over conflicting source edits = %+v", done)
+	}
+	if !strings.Contains(done.MergeWarning, "stash") || !strings.Contains(done.MergeWarning, "tracked.txt") {
+		t.Fatalf("merge warning does not name the retained stash and file: %q", done.MergeWarning)
+	}
+	if done.MergeConflict() {
+		t.Fatalf("a successful merge was classified as a merge conflict: %q", done.MergeError)
+	}
+	stash := testGit(t, repo, "stash", "list")
+	if !strings.Contains(stash, "autostash") {
+		t.Fatalf("the uncommitted edit was not kept in an autostash: %q", stash)
+	}
+	if patch := testGit(t, repo, "stash", "show", "-p"); !strings.Contains(patch, "LOCAL") {
+		t.Fatalf("the autostash does not hold the operator's edit: %q", patch)
+	}
+	merged, readErr := os.ReadFile(filepath.Join(repo, "tracked.txt"))
+	if readErr != nil || !strings.Contains(string(merged), "<<<<<<<") {
+		t.Fatalf("the conflicted file was not left for the operator: %q, %v", merged, readErr)
+	}
+	warned := false
+	for _, event := range done.Events {
+		if event.Kind == "merge_warning" && strings.Contains(event.Message, "autostash") {
+			warned = true
 		}
 	}
-	if b, readErr := os.ReadFile(filepath.Join(repo, "tracked.txt")); readErr != nil || string(b) != "local edit\n" {
-		t.Fatalf("source edit was not preserved: %q, %v", b, readErr)
+	if !warned {
+		t.Fatalf("the merge warning was not recorded in history: %+v", done.Events)
 	}
-	if _, statErr := os.Stat(done.ExecutionWorkspace); statErr != nil {
-		t.Fatalf("blocked merge removed the worktree: %v", statErr)
-	}
+}
 
-	testGit(t, repo, "checkout", "--", "tracked.txt")
-	if err = s.Retry(task.ID); err != nil {
+// A merge that genuinely conflicts is still aborted, and the abort restores the
+// source checkout including uncommitted edits Git stashed for the attempt.
+func TestConflictingMergeRestoresStashedSourceEdits(t *testing.T) {
+	repo := committedRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "other.txt"), []byte("keep me\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, repo, "add", "other.txt")
+	testGit(t, repo, "commit", "-q", "-m", "add other")
+	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		if err := os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("worktree\n"), 0600); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("source\n"), 0600); err != nil {
+			return err
+		}
+		testGit(t, repo, "add", "tracked.txt")
+		testGit(t, repo, "commit", "-q", "-m", "advance source")
+		return nil
+	}))
+	task, err := s.CreateTask("conflict", "conflicting change", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetTaskIsolation(task.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Start(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
 	await(t, s, task.ID, Completed)
-	merged := approveReview(t, s, task.ID)
-	if merged.MergeStatus != MergeMerged {
-		t.Fatalf("retry merge status = %s (%s), want merged", merged.MergeStatus, merged.MergeError)
+	// The runner committed its source change; the operator keeps an edit too.
+	if err = os.WriteFile(filepath.Join(repo, "other.txt"), []byte("local edit\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if b, readErr := os.ReadFile(filepath.Join(repo, "tracked.txt")); readErr != nil || string(b) != "worktree change\n" {
-		t.Fatalf("worktree change was not merged on retry: %q, %v", b, readErr)
+	done := approveReview(t, s, task.ID)
+	if done.MergeStatus != MergeFailed || !done.MergeConflict() {
+		t.Fatalf("conflicting merge = %+v", done)
+	}
+	if b, readErr := os.ReadFile(filepath.Join(repo, "other.txt")); readErr != nil || string(b) != "local edit\n" {
+		t.Fatalf("aborted merge lost the operator's edit: %q, %v", b, readErr)
+	}
+	if stash := testGit(t, repo, "stash", "list"); stash != "" {
+		t.Fatalf("aborted merge left a stash behind: %q", stash)
+	}
+	cmd := exec.Command("git", "rev-parse", "-q", "--verify", "MERGE_HEAD")
+	cmd.Dir = repo
+	if output, mergeErr := cmd.CombinedOutput(); mergeErr == nil {
+		t.Fatalf("source left in a merge: %s", strings.TrimSpace(string(output)))
 	}
 }
 

@@ -25,6 +25,23 @@ Composers and the request input wrap long drafts and scroll as you move the curs
 
 Use `go run . -help` for all startup flags. Common options are `-workspace` for the source directory, `-state` for the JSON state file, `-max-concurrent` for the process limit (four by default), `-idle-timeout` to cancel an agent that produces no output and `-attempt-retention` to bound how many attempt transcripts a task keeps in full (`8` by default, `0` keeps every attempt). The defaults are the current directory and `orchestrator/state.json` under the user config directory. That state location is retained for compatibility with existing installs. Each state file supports one running instance: the CLI holds an instance lock and refuses to open a state file another instance is already using. The state file contains prompts, recent output (up to 256 KiB per attempt), routing decisions and history in plain text. `-version` prints the build version.
 
+## Install a release
+
+Tagged builds are published as GitHub releases. Each release carries one self-contained binary per supported platform — Linux and macOS on `amd64` and `arm64`, and Windows on `amd64` — named `pilharmonic_<tag>_<os>_<arch>`, with `.exe` appended on Windows, plus `sha256sums.txt`. The binary embeds the specialist prompts and needs no other file from this repository, so a download is enough to run it. Download the binary and the checksum file for your platform from the repository's **Releases** page, then:
+
+```sh
+tag=v0.1.0
+os=linux   # darwin for macOS, windows for Windows
+arch=amd64 # or arm64 on Linux and macOS
+name="pilharmonic_${tag}_${os}_${arch}"
+if [ "$os" = windows ]; then name="$name.exe"; fi
+grep " ${name}\$" sha256sums.txt | sha256sum -c -   # shasum -a 256 -c - on macOS
+chmod +x "$name"
+./"$name" -version
+```
+
+On Windows, `Get-FileHash -Algorithm SHA256 <file>` prints the same digest as the matching line of `sha256sums.txt`, and `-version` prints the tag and the full commit the binary was built from. A released binary still starts in the current directory, reads `profiles.json` beside its state file and needs the provider API key described above; the release only adds a build you do not have to compile.
+
 ## Compatibility with existing installs
 
 The public project name is pilharmonic. These identifiers remain unchanged so durable state, running agents and recorded decisions stay compatible:
@@ -61,7 +78,7 @@ Quitting cancels active attempts and waits for their workers. After an unexpecte
 
 In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate explicitly requests a change, such as `fix`, `add`, `update` or `implement`. Read-only inspection requests (for example `review`, `explain`, `inspect`, `read` or `test`) and ambiguous requests with no detected edit action stay in the source workspace. The choice is a lexical request-opening heuristic; the selected executor does not create a worktree by itself. Use `w` on a task before it starts to override the automatic choice, or `-isolation=false` to keep every task in the source workspace. The worktree starts from committed files and is reused on retries. Other workspaces run in place.
 
-**Successful isolated runs commit pending changes for review; merging stays blocked until you accept the review.** Press `v` to approve the displayed commit and automatically merge it into the source repository's current checkout. Merges are serialized. Press `V` to reject it without merging; the worktree remains available. Use `F` to add context or describe remaining work within the original mandate, then `r` to start the requeued task. If an approved merge fails, inspect the error and retained worktree. Overlapping local changes in the source may need to be committed or stashed before retrying. Execution status, merge outcome and operator review remain separate records.
+**Successful isolated runs commit pending changes for review; merging stays blocked until you accept the review.** Press `v` to approve the displayed commit and automatically merge it into the source repository's current checkout. Merges are serialized. Press `V` to reject it without merging; the worktree remains available. Use `F` to add context or describe remaining work within the original mandate, then `r` to start the requeued task. If an approved merge fails, inspect the error and retained worktree. Uncommitted changes in the source do not block a merge: Git stashes the files the merge touches and reapplies them afterwards, and when they cannot be reapplied cleanly the task records a merge warning and keeps them in an autostash entry you can apply or drop yourself. Untracked source files that the merge would overwrite still block it until you move or commit them. Execution status, merge outcome, merge warning and operator review remain separate records.
 
 A parent waits to integrate while descendants use its worktree. Inspect any
 unsuccessful descendant before retrying integration. Delete descendant tasks
@@ -199,6 +216,17 @@ The service intersects these tools with the task profile and inherited limits.
 Disjoint lists prevent execution. The existing `-specialist-tools` option
 also accepts a standalone tool file. When both files configure the same
 specialist's tools, the list in `-profiles` takes precedence.
+
+## Releases
+
+Releases are cut from tags. `scripts/build-release.sh <tag>` builds the same artifacts locally into `dist/`. The `Release` workflow runs it for any pushed `v*` tag, verifies the checksums and that the host binary reports the tag, and publishes the binaries and checksums as a GitHub release. Re-running the workflow replaces the assets of the release it published before:
+
+```sh
+git tag -a v0.1.0 -m "pilharmonic v0.1.0"
+git push origin v0.1.0
+```
+
+Tags must look like `v1.2.3`; a pre-release or build suffix such as `v1.2.3-rc1` is accepted. The workflow fails instead of publishing when the tag is malformed, when it does not point at the pushed commit, or when `go test ./...` fails. Continuous integration runs the same build script on every push, so a target that stops cross-compiling fails before a tag exists. Add a platform by listing its `GOOS/GOARCH` pair in the script.
 
 ## Development
 

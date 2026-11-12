@@ -291,18 +291,36 @@ func renderMarkdown(safe string, width int) []string {
 
 // collapseToolCalls folds each completion into the matching running row, even
 // when another tool started in between. A call is rendered once, with its
-// glyph changing from the running spinner to the final status icon.
+// glyph changing from the running spinner to the final status icon. Successful
+// completions carry only the tool name, so they are paired with the earliest
+// unfinished call of the same tool; the running summary is kept rather than
+// dropping the arguments the start marker already displayed.
 func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 	result := make([]transcriptToolCall, 0, len(calls))
 	for _, call := range calls {
 		matched := false
 		if call.status != "running" {
+			index := -1
 			for i := len(result) - 1; i >= 0; i-- {
 				if result[i].status == "running" && result[i].summary == call.summary {
-					result[i] = call
-					matched = true
+					index = i
 					break
 				}
+			}
+			if index < 0 {
+				name, _ := splitToolSummary(call.summary)
+				for i := range result {
+					runningName, _ := splitToolSummary(result[i].summary)
+					if result[i].status == "running" && name != "" && runningName == name {
+						index = i
+						break
+					}
+				}
+			}
+			if index >= 0 {
+				call.summary = mergeToolSummary(result[index].summary, call.summary)
+				result[index] = call
+				matched = true
 			}
 		}
 		if !matched {
@@ -310,6 +328,17 @@ func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 		}
 	}
 	return result
+}
+
+// mergeToolSummary keeps the arguments established by a running marker when a
+// completion only repeats the tool name. A completion that carries its own
+// detail, such as a failure explanation, wins.
+func mergeToolSummary(started, completed string) string {
+	name, _ := splitToolSummary(completed)
+	if completed == name || name == "" {
+		return started
+	}
+	return completed
 }
 
 func appendToolCalls(out []string, calls []transcriptToolCall, width int) []string {

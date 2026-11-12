@@ -117,10 +117,11 @@ not decompose requests or evaluate them with a model.
    the next lifecycle change, not on every chunk.
    In the output view, assistant text is rendered as Markdown while inline tool
    markers become compact status rows with a coloured rail and glyph; a
-   directly paired start/finish collapses into one finished row. Thinking
-   markers collapse to one `thinking hidden` row by default, and `T` toggles
-   their content in a separate `THINKING` block. The adapter closes an open
-   thinking block before prose or tool activity, so a late provider
+   start/finish pair collapses into one row whose status and glyph change in
+   place, including when the successful completion repeats only the tool name.
+   Thinking markers collapse to one `thinking hidden` row by default, and `T`
+   toggles their content in a separate `THINKING` block. The adapter closes an
+   open thinking block before prose or tool activity, so a late provider
    `thinking_end` cannot hide the answer. The TUI sanitizes output before
    display (strips ANSI, expands tabs, drops control characters), so agent text
    is rendered as data.

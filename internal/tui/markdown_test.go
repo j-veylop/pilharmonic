@@ -75,6 +75,54 @@ func TestToolActivityCompletionReplacesRowAcrossBlankLines(t *testing.T) {
 	}
 }
 
+func TestToolActivityCompletionWithoutArgumentsReplacesRunningRow(t *testing.T) {
+	// The Fantasy adapter writes the arguments only on the start marker and
+	// repeats just the tool name when a call succeeds.
+	plain := ansi.Strip(strings.Join(renderedOutput("work\n[running] read: {\"path\":\"note.txt\"}\n\n[finished] read\n", 80), "\n"))
+	if got := strings.Count(plain, "read"); got != 1 {
+		t.Fatalf("completion without arguments created another row (%d occurrences): %q", got, plain)
+	}
+	for _, want := range []string{"✓ finished", "note.txt"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q in %q", want, plain)
+		}
+	}
+	if strings.Contains(plain, "⠋ running") || strings.Contains(plain, runningGlyphPlaceholder) {
+		t.Fatalf("running row was not completed: %q", plain)
+	}
+}
+
+func TestToolActivityFailureExplanationReplacesRunningRow(t *testing.T) {
+	plain := ansi.Strip(strings.Join(renderedOutput("[running] bash: go test ./...\n\n[failed] bash: exit status 1\n", 80), "\n"))
+	if got := strings.Count(plain, "bash"); got != 1 {
+		t.Fatalf("failure created another row (%d occurrences): %q", got, plain)
+	}
+	for _, want := range []string{"✗ failed", "exit status 1"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q in %q", want, plain)
+		}
+	}
+	if strings.Contains(plain, "⠋ running") {
+		t.Fatalf("running row was not completed: %q", plain)
+	}
+}
+
+func TestToolActivitySequentialCallsOfSameToolKeepOneRowEach(t *testing.T) {
+	input := "[running] read: a.go\n[finished] read\n\n[running] read: b.go\n[finished] read\n"
+	plain := ansi.Strip(strings.Join(renderedOutput(input, 80), "\n"))
+	if got := strings.Count(plain, "read"); got != 2 {
+		t.Fatalf("sequential calls collapsed together (%d occurrences): %q", got, plain)
+	}
+	for _, want := range []string{"a.go", "b.go"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q in %q", want, plain)
+		}
+	}
+	if strings.Contains(plain, "⠋ running") {
+		t.Fatalf("sequential calls left running rows: %q", plain)
+	}
+}
+
 func TestRunningToolGlyphAdvancesWithSpinner(t *testing.T) {
 	m := model{spinner: spinner.New(spinner.WithSpinner(spinner.MiniDot))}
 	m.spinner, _ = m.spinner.Update(m.spinner.Tick())

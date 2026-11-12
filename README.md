@@ -4,7 +4,7 @@ pilharmonic is a local terminal application for submitting work to coding agents
 
 ## Run
 
-Use Go 1.27 or newer and an interactive terminal. The built-in executor drives models in-process through [Fantasy](https://charm.land/fantasy), so it needs a provider API key — either in the environment (for example `OPENAI_API_KEY` or `DEEPSEEK_API_KEY`) or stored with the `/login <provider>` command in the UI — and a `provider/model` selector in `profiles.json` or through `-model`. From the repository root, run:
+Use Go 1.27.3 or newer and an interactive terminal. The built-in executor drives models in-process through [Fantasy](https://charm.land/fantasy), so it needs a provider API key — either in the environment (for example `OPENAI_API_KEY` or `DEEPSEEK_API_KEY`) or stored with the `/login <provider>` command in the UI — and a `provider/model` selector in `profiles.json` or through `-model`. From the repository root, run:
 
 ```sh
 go run .
@@ -17,7 +17,7 @@ go build -o pilharmonic .
 go install .
 ```
 
-pilharmonic opens on the **NEW REQUEST** form. Type a request and press **Enter**. The local policy checks the request; when accepted it becomes a task, selects an executor and requests execution. Start the request with `@NAME` to choose a registered executor, for example `@tester add regression tests`; without an explicit mention it uses `general`. Typing `@` shows the matching executors and **Tab** completes the first match. The mention is routing metadata and is not part of the recorded mandate. By default four agents can run at once. Additional start requests wait in FIFO order. The form also lists **NEEDS ACTION** and **RECENT TASKS**. Press **Esc** for the task board, **/** to open a new request, or **?** for help; help starts with **Concepts**.
+pilharmonic opens on the **NEW REQUEST** form; a first launch with no provider credential opens the login menu until a key is stored. Type a request and press **Enter**. The local policy checks the request; when accepted it becomes a task, selects an executor and requests execution. Start the request with `@NAME` to choose a registered executor, for example `@tester add regression tests`; without an explicit mention it uses `general`. Typing `@` shows the matching executors and **Tab** completes the first match. The mention is routing metadata and is not part of the recorded mandate. By default four agents can run at once. Additional start requests wait in FIFO order. The form also lists **NEEDS ACTION** and **RECENT TASKS**. Press **Esc** for the task board, **/** to open a new request, or **?** for help; help starts with **Concepts**.
 
 On the task board, the **! action** hint jumps to the next task needing action: blocked, waiting, awaiting review, input undelivered, merge failed, failed or interrupted. **n** creates a task directly as a draft without routing. Choose an executor with **A**, then start it with **r**.
 
@@ -61,7 +61,7 @@ No migration is required for the rename.
 | Create a task | `n` creates a queued task directly without routing. Use `A` to choose its executor or `w` to toggle isolation before requesting a start with `r`. |
 | Share context | `a` creates a related task with its own mandate and the default profile in effect when accepted. `f` sends context to subscribed queued and running tasks in the thread. `s` pauses or resumes the selected task's subscription. |
 | Follow up on one task | `F` sends context to that task. For a finished task it also requeues it. Press `r` to start a fresh attempt with its mandate and context. |
-| Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `v` filters calls and Enter in the detail pane expands arguments and results. |
+| Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `f` filters calls and Enter in the detail pane expands arguments and results. |
 | Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `!` on the task board selects the next task needing action in grouped display order, wrapping at the end. `z` toggles full-width details, and `[` / `]` scroll one detail line. The mouse wheel scrolls details. |
 | Copy output | Drag inside the details pane to select text. Releasing the mouse copies the selection through the terminal's OSC 52 clipboard support. Selection cannot start in or extend into the sidebar, header or footer. Terminals that block OSC 52 ignore the copy. Use the terminal's normal shortcut to paste into composers. |
 | Report or review | `p` records a status report. On a task awaiting review, `v` approves and merges the prepared commit; `V` rejects it with a reason. Use `F` to add follow-up context and requeue rejected work. |
@@ -78,7 +78,7 @@ Quitting cancels active attempts and waits for their workers. After an unexpecte
 
 In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate explicitly requests a change, such as `fix`, `add`, `update` or `implement`. Read-only inspection requests (for example `review`, `explain`, `inspect`, `read` or `test`) and ambiguous requests with no detected edit action stay in the source workspace. The choice is a lexical request-opening heuristic; the selected executor does not create a worktree by itself. Use `w` on a task before it starts to override the automatic choice, or `-isolation=false` to keep every task in the source workspace. The worktree starts from committed files and is reused on retries. Other workspaces run in place.
 
-**Successful isolated runs commit pending changes for review; merging stays blocked until you accept the review.** Press `v` to approve the displayed commit and automatically merge it into the source repository's current checkout. Merges are serialized. Press `V` to reject it without merging; the worktree remains available. Use `F` to add context or describe remaining work within the original mandate, then `r` to start the requeued task. If an approved merge fails, inspect the error and retained worktree. Uncommitted changes in the source do not block a merge: Git stashes the files the merge touches and reapplies them afterwards, and when they cannot be reapplied cleanly the task records a merge warning and keeps them in an autostash entry you can apply or drop yourself. Untracked source files that the merge would overwrite still block it until you move or commit them. Execution status, merge outcome, merge warning and operator review remain separate records.
+**Successful isolated runs commit pending changes for review unless the task's profile sets `no_integrate`; merging stays blocked until you accept the review.** A profile that withholds integration skips the commit, keeps the worktree and records `integration_skipped`. Press `v` to approve the displayed commit and automatically merge it into the source repository's current checkout. Merges are serialized. Press `V` to reject it without merging; the worktree remains available. Use `F` to add context or describe remaining work within the original mandate, then `r` to start the requeued task. If an approved merge fails, inspect the error and retained worktree. Uncommitted changes in the source do not block a merge: Git stashes the files the merge touches and reapplies them afterwards, and when they cannot be reapplied cleanly the task records a merge warning and keeps them in an autostash entry you can apply or drop yourself. Untracked source files that the merge would overwrite still block it until you move or commit them. Execution status, merge outcome, merge warning and operator review remain separate records.
 
 A parent waits to integrate while descendants use its worktree. Inspect any
 unsuccessful descendant before retrying integration. Delete descendant tasks
@@ -116,13 +116,14 @@ same leading mention. The executor appears on the task board and in task
 details.
 
 Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
-instructions. They are embedded at build time. Run `./pilharmonic` from this directory to load the
-[provided configuration](profiles.json). Startup reads `profiles.json` from
-beside the state file (the user config directory) if present, never from the
-current directory. Use `-profiles PATH` to select another file. It selects the built-in
-`coordinator` profile as the routing default, applies Astra to it and sets
-DeepSeek Flash for the explorer, implementer and tester. To coordinate a task
-with Astra, create a draft and select `general` with **A**.
+instructions. They are embedded at build time. Startup reads `profiles.json`
+from beside the state file (the user config directory) if present, never from
+the current directory, so pass `-profiles PATH` to load a file elsewhere, for
+example `-profiles profiles.json` for the
+[provided configuration](profiles.json) in this repository. The provided file selects the built-in
+`coordinator` profile as the routing default, applies `openai/gpt-6.1-sol` to
+it and sets DeepSeek Flash for the explorer, implementer and tester. To
+coordinate a task with that profile, create a draft and select `general` with **A**.
 The coordinator profile is built in, and its delegation guidance is compiled
 in. A top-level `general` attempt with delegation is asked to answer simple
 tasks directly; for complex or multi-concern work, to delegate multiple
@@ -136,8 +137,9 @@ Child tasks appear beneath their parent on the board, labeled by specialist.
 Task details show the execution profile and the model requested for the latest
 attempt when the adapter recorded an explicit model.
 The specialist model takes precedence over the task profile model for both
-direct and delegated work. A profile that names no model uses the `-model`
-fallback, and an attempt with neither fails with an explanatory error.
+direct and delegated work. `-model` fills in for any executor that has no
+specialist model and takes precedence over the task profile model as well, and
+an attempt with no model at all fails with an explanatory error.
 A model is a `provider/model` selector such as `openai/gpt-6.1-sol` or
 `deepseek/deepseek-flash`; the provider prefix selects the endpoint and where
 its API key is read from. Built-in prefixes: `openai`, `deepseek`, `openrouter`,

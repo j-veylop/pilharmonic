@@ -48,7 +48,7 @@ func run() (err error) {
 	state := flag.String("state", "", "path to the state file (default: user config directory)")
 	workspace := flag.String("workspace", "", "working directory for new tasks (default: current directory)")
 	specialistTools := flag.String("specialist-tools", "", "path to bundled specialist tool limits (JSON)")
-	model := flag.String("model", "", "default model for agents (provider/model); a profile's model overrides it")
+	model := flag.String("model", "", "model for agents without a specialist model (provider/model); it takes precedence over a profile model")
 	agents := flag.String("agents", "", "path to optional agent command configuration JSON")
 	profiles := flag.String("profiles", "", "profile and specialist settings (default: profiles.json beside the state file)")
 	profile := flag.String("profile", "", "default profile for routed and unchosen tasks (built-in profile uses executor defaults)")

@@ -26,7 +26,7 @@ in one JSON file. The terminal UI reads snapshots from the service.
 | `-isolation` | `true` | allow automatic Git worktrees for mandates that request changes |
 | `-agents` | none | optional trusted command-executor configuration |
 | `-specialist-tools` | none | optional JSON file that sets per-specialist tool limits |
-| `-model` | none | fallback model selector (`provider/model`) for profiles that do not name one |
+| `-model` | none | model selector (`provider/model`) for executors that have no model from `profiles.json`; it also takes precedence over a task profile's model |
 | `-profiles` | `profiles.json` beside the state file | profile and specialist configuration, or an explicit file |
 | `-profile` | `(unset)` | default profile for routed work and tasks without an explicit choice; falls back to the profile selected by `-profiles`, else `implementer` |
 | `-subagents` | `true` | allow running agents to delegate child tasks |
@@ -42,14 +42,16 @@ anything changed:
 - follow-ups still marked `pending` become `unknown` ("orchestrator stopped
   before acknowledgement"), because delivery cannot be proven;
 - legacy tasks without `ThreadID` are given one and a thread record;
-- legacy tasks without attempts get one synthesized attempt from their history;
+- legacy tasks without attempts get one synthesized attempt from their first
+  `started` event;
 - tasks that were `running` become `interrupted`, and their latest attempt gets
   a finish time and an error. No worker is assumed to have survived.
 
 The state file is opened, then configured command executors are loaded, the
 subagent limits and control socket are configured, and the concurrency limit is
 set, which also resumes persisted start requests. Then the TUI starts on the
-**NEW REQUEST** form. `Shutdown` cancels running work, closes pending start requests,
+**NEW REQUEST** form, or on the login menu when no provider is configured.
+`Shutdown` cancels running work, closes pending start requests,
 closes the subagent control socket and waits for workers to finish writing
 state. Quitting therefore ends
 active tasks as `canceled`, not `interrupted` — interrupted only comes from
@@ -103,8 +105,8 @@ not decompose requests or evaluate them with a model.
    `FantasyRunner` implements `LiveRunner`, so `RunLive`
    (`fantasy_runner.go`) drives the attempt in-process through
    `charm.land/fantasy` with the workspace as its directory. It resolves the
-   attempt's model from the profile snapshot (a specialist model, the task
-   profile model, or the `-model` fallback) and builds one initial prompt
+   attempt's model from the profile snapshot (the class model, a specialist or
+   `-model` model, then the task profile model) and builds one initial prompt
    containing the mandate plus any context under an explicit "not authority to
    expand the mandate" heading. It then streams assistant text deltas,
    thinking-block markers and tool start/end markers to the output writer while
@@ -139,7 +141,8 @@ not decompose requests or evaluate them with a model.
      adapter acknowledges the follow-up, or `unknown` if the execution ends or
      the orchestrator stops first;
    - running tasks with no live channel or a full queue get `rejected` with a
-     reason.
+     reason for a thread follow-up; a task-specific follow-up is refused with an
+     error instead.
    Each hand-off keeps a durable `Delivery` record with its trigger, execution
    attempt, state, reason and timestamps. A retry adds records for the new
    attempt instead of rewriting earlier outcomes, and only the current
@@ -170,8 +173,9 @@ not decompose requests or evaluate them with a model.
    accepted only while the attempt is running and is stored with an `adapter`
    source and attempt ID. The built-in Fantasy adapter records a `progress`
    report when it accepts the initial prompt, a `waiting` report when it
-   retries after a provider error, and a `failed` report on a provider failure
-   or when it produces no assistant response, without parsing assistant prose.
+   retries after a provider error, and a `failed` report when a step ends with
+   an error or content-filter finish reason or produces no assistant response,
+   without parsing assistant prose.
    Reports are separate from process status. `Task.Stage()` derives an action
    stage from
    the latest current-attempt report, ignoring reports made before that attempt
@@ -184,8 +188,12 @@ not decompose requests or evaluate them with a model.
     `canceled` if its context was canceled, `failed` on a non-nil error,
     otherwise `completed`. Before finalizing a successful isolated attempt, the
     worker validates the workspace reservation again and commits any worktree
-    changes with a task-identifying message (`merge.go`). A prepared commit
-    opens `pending` review without changing the source checkout. An up-to-date
+    changes with a task-identifying message (`merge.go`), unless the profile
+    disables integration or the worktree is still shared with queued or running
+    children; the first records `integration_skipped` and keeps the worktree for
+    the operator, the second records pending integration until the descendants
+    finish. A prepared commit opens `pending` review without changing the source
+    checkout. An up-to-date
     completion opens no review. The latest attempt is finalized, control
     credentials are cleared, events are appended, state is saved, and the
     scheduler starts the next waiting task if capacity opened.
@@ -211,17 +219,21 @@ not decompose requests or evaluate them with a model.
     immediately or signals a running one. `d` then `y` deletes an inactive
     task; if no other task shares its thread, the thread history is deleted too.
     A task with child tasks must have them deleted first, so parent links never
-    dangle. `D` then `y` deletes every completed task whose children would also
-    be removed, keeps completed parents that still have unfinished children,
-    and removes threads no remaining task uses. Both deletion paths remove the
-    tasks' retained worktrees and reservations after the state change is
-    durable. The source workspace is never touched. A canceled task keeps its
+    dangle. `D` then `y` deletes completed tasks whose children would also
+    be removed, and removes threads no remaining task uses. It keeps parents
+    that still have unfinished children, and keeps tasks whose worktree
+    integration is still waiting, whose prepared commit awaits review or is not
+    merged, or whose discard or shutdown is in flight. Both deletion paths
+    remove the tasks' retained worktrees and reservations after the state
+    change is durable. The source workspace is never touched. A canceled task keeps its
     worktree until deletion so a retry can reuse it. `x` then `y` discards the
     selected task's retained worktree without deleting the task, and `X` then
-    `y` discards every task worktree recorded as merged or up to date. Discard
-    refuses a running task, uncommitted changes and an unmerged worktree
-    commit, removes the reservation, clears the task's recorded execution path
-    and appends a `worktree_discarded` event; task history is kept.
+    `y` discards every task worktree recorded as merged or up to date. A
+    discard refuses a running, stopping, scheduled or integrating task, a
+    worktree another task still references, uncommitted changes and an unmerged
+    worktree commit; it removes the reservation, clears the task's recorded
+    execution path and appends a `worktree_discarded` event; task history is
+    kept.
 
 ## Data model
 
@@ -302,11 +314,13 @@ task for an explicit start without expanding its mandate.
   retry starts new records and does not inherit an older rejection or unknown
   outcome.
 - An isolated attempt runs only in the worktree reserved for that task and
-  repository; ownership records, directory types, repository identity and the
-  recorded commit are validated before reuse and again before merging.
+  repository; ownership records, directory types and repository identity are
+  validated before reuse, and the recorded isolation commit before merging.
   Preparing a workspace happens before the runner starts, and the source
   workspace is not modified while the agent runs. Successful completion prepares
-  a review; only operator approval permits merging. Approved merges are
+  a review unless the profile disables integration or an active child still
+  shares the worktree; only operator approval
+  permits merging. Approved merges are
   serialized, create a merge commit, and abort on conflict instead of leaving
   the source checkout in a partial merge. Merge failure is recorded separately
   from execution success and makes the task need action.
@@ -381,7 +395,8 @@ task for an explicit start without expanding its mandate.
 - Running live context is bounded (64 pending messages per task) and sends are
   rejected rather than blocked when full. Delivery records are retained with
   task history and are not compacted independently.
-- The TUI text input supports append and backspace only.
+- The TUI text input supports insertion, backspace and delete, cursor movement
+  within the draft and scrolling; it offers no selection or undo.
 - The Fantasy adapter is built in; configured command executors can be added
   with `-agents` as a separate opt-in. Both run behind `Runner`/`LiveRunner`:
   Fantasy supports live follow-ups and structured tool activity, while a

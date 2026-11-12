@@ -15,7 +15,9 @@ See the [executor contract](executors.md).
 
 ## Terminal vocabulary
 
-The main view leads with a **NEW REQUEST** form, reached with `/` or on startup.
+The main view leads with a **NEW REQUEST** form, reached with `/` and opened on
+startup once a provider credential is configured; without one, startup opens the
+login menu instead.
 The local policy checks a submitted request before it becomes a task. `n` creates
 a task directly as a queued draft without the request form's automatic routing;
 its request is still checked by the local policy. The form lists
@@ -216,7 +218,7 @@ allowlists for bundled specialists, for example
 `{"reviewer":["read","grep","find","ls"]}`. Entries for non-bundled
 specialists are invalid. The effective tools are the intersection of the
 specialist allowlist and the task profile's tool list when both are present.
-Delegated tasks retain the parent's effective tool limit, even when their
+Delegated tasks inherit the parent profile's tool list, even when their
 specialist or profile would otherwise allow more. Omitting the option preserves
 existing tool access behavior. Tasks snapshot the specialist ceiling when assigned
 and attempts record the effective tools. A newly configured limit can further
@@ -227,11 +229,12 @@ assign models and tools to bundled specialists. Startup registers executors
 before validating these settings and resuming queued work. Each Fantasy agent
 belongs to a model class, `big` or `small`; only `general` defaults to `big`,
 the specialists to `small`. The operator picks a selector per class and can
-override any agent's class; both persist in `models.json` beside the state
-file. The Fantasy adapter resolves the model for each attempt as the class
-model, else the specialist model, else the task profile model, else the
-`-model` fallback, and fixes that selector on the attempt independently of the
-inherited profile name.
+override the class of any Fantasy agent; both persist in `models.json` beside
+the state file. The Fantasy adapter resolves the model for each attempt as the
+class model, else the runner's configured model (a specialist model from
+`profiles.json`, or the `-model` fallback when the specialist has none), else
+the task profile model, and fixes that selector on the attempt independently of
+the inherited profile name.
 
 A profile may add coordinator instructions for the top-level general task. The
 canonical delegation workflow is compiled in, so the shipped profiles file does
@@ -249,4 +252,5 @@ grants no authority beyond the original mandate, and the router does not split
 work automatically. Specialist and child prompts omit this guidance for the
 coordinator role. The model decides when to call the helper. Profile instructions
 and tools remain bounded by the task snapshot and delegation containment; a
-child cannot widen the parent's tools, integration or delegation permissions.
+child cannot widen the profile's tool list, integration or delegation
+permissions beyond what it inherits.

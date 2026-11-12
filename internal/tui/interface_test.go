@@ -152,8 +152,11 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 
 	composerModel := base
 	composerModel.input = composer{kind: newTaskInput, text: "!keep this", cursor: len("!keep this")}
-	if footer := ansi.Strip(composerModel.footer(120)); !strings.Contains(footer, "!keep this") || !strings.Contains(footer, "enter submit") || !strings.Contains(footer, "ctrl+j/alt+enter newline") {
+	if footer := ansi.Strip(composerModel.footer(120)); !strings.Contains(footer, "enter submit") || !strings.Contains(footer, "ctrl+j/alt+enter newline") {
 		t.Fatalf("composer footer changed: %q", footer)
+	}
+	if view := ansi.Strip(composerModel.View()); !strings.Contains(view, "NEW TASK") || !strings.Contains(view, "!keep this") {
+		t.Fatalf("composer box missing its label or draft: %q", view)
 	}
 
 	agentPicker := base

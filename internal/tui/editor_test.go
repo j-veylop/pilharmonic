@@ -68,23 +68,22 @@ func TestEditorUpFromFullWrappedLineAdvancesOneLine(t *testing.T) {
 	}
 }
 
-func TestComposerFooterWrapsLongDraft(t *testing.T) {
+func TestComposerBoxWrapsLongDraft(t *testing.T) {
 	text := strings.Repeat("keep this visible ", 8) + "final-marker"
 	m := model{width: 48, height: 24, input: composer{kind: newTaskInput, text: text, cursor: len(text)}}
-	footer := m.footer(48)
-	if strings.Count(footer, "\n") < 3 {
-		t.Fatalf("composer footer stayed single-line: %q", footer)
+	box := ansi.Strip(strings.Join(m.composerBox(48, m.composerDraftRows(1)), "\n"))
+	if strings.Count(box, "\n") < 3 {
+		t.Fatalf("composer box stayed single-line: %q", box)
 	}
-	plain := ansi.Strip(footer)
-	if !strings.Contains(plain, "final-marker") {
-		t.Fatalf("end of long input is not visible: %q", plain)
+	if !strings.Contains(box, "final-marker") {
+		t.Fatalf("end of long input is not visible: %q", box)
 	}
-	if strings.Contains(plain, "…") {
-		t.Fatalf("composer footer truncated the draft: %q", plain)
+	if strings.Contains(box, "…") {
+		t.Fatalf("composer box truncated the draft: %q", box)
 	}
-	for _, line := range strings.Split(plain, "\n") {
+	for _, line := range strings.Split(box, "\n") {
 		if lipgloss.Width(line) > 48 {
-			t.Fatalf("footer line overflows terminal width: %q", line)
+			t.Fatalf("box line overflows terminal width: %q", line)
 		}
 	}
 }
@@ -184,14 +183,14 @@ func TestComposerPageKeysScrollLongDraft(t *testing.T) {
 	}
 	text := strings.Join(lines, "\n")
 	m := model{width: 80, height: 24, input: composer{kind: newTaskInput, text: text, cursor: len(text)}}
-	before := ansi.Strip(m.footer(80))
+	before := ansi.Strip(strings.Join(m.composerBox(80, m.composerHeight()), "\n"))
 	if !strings.Contains(before, "line-30") || strings.Contains(before, "line-01") {
 		t.Fatalf("long composer did not open at the cursor: %q", before)
 	}
 	for i := 0; i < 6; i++ {
 		m = key(m, tea.KeyMsg{Type: tea.KeyPgUp})
 	}
-	after := ansi.Strip(m.footer(80))
+	after := ansi.Strip(strings.Join(m.composerBox(80, m.composerHeight()), "\n"))
 	if !strings.Contains(after, "line-01") || strings.Contains(after, "line-30") {
 		t.Fatalf("pgup did not scroll the composer: %q", after)
 	}

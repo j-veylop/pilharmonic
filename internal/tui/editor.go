@@ -70,6 +70,148 @@ func (e *editor) delete() {
 	e.text = e.text[:e.cursor] + e.text[e.cursor+size:]
 }
 
+// isEditorWord reports whether r belongs to a word for word-wise editing.
+// Underscores count as word characters, so identifiers move as one unit.
+func isEditorWord(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// moveWordBackward moves to the start of the word before the cursor, skipping
+// the whitespace between words first.
+func (e *editor) moveWordBackward() {
+	e.clamp()
+	for e.cursor > 0 {
+		r, size := utf8.DecodeLastRuneInString(e.text[:e.cursor])
+		if !unicode.IsSpace(r) {
+			break
+		}
+		e.cursor -= size
+	}
+	for e.cursor > 0 {
+		r, size := utf8.DecodeLastRuneInString(e.text[:e.cursor])
+		if !isEditorWord(r) {
+			break
+		}
+		e.cursor -= size
+	}
+}
+
+// moveWordForward moves past the next word, skipping leading non-word runes.
+func (e *editor) moveWordForward() {
+	e.clamp()
+	for e.cursor < len(e.text) {
+		r, size := utf8.DecodeRuneInString(e.text[e.cursor:])
+		if isEditorWord(r) {
+			break
+		}
+		e.cursor += size
+	}
+	for e.cursor < len(e.text) {
+		r, size := utf8.DecodeRuneInString(e.text[e.cursor:])
+		if !isEditorWord(r) {
+			break
+		}
+		e.cursor += size
+	}
+}
+
+// deleteWordBackward removes the word before the cursor and the whitespace
+// that separates it from earlier text. Like a textarea, it stays on its own
+// line so a deletion never swallows a line break.
+func (e *editor) deleteWordBackward() {
+	e.clamp()
+	if e.cursor == 0 {
+		return
+	}
+	if r, _ := utf8.DecodeLastRuneInString(e.text[:e.cursor]); r == '\n' {
+		return
+	}
+	start := e.cursor
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(e.text[:start])
+		if r == '\n' || !unicode.IsSpace(r) {
+			break
+		}
+		start -= size
+	}
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(e.text[:start])
+		if r == '\n' || unicode.IsSpace(r) {
+			break
+		}
+		start -= size
+	}
+	e.text = e.text[:start] + e.text[e.cursor:]
+	e.cursor = start
+}
+
+// deleteWordForward removes the word after the cursor and the gap that follows
+// it, leaving no double space behind. It stays on its own line.
+func (e *editor) deleteWordForward() {
+	e.clamp()
+	end := e.cursor
+	for end < len(e.text) {
+		r, size := utf8.DecodeRuneInString(e.text[end:])
+		if r == '\n' || !unicode.IsSpace(r) {
+			break
+		}
+		end += size
+	}
+	for end < len(e.text) {
+		r, size := utf8.DecodeRuneInString(e.text[end:])
+		if r == '\n' || unicode.IsSpace(r) {
+			break
+		}
+		end += size
+	}
+	if end == e.cursor {
+		return
+	}
+	for end < len(e.text) {
+		r, size := utf8.DecodeRuneInString(e.text[end:])
+		if r == '\n' || !unicode.IsSpace(r) {
+			break
+		}
+		end += size
+	}
+	e.text = e.text[:e.cursor] + e.text[end:]
+}
+
+// deleteLineStart removes the draft between the line start and the cursor. At
+// a line start it joins the previous line, which is what repeated Ctrl-u does
+// in a readline-style editor.
+func (e *editor) deleteLineStart() {
+	e.clamp()
+	start := 0
+	if i := strings.LastIndexByte(e.text[:e.cursor], '\n'); i >= 0 {
+		start = i + 1
+	} else if e.cursor == 0 {
+		return
+	}
+	if start == e.cursor && start > 0 {
+		start--
+	}
+	e.text = e.text[:start] + e.text[e.cursor:]
+	e.cursor = start
+}
+
+// deleteLineEnd removes the draft between the cursor and the line end. At a
+// line end it removes the newline, joining the following line.
+func (e *editor) deleteLineEnd() {
+	e.clamp()
+	if e.cursor >= len(e.text) {
+		return
+	}
+	end := len(e.text)
+	if i := strings.IndexByte(e.text[e.cursor:], '\n'); i >= 0 {
+		end = e.cursor + i
+	}
+	if end == e.cursor {
+		end++
+	}
+	e.text = e.text[:e.cursor] + e.text[end:]
+}
+
 func (e *editor) moveHorizontal(delta int) {
 	e.clamp()
 	if delta < 0 {
@@ -148,24 +290,32 @@ func (e *editor) handleKey(msg tea.KeyMsg, width, height int) bool {
 		e.insert("\n")
 	case "backspace", "ctrl+h":
 		e.backspace()
-	case "delete":
+	case "delete", "ctrl+d":
 		e.delete()
-	case "left":
+	case "ctrl+w", "alt+backspace":
+		e.deleteWordBackward()
+	case "alt+d", "alt+delete":
+		e.deleteWordForward()
+	case "ctrl+u":
+		e.deleteLineStart()
+	case "ctrl+k":
+		e.deleteLineEnd()
+	case "left", "ctrl+b":
 		e.moveHorizontal(-1)
-	case "right":
+	case "right", "ctrl+f":
 		e.moveHorizontal(1)
-	case "up":
+	case "ctrl+left", "alt+left", "alt+b":
+		e.moveWordBackward()
+	case "ctrl+right", "alt+right", "alt+f":
+		e.moveWordForward()
+	case "up", "ctrl+p":
 		e.moveVertical(-1, width)
-	case "down":
+	case "down", "ctrl+n":
 		e.moveVertical(1, width)
 	case "pgup":
 		e.moveVertical(-max(1, height), width)
 	case "pgdown":
 		e.moveVertical(max(1, height), width)
-	case "ctrl+u":
-		e.moveVertical(-max(1, height/2), width)
-	case "ctrl+d":
-		e.moveVertical(max(1, height/2), width)
 	case "home", "ctrl+a":
 		e.moveLineStart()
 	case "end", "ctrl+e":
@@ -191,6 +341,12 @@ func (e *editor) handleKey(msg tea.KeyMsg, width, height int) bool {
 // viewLines returns at most height wrapped lines, scrolled so the cursor is
 // visible. The cursor is drawn at its byte position within the visible text.
 func (e editor) viewLines(width, height int) []string {
+	return e.viewLinesCursor(width, height, true)
+}
+
+// viewLinesCursor is viewLines with an optional cursor, so a draft that does
+// not hold focus keeps its scroll position without showing a caret.
+func (e editor) viewLinesCursor(width, height int, drawCursor bool) []string {
 	width = max(1, width)
 	height = max(1, height)
 	e.clamp()
@@ -208,7 +364,7 @@ func (e editor) viewLines(width, height int) []string {
 	result := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
 		line := lines[i].text
-		if i == current {
+		if i == current && drawCursor {
 			line = insertEditorCursor(line, editorCursorColumn(e.text, lines[i], e.cursor))
 		}
 		result = append(result, line)

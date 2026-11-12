@@ -7,7 +7,6 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"pilharmonic/internal/orchestrator"
 )
 
@@ -275,114 +274,46 @@ func (m *model) setRouterEditor(e editor) {
 }
 
 func (m model) routerComposerWidth() int {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	inner := max(1, width-4)
-	return max(1, inner-lipgloss.Width("▸ ")-1)
+	return m.composerWidth()
 }
 
 func (m model) routerComposerHeight() int {
-	height := m.height
-	if height <= 0 {
-		height = 24
-	}
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	lines := max(2, min(composerMaxLines, height/4))
-	// The footer (notice and wrapped hints), the panel border and the header
-	// share the terminal with the bottom composer. Cap the composer rows so the
-	// cursor row is never clipped by the panel on short terminals.
-	footer := m.footer(width)
-	body := height - 1 - (strings.Count(footer, "\n") + 1)
-	return max(1, min(lines, body-5))
+	return m.composerHeight()
 }
 
+// routerPanel lists the work that needs action and the newest tasks. The
+// request box is docked below it by View.
 func (m model) routerPanel(width, height int) string {
 	inner := max(1, width-4)
-	policy := lipgloss.NewStyle().Foreground(cyan).Bold(true).Render(orchestrator.LocalPolicyVersion)
-	header := accentStyle.Render("NEW REQUEST") + mutedStyle.Render("  ·  policy ") + policy
+	lines := []string{mutedStyle.Render("Accepted requests become tasks."), ""}
 
-	top := []string{mutedStyle.Render("Accepted requests become tasks.")}
 	action := m.attentionTasks()
-	top = append(top, accentStyle.Render(fmt.Sprintf("NEEDS ACTION  %02d", len(action))))
+	lines = append(lines, accentStyle.Render(fmt.Sprintf("NEEDS ACTION  %02d", len(action))))
 	if len(action) == 0 {
-		top = append(top, mutedStyle.Render("Nothing needs action."))
+		lines = append(lines, mutedStyle.Render("Nothing needs action."))
 	} else {
 		limit := min(len(action), 8)
 		for i := 0; i < limit; i++ {
-			top = append(top, m.routerAttentionRow(action[i], i, inner))
+			lines = append(lines, m.routerAttentionRow(action[i], i, inner))
 		}
 		if len(action) > limit {
-			top = append(top, mutedStyle.Render(fmt.Sprintf("+%d more", len(action)-limit)))
+			lines = append(lines, mutedStyle.Render(fmt.Sprintf("+%d more", len(action)-limit)))
 		}
 	}
-	top = append(top, "")
-	top = append(top, accentStyle.Render("RECENT TASKS"))
+	lines = append(lines, "")
+	lines = append(lines, accentStyle.Render("RECENT TASKS"))
 	if len(m.tasks) == 0 {
-		top = append(top, mutedStyle.Render("No tasks yet. Submit a request to create one."))
+		lines = append(lines, mutedStyle.Render("No tasks yet. Submit a request to create one."))
 	} else {
 		limit := min(len(m.tasks), 8)
 		for i := 0; i < limit; i++ {
-			top = append(top, m.routerRecentRow(m.tasks[i], inner))
+			lines = append(lines, m.routerRecentRow(m.tasks[i], inner))
 		}
 		if len(m.tasks) > limit {
-			top = append(top, mutedStyle.Render(fmt.Sprintf("+%d earlier", len(m.tasks)-limit)))
+			lines = append(lines, mutedStyle.Render(fmt.Sprintf("+%d earlier", len(m.tasks)-limit)))
 		}
-	}
-
-	// Keep the composer at the bottom of the panel. Drop list rows first when
-	// the terminal is too short for both, then the header, so the composer and
-	// its cursor stay visible.
-	composer := append(m.routerComposerLines(inner), m.routerMentionHintLines(inner)...)
-	contentHeight := max(1, height-2)
-	maxTop := max(0, contentHeight-len(composer)-3)
-	if len(top) > maxTop {
-		top = top[:maxTop]
-	}
-	lines := make([]string, 0, 3+len(top)+len(composer))
-	lines = append(lines, header)
-	if len(top) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, top...)
-	}
-	if len(lines)+1+len(composer) <= contentHeight {
-		lines = append(lines, "")
-	}
-	lines = append(lines, composer...)
-	if len(lines) > contentHeight {
-		drop := min(len(lines)-contentHeight, len(lines)-len(composer))
-		lines = lines[drop:]
 	}
 	return panel(strings.Join(lines, "\n"), width, height)
-}
-
-func (m model) routerComposerLines(width int) []string {
-	prefix := accentStyle.Render("▸ ")
-	pad := strings.Repeat(" ", lipgloss.Width("▸ "))
-	if m.loginProvider != "" {
-		return m.loginComposerLines(width)
-	}
-	if m.routerFocus == 1 {
-		prefix = mutedStyle.Render("▸ ")
-	}
-	if m.routerDraft == "" && m.routerFocus == 0 {
-		return []string{prefix + mutedStyle.Render("Describe the work… type @ to choose an executor") + "▏"}
-	}
-	contentWidth := max(1, width-lipgloss.Width("▸ ")-1)
-	visible := m.routerEditor().viewLines(contentWidth, m.routerComposerHeight())
-	lines := make([]string, 0, len(visible))
-	for i, line := range visible {
-		if i == 0 {
-			lines = append(lines, prefix+line)
-		} else {
-			lines = append(lines, pad+line)
-		}
-	}
-	return lines
 }
 
 func (m model) routerAttentionRow(task orchestrator.Task, index, width int) string {

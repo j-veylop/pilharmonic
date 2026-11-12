@@ -396,8 +396,10 @@ task for an explicit start without expanding its mandate.
 - Running live context is bounded (64 pending messages per task) and sends are
   rejected rather than blocked when full. Delivery records are retained with
   task history and are not compacted independently.
-- The TUI text input supports insertion, backspace and delete, cursor movement
-  within the draft and scrolling; it offers no selection or undo.
+- The TUI text input supports insertion, backspace and delete, word and line
+  deletion (`Ctrl-w`, `Alt-d`, `Ctrl-k`, `Ctrl-u`), cursor movement by
+  character, wrapped line and word, and scrolling with `PgUp`/`PgDn`; it offers
+  no selection or undo.
 - The Fantasy adapter is built in; configured command executors can be added
   with `-agents` as a separate opt-in. Both run behind `Runner`/`LiveRunner`:
   Fantasy supports live follow-ups and structured tool activity, while a

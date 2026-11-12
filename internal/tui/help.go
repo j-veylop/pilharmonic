@@ -58,6 +58,23 @@ j / k          Select activity in detail focus
 Enter          Expand / collapse selected tool call
 f              All calls / latest attempt / errors
 Ctrl-u / d     Scroll expanded arguments and results`},
+	{"Editing", `The request form and every composer dock as one input
+box above the footer hints; the draft wraps inside it and
+grows to six rows.
+
+Ctrl-w         Delete previous word (also Alt-backspace)
+Alt-d          Delete next word
+Ctrl-k / u     Delete to line end / line start
+Ctrl-d         Delete next character (also Delete)
+Left / Right   One character (also Ctrl-b / Ctrl-f)
+Ctrl-<- / ->   One word (also Alt-b / Alt-f)
+Up / Down      One wrapped line (also Ctrl-p / Ctrl-n)
+Home / End     Line start / line end (also Ctrl-a / Ctrl-e)
+PgUp / PgDn    Move through long input
+Enter          Submit; Ctrl-j or Alt-enter inserts a newline
+Esc            Cancel the draft
+Tab            Leave the request draft for the action list
+Word deletion stays on the line you are editing.`},
 	{"General", `m              Choose the big and small models
 L              Choose a provider and store its API key
 esc            Close request form / return to tasks
@@ -68,13 +85,10 @@ Paste          Use the terminal shortcut in composers
 
 COMPOSERS & PICKERS
 Enter          Submit input / select picker item
-Ctrl-j         Insert newline in composer
-Alt-enter      Insert newline in composer
-Arrows         Move cursor / wrapped line
-Home / End     Line start / end
-PgUp / PgDn    Move through long input
+Ctrl-j         Insert newline (also Alt-enter)
 Esc            Cancel input / close picker
-j/k or ↑↓      Select in executor or profile picker`},
+j/k or ↑↓      Select in executor or profile picker
+The Editing topic lists every cursor and word key.`},
 }
 
 func (m model) helpKey(key string) (model, tea.Cmd) {

@@ -49,3 +49,13 @@ jobs:
         run: |
           go build -ldflags "-X main.version=$(git describe --tags --always --dirty) -X main.commit=$(git rev-parse HEAD)" .
           ./pilharmonic -version
+
+      # The release workflow publishes whatever this script builds, so a broken
+      # target fails here rather than during a tagged release.
+      - name: Release build
+        run: |
+          version=ci-$(git rev-parse --short HEAD)
+          scripts/build-release.sh "$version" "$RUNNER_TEMP/release"
+          got=$("$RUNNER_TEMP/release/pilharmonic_${version}_$(go env GOOS)_$(go env GOARCH)" -version)
+          echo "$got"
+          test "$got" = "pilharmonic $version ($(git rev-parse HEAD))"

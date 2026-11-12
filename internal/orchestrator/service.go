@@ -92,6 +92,7 @@ type Task struct {
 	IsolationCommit    string         `json:"isolation_commit,omitempty"`
 	MergeStatus        string         `json:"merge_status,omitempty"`
 	MergeError         string         `json:"merge_error,omitempty"`
+	MergeWarning       string         `json:"merge_warning,omitempty"`
 	MergeCommit        string         `json:"merge_commit,omitempty"`
 	WorktreeCommit     string         `json:"worktree_commit,omitempty"`
 	MergedAt           time.Time      `json:"merged_at,omitempty"`
@@ -994,7 +995,7 @@ func (s *Service) Retry(id string) error {
 		t.Status = Queued
 		t.UpdatedAt = time.Now().UTC()
 		t.Error = ""
-		t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
+		t.MergeStatus, t.MergeError, t.MergeWarning, t.MergeCommit, t.WorktreeCommit = "", "", "", "", ""
 		t.MergedAt = time.Time{}
 		t.resetReview()
 		message := "Manual retry requested"

@@ -118,7 +118,10 @@ After a successful isolated run, the service commits pending changes and
 opens the prepared commit for operator review without merging it into the source
 checkout. Accepting the review persists the decision and schedules a serialized
 merge of that exact commit. A failed merge leaves the execution successful,
-records the integration error and retains the worktree. Rejecting the review
+records the integration error and retains the worktree. Git stashes uncommitted
+source files that the merge touches and reapplies them afterwards, so local
+edits do not block integration; when they cannot be reapplied the merge still
+completes, keeps them in an autostash entry and records a merge warning. Rejecting the review
 leaves the source unchanged and retains the worktree for inspection or a task
 follow-up with additional context; the follow-up requeues work without changing
 its mandate. Review decisions must match the commit displayed in the UI. A stale

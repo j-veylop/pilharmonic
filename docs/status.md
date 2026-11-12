@@ -193,11 +193,16 @@ not decompose requests or evaluate them with a model.
     reviewed commit into the source repository's current checkout. A clean
     merge records the worktree and merge commits; a conflict or Git failure
     aborts the source merge and records failure separately from the successful
-    attempt and approved review. Overlapping dirty source files block merging
-    rather than being overwritten or stashed. The operator can clean the source
-    and retry. Rejecting review never merges the commit; the worktree remains
-    available for a follow-up with additional context and another execution.
-    The worktree is retained until deletion or explicit eligible discard.
+    attempt and approved review. Uncommitted source files the merge touches are
+    stashed by Git and reapplied afterwards, so an operator can keep editing the
+    source checkout while tasks run. When those edits cannot be reapplied, the
+    merge still succeeds, the content stays in Git's autostash entry, and the
+    task records a merge warning naming the stash and the conflicted files
+    instead of losing the edits. Untracked files the merge would overwrite still
+    block it until the operator moves or commits them. Rejecting review never
+    merges the commit; the worktree remains available for a follow-up with
+    additional context and another execution. The worktree is retained until
+    deletion or explicit eligible discard.
 11. **Retry, cancel, delete.** `R` requeues a failed, interrupted or canceled
     task without changing its mandate or attempts and requires a new `r`; a
     completed isolated task whose approved merge failed is also retryable and

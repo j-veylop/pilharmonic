@@ -95,7 +95,7 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	}
 	t.Output = ""
 	t.Error = ""
-	t.MergeStatus, t.MergeError, t.MergeCommit, t.WorktreeCommit = "", "", "", ""
+	t.MergeStatus, t.MergeError, t.MergeWarning, t.MergeCommit, t.WorktreeCommit = "", "", "", "", ""
 	t.MergedAt = time.Time{}
 	t.resetReview()
 	// A task accepted before profiles existed has no snapshot yet; record the one

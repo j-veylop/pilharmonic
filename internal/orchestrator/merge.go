@@ -31,6 +31,10 @@ type mergeOutcome struct {
 	WorktreeCommit string
 	MergeCommit    string
 	Error          string
+	// Warning records a successful merge that still left the source checkout
+	// needing attention, such as uncommitted source edits Git stashed but could
+	// not reapply. It never turns a merge into a failure.
+	Warning string
 }
 
 // preparationOutcome records the commit prepared for review. UpToDate means the
@@ -174,17 +178,29 @@ func mergeReviewedWorkspace(ctx context.Context, statePath string, t Task, revie
 		return outcome, errors.New("source repository already has an in-progress merge")
 	}
 
-	mergeArgs := append(gitIdentityArgs(ctx, owner.Source), "merge", "--no-ff", "--no-gpg-sign", "-m", mergeSubject(t), reviewed)
+	// merge.autoStash handles the common case of an operator who keeps editing
+	// the source checkout while tasks run. Git refuses to merge into a checkout
+	// whose uncommitted changes the merge would overwrite, so it stashes those
+	// edits, merges, and applies them again. When they cannot be reapplied it
+	// keeps the stash entry instead of losing them, which the caller reports as
+	// a warning rather than a failed merge.
+	mergeArgs := append(gitIdentityArgs(ctx, owner.Source), "-c", "merge.autoStash=true", "merge", "--no-ff", "--no-gpg-sign", "-m", mergeSubject(t), reviewed)
 	if _, err = gitOutput(ctx, owner.Source, mergeArgs...); err != nil {
 		// Leave the source checkout as it was rather than preserving a partial
 		// merge for the operator to discover later. Only abort a merge this
-		// attempt actually started.
+		// attempt actually started. Aborting also reapplies the autostash.
+		failure := describeMergeFailure(err)
 		abortCtx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
 		if _, mergeErr := gitOutput(abortCtx, owner.Source, "rev-parse", "--verify", "MERGE_HEAD"); mergeErr == nil {
-			_, _ = gitOutput(abortCtx, owner.Source, "merge", "--abort")
+			if _, abortErr := gitOutput(abortCtx, owner.Source, "merge", "--abort"); abortErr != nil {
+				failure = fmt.Errorf("%w (aborting the source merge also failed: %v; the source checkout may still have a merge in progress)", failure, abortErr)
+			}
+		}
+		if note := retainedAutostashNote(abortCtx, owner.Source); note != "" {
+			failure = fmt.Errorf("%w (%s)", failure, note)
 		}
 		cancel()
-		return outcome, fmt.Errorf("merge isolated worktree: %w", describeMergeFailure(err))
+		return outcome, fmt.Errorf("merge isolated worktree: %w", failure)
 	}
 	mergeCommit, err := gitOutput(ctx, owner.Source, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
@@ -192,7 +208,59 @@ func mergeReviewedWorkspace(ctx context.Context, statePath string, t Task, revie
 	}
 	outcome.Status = MergeMerged
 	outcome.MergeCommit = mergeCommit
+	outcome.Warning = sourceStashWarning(ctx, owner.Source)
 	return outcome, nil
+}
+
+// retainedAutostash returns the stash entry Git created for a merge and kept
+// because the operator's uncommitted source edits could not be reapplied. Git
+// labels the entry "autostash", prefixed with the branch it was taken from.
+// Matching that label keeps stashes the operator created by hand out of the
+// report.
+func retainedAutostash(ctx context.Context, dir string) string {
+	list, err := gitOutput(ctx, dir, "stash", "list", "--format=%gd%x09%s")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(list, "\n") {
+		ref, subject, found := strings.Cut(line, "\t")
+		if !found {
+			continue
+		}
+		subject = strings.TrimSpace(subject)
+		if subject == "autostash" || strings.HasSuffix(subject, ": autostash") {
+			return strings.TrimSpace(ref)
+		}
+	}
+	return ""
+}
+
+// sourceStashWarning reports a merge that succeeded while the operator's
+// uncommitted source edits stayed in a stash entry. Git leaves the affected
+// files with conflict markers, so the operator needs to know where the content
+// is before the checkout keeps surprising them.
+func sourceStashWarning(ctx context.Context, dir string) string {
+	ref := retainedAutostash(ctx, dir)
+	if ref == "" {
+		return ""
+	}
+	warning := "uncommitted source changes are kept in the autostash entry " + ref + " because they conflict with the merged files"
+	if unmerged, err := gitOutput(ctx, dir, "diff", "--name-only", "--diff-filter=U"); err == nil {
+		if files := strings.Join(strings.Fields(unmerged), ", "); files != "" {
+			warning += " (conflict markers in " + files + ")"
+		}
+	}
+	return warning + "; resolve them and then run git stash drop"
+}
+
+// retainedAutostashNote explains a stash entry left behind by an aborted merge,
+// where Git normally restores the operator's uncommitted edits itself.
+func retainedAutostashNote(ctx context.Context, dir string) string {
+	ref := retainedAutostash(ctx, dir)
+	if ref == "" {
+		return ""
+	}
+	return "uncommitted source changes were not restored automatically and are kept in the autostash entry " + ref
 }
 
 // describeMergeFailure turns Git's local-checkout refusals into actionable

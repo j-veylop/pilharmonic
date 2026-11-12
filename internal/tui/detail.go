@@ -80,6 +80,9 @@ func (m model) detailContent(width int) []string {
 	switch t.MergeStatus {
 	case orchestrator.MergeMerged:
 		add(lipgloss.NewStyle().Foreground(badge.color).Render(badge.glyph+" Merge: merged") + mutedStyle.Render(" · commit "+terminalText(t.MergeCommit)))
+		if t.MergeWarning != "" {
+			add(lipgloss.NewStyle().Foreground(statusWaiting).Render("Merge warning  ") + terminalText(t.MergeWarning))
+		}
 	case orchestrator.MergeUpToDate:
 		add(mutedStyle.Render(badge.glyph + " Merge: no changes to merge"))
 	case orchestrator.MergeFailed:

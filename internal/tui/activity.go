@@ -219,7 +219,7 @@ func (m model) visibleActivities() []orchestrator.ToolActivity {
 		if m.activity.filter == activityFilterLatest && a.AttemptID != latest {
 			continue
 		}
-		if m.activity.filter == activityFilterErrors && a.Status != "failed" && a.Status != "interrupted" {
+		if m.activity.filter == activityFilterErrors && a.Status != orchestrator.ActivityFailed && a.Status != orchestrator.ActivityInterrupted {
 			continue
 		}
 		result = append(result, a)
@@ -234,7 +234,7 @@ func (m model) currentAction(t orchestrator.Task) string {
 	attempt := t.Attempts[len(t.Attempts)-1].ID
 	for i := len(t.Activities) - 1; i >= 0; i-- {
 		a := t.Activities[i]
-		if a.AttemptID == attempt && a.Status == "running" {
+		if a.AttemptID == attempt && a.Status == orchestrator.ActivityRunning {
 			return m.runningGlyph() + " " + terminalText(a.Summary())
 		}
 	}

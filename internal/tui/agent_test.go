@@ -102,9 +102,7 @@ func TestProfilePickerSelectAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.RegisterProfile(orchestrator.Profile{Name: "reviewer", Description: "Review only", NoIntegrate: true}); err != nil {
-		t.Fatal(err)
-	}
+	addTestProfile(t, s, `{"name":"reviewer","description":"Review only","no_integrate":true}`)
 	m := model{service: s, tasks: s.ListTasks(), width: 80, height: 24}
 	m = key(m, runeKey("P"))
 	if m.profilePicker.target != task.ID || !strings.Contains(m.View(), "SELECT PROFILE") {

@@ -120,9 +120,6 @@ func composeInput(t Task) string {
 	return prompt.String()
 }
 
-// piPrompt is retained for callers that only need the composed text.
-func piPrompt(t Task) string { return composeInput(t) }
-
 func checkPiPromptSize(prompt string) error {
 	if len(prompt) > maxPiPromptBytes {
 		return fmt.Errorf("prompt exceeds 100 KiB argument limit (%d bytes)", len(prompt))

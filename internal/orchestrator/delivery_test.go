@@ -204,7 +204,7 @@ func TestOpeningStateSettlesPendingDeliveryRecords(t *testing.T) {
 	}
 }
 
-func TestAddManualContextRecordsTrigger(t *testing.T) {
+func TestAddContextRecordsManualTrigger(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestAddManualContextRecordsTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.AddManualContext(task.ID, "extra context"); err != nil {
+	if err = s.AddContext(task.ID, "manual-trigger", "extra context"); err != nil {
 		t.Fatal(err)
 	}
 	updated, ok := s.GetTask(task.ID)

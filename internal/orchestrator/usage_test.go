@@ -318,7 +318,7 @@ func TestFantasyRunnerRecordsUsagePerStreamCall(t *testing.T) {
 		step("first", 100, 40),
 		step("second", 50, 20),
 	}}
-	runner := NewFantasyRunner("deepseek/deepseek-chat", nil)
+	runner := FantasyRunner{model: "deepseek/deepseek-chat"}
 	runner.ModelFactory = fakeFactory(model, "deepseek/deepseek-chat")
 
 	sink := &usageSink{}
@@ -341,7 +341,7 @@ func TestFantasyRunnerRecordsUsagePerStreamCall(t *testing.T) {
 
 func TestFantasyRunnerSkipsEmptyUsage(t *testing.T) {
 	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{textDelta("answer")}}
-	runner := NewFantasyRunner("fake/model", nil)
+	runner := FantasyRunner{model: "fake/model"}
 	runner.ModelFactory = fakeFactory(model, "fake/model")
 	sink := &usageSink{}
 	if err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, sink); err != nil {

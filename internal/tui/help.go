@@ -12,10 +12,9 @@ import (
 )
 
 // A help topic is structured rather than pre-formatted, so one definition feeds
-// both projections: helpLines projects it to plain text, which the tests and the
-// slash-command test read, and the overlay projects the same lines to styled
-// cells. Nothing is inferred from indentation, so a description can wrap without
-// being mistaken for a heading.
+// both projections: the overlay projects it to styled cells, and the tests read
+// the same layout as plain text. Nothing is inferred from indentation, so a
+// description can wrap without being mistaken for a heading.
 type helpTopic struct {
 	title    string
 	intro    []string
@@ -447,11 +446,6 @@ func (m model) helpKey(key string) (model, tea.Cmd) {
 		m.help.page, m.help.scroll = len(helpTopics)-1, 0
 	}
 	return m, nil
-}
-
-func (m model) helpLines(width int) []string {
-	page := max(0, min(len(helpTopics)-1, m.help.page))
-	return layoutHelpTopic(helpTopics[page], max(1, width)).plain()
 }
 
 func (m *model) scrollHelp(delta int) {

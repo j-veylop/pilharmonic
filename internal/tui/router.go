@@ -15,13 +15,13 @@ import (
 // reviewed, and a queued or running task needs no action unless it reports a
 // block or an undelivered input.
 var attentionStages = map[string]bool{
-	"blocked":           true,
-	"waiting":           true,
-	"awaiting review":   true,
-	"input undelivered": true,
-	"merge failed":      true,
-	"failed":            true,
-	"interrupted":       true,
+	orchestrator.StageBlocked:          true,
+	orchestrator.StageWaiting:          true,
+	orchestrator.StageAwaitingReview:   true,
+	orchestrator.StageInputUndelivered: true,
+	orchestrator.StageMergeFailed:      true,
+	orchestrator.StageFailed:           true,
+	orchestrator.StageInterrupted:      true,
 }
 
 func needsAttention(task orchestrator.Task) bool {

@@ -38,19 +38,6 @@ type FantasyRunner struct {
 	ModelFactory ModelFactory
 }
 
-// NewFantasyRunner builds a runner with no extra instructions. Use
-// WithInstructions to add role guidance.
-func NewFantasyRunner(model string, defaultTools []string) FantasyRunner {
-	return FantasyRunner{model: model, defaultTools: append([]string(nil), defaultTools...)}
-}
-
-// WithInstructions returns a copy of the runner that appends trusted role
-// guidance to the executor policy in the system prompt.
-func (f FantasyRunner) WithInstructions(instructions string) FantasyRunner {
-	f.instructions = instructions
-	return f
-}
-
 // RequestedModel resolves the model selector used for this attempt, in
 // priority order: the operator's per-agent override, the runner's configured
 // model (from profiles.json or the -model flag), then the task profile's model.
@@ -111,20 +98,26 @@ func (f FantasyRunner) toolPalette(profile *Profile) []string {
 	return tools
 }
 
+// maxSummaryInput bounds the tool text a transcript marker repeats.
+const maxSummaryInput = 200
+
+// summaryLine collapses untrusted tool text to one bounded line.
+func summaryLine(text string) string {
+	text = strings.TrimSpace(sanitizeTranscript(text))
+	if line, _, ok := strings.Cut(text, "\n"); ok {
+		text = strings.TrimSpace(line)
+	}
+	if len(text) > maxSummaryInput {
+		text = text[:maxSummaryInput] + "..."
+	}
+	return text
+}
+
 // toolCallSummary renders the one-line display marker written when a tool call
 // starts. Tool arguments are untrusted, so the line is sanitized and bounded.
 func toolCallSummary(name, input string) string {
 	name = sanitizeTranscript(name)
-	input = strings.TrimSpace(sanitizeTranscript(input))
-	if input != "" {
-		if line, _, ok := strings.Cut(input, "\n"); ok {
-			input = strings.TrimSpace(line)
-		}
-		const maxSummaryInput = 200
-		if len(input) > maxSummaryInput {
-			input = input[:maxSummaryInput] + "..."
-		}
-	}
+	input = summaryLine(input)
 	if input == "" {
 		return name
 	}
@@ -228,7 +221,7 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 			ID:        toolCall.ToolCallID,
 			Name:      sanitizeTranscript(toolCall.ToolName),
 			Args:      json.RawMessage(toolCall.Input),
-			Status:    activityRunning,
+			Status:    ActivityRunning,
 			StartedAt: time.Now().UTC(),
 		}
 		inFlight[toolCall.ToolCallID] = activity
@@ -237,7 +230,7 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 				return err
 			}
 		}
-		return transcript.prose(fmt.Sprintf("\n[%s] %s\n", activityRunning, toolCallSummary(activity.Name, toolCall.Input)))
+		return transcript.prose(fmt.Sprintf("\n[%s] %s\n", ActivityRunning, toolCallSummary(activity.Name, toolCall.Input)))
 	}
 	onToolResult := func(result fantasy.ToolResultContent) error {
 		now := time.Now().UTC()
@@ -250,9 +243,9 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		}
 		text, failed := toolResultContent(result.Result)
 		activity.Name = firstNonEmpty(activity.Name, sanitizeTranscript(result.ToolName))
-		activity.Status = activityFinished
+		activity.Status = ActivityFinished
 		if failed {
-			activity.Status = activityFailed
+			activity.Status = ActivityFailed
 		}
 		activity.FinishedAt = now
 		duration := now.Sub(activity.StartedAt).Seconds() * 1000
@@ -273,7 +266,7 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		if failed {
 			// Failures carry the tool's own explanation; successes only
 			// need the name, which the start marker already established.
-			summary = toolCallSummary(activity.Name, activitySummaryInput(text))
+			summary = toolCallSummary(activity.Name, text)
 		}
 		return transcript.prose(fmt.Sprintf("\n[%s] %s\n", activity.Status, summary))
 	}
@@ -363,20 +356,6 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		return errors.New(message)
 	}
 	return nil
-}
-
-// activitySummaryInput renders a tool result's first line for the transcript
-// marker. Result text is agent data, so it is collapsed to one short line.
-func activitySummaryInput(text string) string {
-	text = strings.TrimSpace(sanitizeTranscript(text))
-	if line, _, ok := strings.Cut(text, "\n"); ok {
-		text = strings.TrimSpace(line)
-	}
-	const maxSummaryInput = 200
-	if len(text) > maxSummaryInput {
-		text = text[:maxSummaryInput] + "..."
-	}
-	return text
 }
 
 func firstNonEmpty(values ...string) string {

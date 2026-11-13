@@ -13,8 +13,6 @@ import (
 // library and the launcher agree.
 const DefaultConcurrency = 4
 
-const defaultConcurrency = DefaultConcurrency
-
 type pendingRequest struct {
 	ctx  context.Context
 	stop chan struct{}
@@ -38,17 +36,6 @@ func (s *Service) SetConcurrencyLimit(limit int) error {
 		return errors.New("service is shutting down")
 	}
 	s.limit = limit
-	return s.scheduleLocked()
-}
-
-// ResumeScheduled activates persisted start requests after configuration is loaded.
-// It is explicit so startup can configure concurrency and register runners first.
-func (s *Service) ResumeScheduled() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
 	return s.scheduleLocked()
 }
 
@@ -239,7 +226,6 @@ func (s *Service) failUnavailableAgentsLocked() error {
 type profileError struct{ err error }
 
 func (e profileError) Error() string { return e.err.Error() }
-func (e profileError) Unwrap() error { return e.err }
 
 func isProfileError(err error) bool {
 	var target profileError

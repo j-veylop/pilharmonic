@@ -13,11 +13,11 @@ func taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Colo
 		return "◷", "WAITING", statusWaiting
 	}
 	switch stage := task.Stage(); stage {
-	case "blocked", "merge failed":
+	case orchestrator.StageBlocked, orchestrator.StageMergeFailed:
 		return "✗", strings.ToUpper(stage), statusFailed
-	case "waiting", "waiting for subagents", "input undelivered":
+	case orchestrator.StageWaiting, orchestrator.StageWaitingSubagents, orchestrator.StageInputUndelivered:
 		return "◷", strings.ToUpper(stage), statusWaiting
-	case "awaiting review":
+	case orchestrator.StageAwaitingReview:
 		return "◆", strings.ToUpper(stage), cyan
 	}
 	return statusState(task.Status)
@@ -51,7 +51,7 @@ func statusLabel(status orchestrator.Status) string {
 // parent whose child is still queued, running or awaiting workspace integration
 // is waiting for that subagent, even though its own process has not exited.
 func taskStateWithPeers(task orchestrator.Task, tasks []orchestrator.Task) (glyph, label string, color lipgloss.Color) {
-	if task.Status == orchestrator.Running && task.Stage() == "working" && hasActiveChild(task, tasks) {
+	if task.Status == orchestrator.Running && task.Stage() == orchestrator.StageWorking && hasActiveChild(task, tasks) {
 		return "◷", "WAITING FOR SUBAGENTS", statusWaiting
 	}
 	return taskState(task)
@@ -181,13 +181,13 @@ func taskTitleRowWithIcon(task orchestrator.Task, icon string, width int, select
 // Bubble Tea spinner frame.
 func toolStatusStyle(status string) (lipgloss.Style, string) {
 	switch status {
-	case "running":
+	case orchestrator.ActivityRunning:
 		return lipgloss.NewStyle().Foreground(statusRunning), runningGlyphPlaceholder
-	case "finished":
+	case orchestrator.ActivityFinished:
 		return lipgloss.NewStyle().Foreground(statusCompleted), "✓"
-	case "failed":
+	case orchestrator.ActivityFailed:
 		return lipgloss.NewStyle().Foreground(statusFailed), "✗"
-	case "interrupted":
+	case orchestrator.ActivityInterrupted:
 		return lipgloss.NewStyle().Foreground(statusFailed), "⊘"
 	default:
 		return mutedStyle, "•"
@@ -204,7 +204,7 @@ func (m model) runningGlyph() string {
 }
 
 func (m model) toolStatusStyle(status string) (lipgloss.Style, string) {
-	if status == "running" {
+	if status == orchestrator.ActivityRunning {
 		return lipgloss.NewStyle().Foreground(statusRunning), m.runningGlyph()
 	}
 	return toolStatusStyle(status)

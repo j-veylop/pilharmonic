@@ -96,7 +96,7 @@ func fakeFactory(model fantasy.LanguageModel, wantModel string) ModelFactory {
 
 func TestFantasyRunnerStreamsAssistantText(t *testing.T) {
 	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{textDelta("Working on it")}}
-	runner := NewFantasyRunner("fake/model", nil)
+	runner := FantasyRunner{model: "fake/model"}
 	runner.ModelFactory = fakeFactory(model, "fake/model")
 
 	sink := &fantasyTestSink{}
@@ -116,7 +116,7 @@ func TestFantasyRunnerLiveFollowUp(t *testing.T) {
 		textDelta("first answer"),
 		textDelta("second answer"),
 	}}
-	runner := NewFantasyRunner("fake/model", nil)
+	runner := FantasyRunner{model: "fake/model"}
 	runner.ModelFactory = fakeFactory(model, "fake/model")
 
 	sink := &fantasyTestSink{}
@@ -149,7 +149,7 @@ func TestFantasyRunnerRecordsToolActivity(t *testing.T) {
 		},
 		textDelta("read the file"),
 	}}
-	runner := NewFantasyRunner("fake/model", nil)
+	runner := FantasyRunner{model: "fake/model"}
 	runner.ModelFactory = fakeFactory(model, "fake/model")
 
 	sink := &fantasyTestSink{}
@@ -159,9 +159,9 @@ func TestFantasyRunnerRecordsToolActivity(t *testing.T) {
 	var running, finished *ToolActivity
 	for i := range sink.activities {
 		switch sink.activities[i].Status {
-		case activityRunning:
+		case ActivityRunning:
 			running = &sink.activities[i]
-		case activityFinished:
+		case ActivityFinished:
 			finished = &sink.activities[i]
 		}
 	}
@@ -190,7 +190,7 @@ func TestFantasyRunnerReportsFailureFinishReason(t *testing.T) {
 	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{{
 		{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonError},
 	}}}
-	runner := NewFantasyRunner("fake/model", nil)
+	runner := FantasyRunner{model: "fake/model"}
 	runner.ModelFactory = fakeFactory(model, "")
 
 	sink := &fantasyTestSink{}
@@ -207,7 +207,7 @@ func TestFantasyRunnerFailsWithoutAssistantText(t *testing.T) {
 	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{{
 		{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonStop},
 	}}}
-	runner := NewFantasyRunner("fake/model", nil)
+	runner := FantasyRunner{model: "fake/model"}
 	runner.ModelFactory = fakeFactory(model, "")
 
 	sink := &fantasyTestSink{}
@@ -218,7 +218,7 @@ func TestFantasyRunnerFailsWithoutAssistantText(t *testing.T) {
 }
 
 func TestFantasyRunnerRejectsEmptyModel(t *testing.T) {
-	runner := NewFantasyRunner("", nil)
+	runner := FantasyRunner{}
 	err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, &fantasyTestSink{})
 	if err == nil || !strings.Contains(err.Error(), "provider/model") {
 		t.Fatalf("expected a model-selector error, got %v", err)
@@ -226,7 +226,7 @@ func TestFantasyRunnerRejectsEmptyModel(t *testing.T) {
 }
 
 func TestFantasyRunnerRequestedModel(t *testing.T) {
-	runner := NewFantasyRunner("fake/default", nil)
+	runner := FantasyRunner{model: "fake/default"}
 	if got := runner.RequestedModel(nil); got != "fake/default" {
 		t.Fatalf("nil profile: got %q", got)
 	}
@@ -240,7 +240,7 @@ func TestFantasyRunnerRequestedModel(t *testing.T) {
 }
 
 func TestFantasyRunnerSupportsProfile(t *testing.T) {
-	runner := NewFantasyRunner("", nil)
+	runner := FantasyRunner{}
 	if err := runner.SupportsProfile(Profile{Name: "tester", Tools: []string{"read", "bash"}, Model: "openai/gpt-4.1"}); err != nil {
 		t.Fatalf("ordinary profile rejected: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestFantasyRunnerCapabilities(t *testing.T) {
 }
 
 func TestFantasyRunnerSystemPrompt(t *testing.T) {
-	runner := NewFantasyRunner("", nil).WithInstructions("Be careful.")
+	runner := FantasyRunner{instructions: "Be careful."}
 	got := runner.systemPrompt(&Profile{Name: "reviewer", Instructions: "Review only."})
 	for _, want := range []string{piToolGuidance, "Be careful.", "Orchestrator role reviewer (adds no authority beyond the mandate):\nReview only."} {
 		if !strings.Contains(got, want) {
@@ -280,7 +280,7 @@ func TestFantasyRunnerToolPalette(t *testing.T) {
 	if got := (FantasyRunner{}).toolPalette(nil); len(got) != len(fantasyToolNames) {
 		t.Fatalf("default palette: %v", got)
 	}
-	runner := NewFantasyRunner("", []string{"read"})
+	runner := FantasyRunner{defaultTools: []string{"read"}}
 	if got := runner.toolPalette(nil); len(got) != 1 || got[0] != "read" {
 		t.Fatalf("role palette: %v", got)
 	}
@@ -290,7 +290,7 @@ func TestFantasyRunnerToolPalette(t *testing.T) {
 }
 
 func TestFantasyRunnerFactoryErrorPropagates(t *testing.T) {
-	runner := NewFantasyRunner("fake/model", nil)
+	runner := FantasyRunner{model: "fake/model"}
 	runner.ModelFactory = func(context.Context, string) (fantasy.LanguageModel, error) {
 		return nil, errors.New("no credentials")
 	}

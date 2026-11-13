@@ -47,11 +47,12 @@ var (
 )
 
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(ink)
-	mutedStyle  = lipgloss.NewStyle().Foreground(muted)
-	faintStyle  = lipgloss.NewStyle().Foreground(faint)
-	accentStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
-	panelStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1)
+	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(ink)
+	mutedStyle   = lipgloss.NewStyle().Foreground(muted)
+	faintStyle   = lipgloss.NewStyle().Foreground(faint)
+	accentStyle  = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	warningStyle = lipgloss.NewStyle().Foreground(statusWaiting).Bold(true)
+	panelStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1)
 
 	activeTabStyle = lipgloss.NewStyle().
 			Foreground(accent).

@@ -94,24 +94,31 @@ func TestHelpPagination(t *testing.T) {
 	}
 }
 
+// plainHelp projects the current help topic to plain text, matching the
+// overlay's layout without the styling.
+func plainHelp(m model, width int) []string {
+	page := max(0, min(len(helpTopics)-1, m.help.page))
+	return layoutHelpTopic(helpTopics[page], max(1, width)).plain()
+}
+
 func TestHelpTopicsAreLogicalAndIndependent(t *testing.T) {
 	m := model{width: 80, height: 24, help: helpState{open: true}}
-	concepts := strings.Join(m.helpLines(70), "\n")
+	concepts := strings.Join(plainHelp(m, 70), "\n")
 	if !strings.Contains(concepts, "Accepted work") || !strings.Contains(concepts, "need you") || strings.Contains(concepts, "Focus tasks") {
 		t.Fatal("concepts missing or contains another topic")
 	}
 	m.scrollHelp(1)
-	navigation := strings.Join(m.helpLines(70), "\n")
+	navigation := strings.Join(plainHelp(m, 70), "\n")
 	if !strings.Contains(navigation, "Focus tasks") || strings.Contains(navigation, "New task") {
 		t.Fatal("navigation contains another topic")
 	}
 	m.scrollHelp(1)
-	tasks := strings.Join(m.helpLines(70), "\n")
+	tasks := strings.Join(plainHelp(m, 70), "\n")
 	if !strings.Contains(tasks, "New task") || strings.Contains(tasks, "Toggle tool activity") {
 		t.Fatal("tasks contains another topic")
 	}
 	m.scrollHelp(1)
-	if !strings.Contains(strings.Join(m.helpLines(70), "\n"), "Toggle tool activity") {
+	if !strings.Contains(strings.Join(plainHelp(m, 70), "\n"), "Toggle tool activity") {
 		t.Fatal("activity missing")
 	}
 	m.scrollHelpBody(5)

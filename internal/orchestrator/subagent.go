@@ -51,13 +51,6 @@ func (s *Service) SpawnSubagent(parentID, title, prompt, agent string) (Task, er
 	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, "", "", true)
 }
 
-// SpawnSubagentWithProfile requests a child with a named profile. The child
-// profile must not grant more than the parent's recorded profile; see
-// checkDelegatedProfile.
-func (s *Service) SpawnSubagentWithProfile(parentID, title, prompt, agent, profile string) (Task, error) {
-	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, profile, "", true)
-}
-
 // spawnSubagent handles control-socket requests. The credential is mandatory so
 // a request cannot borrow the parent's authority merely by omitting its token.
 func (s *Service) spawnSubagent(parentID, title, prompt, agent, profile, token string) (Task, error) {
@@ -342,13 +335,6 @@ Available executors:
 	return guidance.String()
 }
 
-var controlEnvironmentKeys = map[string]bool{
-	"ORCHESTRATOR_CONTROL_SOCKET": true,
-	"ORCHESTRATOR_TASK_ID":        true,
-	"ORCHESTRATOR_SUBAGENT_TOKEN": true,
-	"ORCHESTRATOR_SUBAGENT_CLI":   true,
-}
-
 func (t Task) controlEnvironment() []string {
 	if t.controlSocket == "" || t.controlToken == "" {
 		return nil
@@ -373,10 +359,6 @@ func (t Task) runnerEnvironment() []string {
 	env := make([]string, 0, 16)
 	for _, item := range os.Environ() {
 		key, _, _ := strings.Cut(item, "=")
-		if controlEnvironmentKeys[key] {
-			// Replace any inherited credential with this attempt's own below.
-			continue
-		}
 		if runnerEnvironmentKey(key) {
 			env = append(env, item)
 		}
@@ -385,12 +367,30 @@ func (t Task) runnerEnvironment() []string {
 	return append(env, t.controlEnvironment()...)
 }
 
+// runnerEnvironmentKey is the single rule for what an agent inherits. The
+// orchestrator namespace is allowed except for the per-attempt control
+// credentials: those come only from controlEnvironment, so an inherited token
+// can never shadow this attempt's own.
 func runnerEnvironmentKey(key string) bool {
+	if controlEnvironmentKey(key) {
+		return false
+	}
 	switch key {
 	case "PATH", "HOME", "LANG", "TERM", "SHELL", "TMPDIR", "TMP", "TEMP":
 		return true
 	}
 	return strings.HasPrefix(key, "LC_") || strings.HasPrefix(key, "ORCHESTRATOR_")
+}
+
+// controlEnvironmentKey reports whether key is one of the credentials that
+// point an agent at its own control socket.
+func controlEnvironmentKey(key string) bool {
+	switch key {
+	case "ORCHESTRATOR_CONTROL_SOCKET", "ORCHESTRATOR_TASK_ID",
+		"ORCHESTRATOR_SUBAGENT_TOKEN", "ORCHESTRATOR_SUBAGENT_CLI":
+		return true
+	}
+	return false
 }
 
 // waitForSubagent waits for a child to finish. If capacity is unavailable, a

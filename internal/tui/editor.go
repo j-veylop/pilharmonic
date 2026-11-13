@@ -338,14 +338,10 @@ func (e *editor) handleKey(msg tea.KeyMsg, width, height int) bool {
 	return true
 }
 
-// viewLines returns at most height wrapped lines, scrolled so the cursor is
-// visible. The cursor is drawn at its byte position within the visible text.
-func (e editor) viewLines(width, height int) []string {
-	return e.viewLinesCursor(width, height, true)
-}
-
-// viewLinesCursor is viewLines with an optional cursor, so a draft that does
-// not hold focus keeps its scroll position without showing a caret.
+// viewLinesCursor returns at most height wrapped lines, scrolled so the cursor
+// is visible, and optionally draws the cursor at its byte position within the
+// visible text. A draft that does not hold focus keeps its scroll position
+// without showing a caret.
 func (e editor) viewLinesCursor(width, height int, drawCursor bool) []string {
 	width = max(1, width)
 	height = max(1, height)

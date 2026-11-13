@@ -22,9 +22,7 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 		t.Fatal(err)
 	}
 	const lead = "Delegate repository inspection to explorer."
-	if err := s.RegisterProfile(Profile{Name: "project", CoordinatorInstructions: lead, Tools: []string{"read", "bash", "grep"}}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "project", CoordinatorInstructions: lead, Tools: []string{"read", "bash", "grep"}})
 	started := make(chan Task, 3)
 	release := make(chan struct{})
 	defer close(release)
@@ -43,7 +41,7 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 		t.Helper()
 		select {
 		case run := <-started:
-			if strings.Contains(piPrompt(run), lead) {
+			if strings.Contains(composeInput(run), lead) {
 				t.Fatal("specialist received parent coordinator instructions")
 			}
 			got := strings.Join((FantasyRunner{}).toolPalette(run.ProfileSpec), ",")
@@ -87,9 +85,7 @@ func TestDisjointSpecialistToolsPreventLaunch(t *testing.T) {
 	if err := s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read"]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RegisterProfile(Profile{Name: "shell", Tools: []string{"bash"}}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "shell", Tools: []string{"bash"}})
 	task, err := s.CreateTaskWithProfile("review", "@reviewer review the changes", t.TempDir(), "shell")
 	if err != nil {
 		t.Fatal(err)

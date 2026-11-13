@@ -69,7 +69,7 @@ func (s *Service) DiscardWorktree(id string) error {
 		// A Git refusal leaves the worktree in place; only an interrupted
 		// attempt is worth reporting as an interruption.
 		kind := "worktree_discard_interrupted"
-		if err != nil && reconcileErr == nil {
+		if err != nil {
 			kind = "worktree_discard_refused"
 		}
 		message := "Worktree retained"
@@ -109,8 +109,6 @@ func (t *Task) finishDiscardWithKind(gone bool, kind, message string) {
 		message = "Discarded retained worktree " + t.ExecutionWorkspace
 		t.ExecutionWorkspace = ""
 		t.IsolationCommit = ""
-	} else if kind == "" {
-		kind = "worktree_discard_interrupted"
 	}
 	t.Events = append(t.Events, Event{t.UpdatedAt, kind, message})
 }

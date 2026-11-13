@@ -36,12 +36,13 @@ type ToolActivityRecorder interface{ RecordToolActivity(ToolActivity) error }
 const maxActivities = 200
 const maxActivityPayload = 16 * 1024
 
-// Activity status values recorded for observed tool execution.
+// Activity status values recorded for observed tool execution. They are
+// exported so the terminal can classify activity without repeating literals.
 const (
-	activityRunning     = "running"
-	activityFinished    = "finished"
-	activityFailed      = "failed"
-	activityInterrupted = "interrupted"
+	ActivityRunning     = "running"
+	ActivityFinished    = "finished"
+	ActivityFailed      = "failed"
+	ActivityInterrupted = "interrupted"
 )
 
 func boundedPayload(raw json.RawMessage) json.RawMessage {
@@ -112,7 +113,7 @@ func (w outputWriter) RecordToolActivity(activity ToolActivity) error {
 		n := *activity.DurationMS
 		a.DurationMS = &n
 	}
-	if a.Status == activityFinished || a.Status == activityFailed {
+	if a.Status == ActivityFinished || a.Status == ActivityFailed {
 		a.FinishedAt = time.Now().UTC()
 	}
 	if len(task.Activities) > maxActivities {
@@ -127,8 +128,8 @@ func (w outputWriter) RecordToolActivity(activity ToolActivity) error {
 func interruptActivities(task *Task) {
 	for i := range task.Activities {
 		a := &task.Activities[i]
-		if a.Status == activityRunning {
-			a.Status = activityInterrupted
+		if a.Status == ActivityRunning {
+			a.Status = ActivityInterrupted
 			a.FinishedAt = time.Now().UTC()
 		}
 	}

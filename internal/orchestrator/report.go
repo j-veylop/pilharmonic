@@ -138,22 +138,41 @@ func (t Task) CurrentReport() (Report, bool) {
 	return r, true
 }
 
+// Task stage values describe what currently needs attention, separately from
+// process status. They are exported so the terminal can classify a task
+// without repeating string literals.
+const (
+	StageCanceled         = "canceled"
+	StageWaitingSubagents = "waiting for subagents"
+	StageMergeFailed      = "merge failed"
+	StageInputUndelivered = "input undelivered"
+	StageAwaitingReview   = "awaiting review"
+	StageBlocked          = "blocked"
+	StageWaiting          = "waiting"
+	StageFailed           = "failed"
+	StageWorking          = "working"
+	StageScheduled        = "scheduled"
+	StageQueued           = "queued"
+	StageFinished         = "finished"
+	StageInterrupted      = "interrupted"
+)
+
 // Stage describes what currently needs attention; process status stays separate.
 func (t Task) Stage() string {
 	if t.Status == Canceled {
-		return "canceled"
+		return StageCanceled
 	}
 	if t.MergeStatus == MergeWaiting {
-		return "waiting for subagents"
+		return StageWaitingSubagents
 	}
 	if t.MergeStatus == MergeFailed {
-		return "merge failed"
+		return StageMergeFailed
 	}
 	if t.undeliveredForAttempt(t.currentAttemptID()) {
-		return "input undelivered"
+		return StageInputUndelivered
 	}
 	if t.AwaitingReview() {
-		return "awaiting review"
+		return StageAwaitingReview
 	}
 	if r, ok := t.CurrentReport(); ok {
 		released := false
@@ -165,8 +184,8 @@ func (t Task) Stage() string {
 		}
 		switch r.Kind {
 		case "ready":
-			return "awaiting review"
-		case "blocked", "failed", "waiting":
+			return StageAwaitingReview
+		case StageBlocked, StageFailed, StageWaiting:
 			if !released {
 				return r.Kind
 			}
@@ -174,18 +193,18 @@ func (t Task) Stage() string {
 	}
 	switch t.Status {
 	case Running:
-		return "working"
+		return StageWorking
 	case Queued:
 		if t.ScheduleRequested {
-			return "scheduled"
+			return StageScheduled
 		}
-		return "queued"
+		return StageQueued
 	case Completed:
-		return "finished"
+		return StageFinished
 	case Failed:
-		return "failed"
+		return StageFailed
 	case Interrupted:
-		return "interrupted"
+		return StageInterrupted
 	}
 	return string(t.Status)
 }

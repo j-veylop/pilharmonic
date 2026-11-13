@@ -193,7 +193,7 @@ func TestDeleteCompletedTasksKeepsIncompleteWorkAndWorkspace(t *testing.T) {
 	if count := len(s.CompletedDeletionCandidates()); count != 3 {
 		t.Fatalf("deletable count = %d, want 3", count)
 	}
-	deleted, err := s.DeleteCompletedTasks(s.CompletedDeletionCandidates())
+	deleted, _, err := s.DeleteCompletedTasksDetailed(s.CompletedDeletionCandidates())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestDeleteCompletedTasksRollsBackFailedSave(t *testing.T) {
 	s.mu.Unlock()
 	savedPath := s.path
 	s.path = t.TempDir()
-	if _, err = s.DeleteCompletedTasks(s.CompletedDeletionCandidates()); err == nil {
+	if _, _, err = s.DeleteCompletedTasksDetailed(s.CompletedDeletionCandidates()); err == nil {
 		t.Fatal("failed save succeeded")
 	}
 	s.path = savedPath

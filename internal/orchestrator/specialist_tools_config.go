@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-const maxSpecialistToolsConfigSize = maxConfigSize
-
 // LoadSpecialistTools replaces the specialist tool overrides with the contents
 // of a JSON object mapping bundled specialist names to Pi tool lists. It walks
 // the tokens rather than decoding into a map so a duplicated name is an error

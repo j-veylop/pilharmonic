@@ -22,12 +22,6 @@ const (
 // operator decision.
 func (t Task) AwaitingReview() bool { return t.ReviewStatus == ReviewPending }
 
-// ReviewSettled reports whether an operator has approved or rejected prepared
-// isolated work.
-func (t Task) ReviewSettled() bool {
-	return t.ReviewStatus == ReviewApproved || t.ReviewStatus == ReviewRejected
-}
-
 // beginReview records a prepared worktree commit as awaiting review. A task can
 // have only one outstanding review, and the commit must be non-empty so a later
 // decision can be tied to exactly what was reviewed. Caller holds mu.

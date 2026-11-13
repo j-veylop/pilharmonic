@@ -40,9 +40,6 @@ func TestAuthorizeAcceptsLocalRequests(t *testing.T) {
 		if decision.Outcome != OutcomeAccept || decision.Reason != tc.reason {
 			t.Fatalf("%s: unexpected decision: %+v", tc.purpose, decision)
 		}
-		if decision.Outcome == OutcomeNeedsReview {
-			t.Fatalf("%s: authorization produced an unreachable outcome: %+v", tc.purpose, decision)
-		}
 		if decision.PolicyID != LocalPolicyID || decision.PolicyVersion != LocalPolicyVersion {
 			t.Fatalf("%s: authorization record missing its identifiers: %+v", tc.purpose, decision)
 		}
@@ -87,9 +84,6 @@ func TestAuthorizeAcceptsDelegatedRequest(t *testing.T) {
 	}
 	if want := "delegated by running task parent; child has a separate mandate"; decision.Reason != want {
 		t.Fatalf("delegation reason drifted: %q", decision.Reason)
-	}
-	if decision.Outcome == OutcomeNeedsReview {
-		t.Fatalf("authorization produced an unreachable outcome: %+v", decision)
 	}
 	if decision.InputDigest != authorizationInputDigest(req) {
 		t.Fatalf("input digest not recorded: %+v", decision)
@@ -305,7 +299,7 @@ func TestAuthorizationIdentifiersStayStable(t *testing.T) {
 	if PurposeRouter != "router" || PurposeManual != "manual" || PurposeRelated != "related" || PurposeSubagent != "subagent" {
 		t.Fatal("request purpose names drifted")
 	}
-	if OutcomeAccept != "accept" || OutcomeReject != "reject" || OutcomeNeedsReview != "needs_review" {
+	if OutcomeAccept != "accept" || OutcomeReject != "reject" {
 		t.Fatal("authorization outcome names drifted")
 	}
 }

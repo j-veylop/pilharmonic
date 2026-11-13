@@ -207,25 +207,6 @@ func validateProfileForRunner(runner Runner, p Profile) error {
 	return nil
 }
 
-// RegisterProfile adds or replaces a profile. Existing tasks keep the snapshot
-// they recorded when they were accepted, so a later edit cannot change what was
-// authorized for them.
-func (s *Service) RegisterProfile(p Profile) error {
-	if err := p.validate(); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	if s.profiles == nil {
-		s.profiles = builtinProfiles()
-	}
-	s.profiles[p.Name] = cloneProfile(p)
-	return nil
-}
-
 // LoadProfiles loads trusted local profile definitions atomically. A JSON entry
 // overlays the matching built-in profile field by field, so operators can change
 // only what they need; a new name extends the catalog. Built-in profiles may be
@@ -332,17 +313,6 @@ func (s *Service) ListProfiles() []Profile {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
-}
-
-// GetProfile resolves one registered profile.
-func (s *Service) GetProfile(name string) (Profile, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p, ok := s.profiles[name]
-	if !ok {
-		return Profile{}, false
-	}
-	return cloneProfile(p), true
 }
 
 // SetRoutingProfile chooses the profile the deterministic local router assigns

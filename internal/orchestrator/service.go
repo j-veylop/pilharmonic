@@ -229,7 +229,7 @@ func Open(path string) (*Service, error) {
 		routeProfile:        DefaultProfileName,
 		cancel:              make(map[string]context.CancelFunc),
 		discarding:          make(map[string]bool),
-		limit:               defaultConcurrency,
+		limit:               DefaultConcurrency,
 		live:                make(map[string]chan Trigger),
 		pending:             make(map[string]*pendingRequest),
 		activity:            make(map[string]chan struct{}),
@@ -994,11 +994,6 @@ func (s *Service) addContextLocked(taskID, triggerID, text string) error {
 		return nil
 	}
 	return errors.New("task thread not found")
-}
-
-// AddManualContext creates a unique trigger for a local follow-up.
-func (s *Service) AddManualContext(taskID, text string) error {
-	return s.AddContext(taskID, newID(), text)
 }
 
 // Retry returns an unsuccessful task to the queue without changing its mandate.

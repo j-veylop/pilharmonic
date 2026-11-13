@@ -90,16 +90,17 @@ func (m model) footer(w int) string {
 	if m.notice.text != "" {
 		footer = accentStyle.Render("› "+singleLine(m.notice.text)) + "\n" + footer
 	}
-	if m.cleanup.kind == deleteTask {
+	if m.notice.service != "" {
+		footer = warningStyle.Render("› "+singleLine(m.notice.service)) + "\n" + footer
+	}
+	switch m.cleanup.kind {
+	case deleteTask:
 		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+singleLine(m.cleanup.title)) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Removes its worktree; source workspace is untouched.")
-	}
-	if m.cleanup.kind == deleteCompleted {
+	case deleteCompleted:
 		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept; worktrees are removed.")
-	}
-	if m.cleanup.kind == discardTask {
+	case discardTask:
 		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+singleLine(m.cleanup.title)) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Refuses uncommitted or unmerged work; task history is kept.")
-	}
-	if m.cleanup.kind == discardMerged {
+	case discardMerged:
 		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Skips uncommitted or unmerged work; task history is kept.")
 	}
 	if m.agentPicker.target != "" {

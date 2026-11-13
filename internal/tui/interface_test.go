@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -348,5 +349,39 @@ func TestNoticeExpiresAfterRepeatedTicks(t *testing.T) {
 	m = key(m, runeKey("?"))
 	if m.notice.text != "fresh" {
 		t.Fatalf("unrelated key cleared the notice: %q", m.notice.text)
+	}
+}
+
+// conditionService reports a standing service condition so the notice line can
+// be tested without provoking a real save failure.
+type conditionService struct {
+	*orchestrator.Service
+	saveErr error
+	startup string
+}
+
+func (c conditionService) PersistenceError() error { return c.saveErr }
+func (c conditionService) StartupWarning() string  { return c.startup }
+
+func TestNoticeLineReportsStandingServiceConditions(t *testing.T) {
+	s := newTestService(t)
+	saveErr := errors.New("disk full")
+	m := model{service: conditionService{Service: s, saveErr: saveErr}, width: 120, height: 35}
+	m.refreshTasks()
+	if plain := ansi.Strip(m.footer(120)); !strings.Contains(plain, "State save failed: disk full") {
+		t.Fatalf("footer did not report the failed save: %q", plain)
+	}
+
+	startup := model{service: conditionService{Service: s, startup: "state file was corrupt; preserved as old.json"}, width: 120, height: 35}
+	startup.refreshTasks()
+	if plain := ansi.Strip(startup.footer(120)); !strings.Contains(plain, "state file was corrupt") {
+		t.Fatalf("footer did not report the startup warning: %q", plain)
+	}
+
+	// A standing condition must not hide a transient action notice.
+	m.notice.text = "Task queued"
+	m.refreshTasks()
+	if plain := ansi.Strip(m.footer(120)); !strings.Contains(plain, "Task queued") || !strings.Contains(plain, "State save failed") {
+		t.Fatalf("notice and warning did not share the notice line: %q", plain)
 	}
 }

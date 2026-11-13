@@ -152,7 +152,7 @@ var helpTopics = []helpTopic{
 				{"esc", "Close request form / return to tasks"},
 				{"?", "Open / close this help (not while typing)"},
 				{"F1", "Open / close this help from any screen"},
-				{"q / Ctrl-c", "Quit (closes help when open)"},
+				{"q / Ctrl-c", "Quit; the dialog takes y/Enter to confirm, n/Esc to stay"},
 				{"Drag details", "Select text; release copies via OSC 52"},
 				{"Paste", "Use the terminal shortcut in composers"},
 			}},
@@ -425,7 +425,7 @@ func (l helpLayout) heading(text string) string {
 func (m model) helpKey(key string) (model, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "?", "f1", "esc", "q":
 		m.help = false
 	case "l", "right", " ", "tab":

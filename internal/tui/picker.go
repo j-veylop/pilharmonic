@@ -29,7 +29,7 @@ func (m model) profilePickerKey(key string) (model, tea.Cmd) {
 	case "esc":
 		m.profilePicker = pickerState[orchestrator.Profile]{}
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "enter":
 		if len(m.profilePicker.choices) > 0 {
 			profile := m.profilePicker.choices[m.profilePicker.index]
@@ -52,7 +52,7 @@ func (m model) agentPickerKey(key string) (model, tea.Cmd) {
 	case "esc":
 		m.agentPicker = pickerState[orchestrator.AgentInfo]{}
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "enter":
 		if len(m.agentPicker.choices) > 0 {
 			name := m.agentPicker.choices[m.agentPicker.index].Name

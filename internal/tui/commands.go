@@ -129,7 +129,7 @@ func (m model) loginKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.notice = "Login canceled"
 		return m, nil
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "backspace", "ctrl+h":
 		m.loginKey = trimLastRune(m.loginKey)
 		return m, nil
@@ -201,7 +201,7 @@ func (m model) providerMenuKey(key string) (model, tea.Cmd) {
 	last := len(credentials) - 1
 	switch key {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "esc", "q":
 		m.loginMenu = false
 		if m.anyProviderConfigured() {
@@ -411,7 +411,7 @@ func (m model) modelMenuKey(key string) (model, tea.Cmd) {
 	last := len(choices) - 1
 	switch key {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "esc":
 		if m.modelStep == modelStepClass {
 			m.modelMenu = false
@@ -508,7 +508,7 @@ func (m model) fetchModelsCmd(provider string) tea.Cmd {
 func (m model) modelCustomKey(key string) (model, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "enter":
 		modelID := strings.TrimSpace(m.modelCustomInput)
 		if modelID == "" {
@@ -680,7 +680,7 @@ func (m model) agentClassMenuKey(key string) (model, tea.Cmd) {
 	last := len(agents) - 1
 	switch key {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "esc":
 		m.agentClassMenu = false
 		m.notice = "Agent classes closed"

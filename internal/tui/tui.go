@@ -333,6 +333,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		m.selection = textSelection{}
+		// Help floats above every surface, so it takes the key first: esc then
+		// closes help instead of the screen underneath it.
+		if m.help {
+			return m.helpKey(msg.String())
+		}
+		if m.helpShortcut(msg) {
+			return m.openHelp(), nil
+		}
 		// Login owns every key while it is armed, whether or not the request
 		// form or the board is showing, so a secret can never reach a draft.
 		if m.loginProvider != "" {
@@ -346,9 +354,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.agentClassMenu {
 			return m.agentClassMenuKey(msg.String())
-		}
-		if m.help {
-			return m.helpKey(msg.String())
 		}
 		if m.router {
 			return m.routerKey(msg)
@@ -400,11 +405,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clampScroll()
 		case "z":
 			m.fullscreen = !m.fullscreen
-			m.clampScroll()
-		case "?":
-			m.help = !m.help
-			m.helpPage = 0
-			m.helpScroll = 0
 			m.clampScroll()
 		case "esc":
 			m.fullscreen = false

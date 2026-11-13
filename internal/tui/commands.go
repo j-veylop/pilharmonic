@@ -76,7 +76,9 @@ func (m model) slashCommand(line string) model {
 		}
 		m.notice = m.removeProviderCredential(fields[1])
 	case "/help":
-		m.notice = slashCommandsHelp
+		// The overlay documents the slash vocabulary too, so /help opens the
+		// real help menu instead of a one-line notice.
+		return m.openHelp()
 	default:
 		m.notice = "Unknown command · " + slashCommandsHelp
 	}
@@ -275,7 +277,7 @@ func (m model) loginMenuView(background string, w, h int) string {
 	for len(content) < mh-3 {
 		content = append(content, "")
 	}
-	content = append(content, accentStyle.Render("j/k select · enter login · esc close"))
+	content = append(content, accentStyle.Render("j/k select · enter login · f1 help · esc close"))
 	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
 	bg := strings.Split(background, "\n")
 	box := strings.Split(modal, "\n")
@@ -601,9 +603,9 @@ func (m model) modelMenuView(background string, w, h int) string {
 		content = append(content, "")
 	}
 	if m.modelStep == modelStepCustom {
-		content = append(content, accentStyle.Render("enter save · esc back · ctrl+c quit"))
+		content = append(content, accentStyle.Render("enter save · f1 help · esc back · ctrl+c quit"))
 	} else {
-		content = append(content, accentStyle.Render("j/k select · enter next · esc back"))
+		content = append(content, accentStyle.Render("j/k select · enter next · f1 help · esc back"))
 	}
 	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
 	bg := strings.Split(background, "\n")
@@ -742,7 +744,7 @@ func (m model) agentClassMenuView(background string, w, h int) string {
 	for len(content) < mh-3 {
 		content = append(content, "")
 	}
-	content = append(content, accentStyle.Render("j/k select · enter toggle · esc close"))
+	content = append(content, accentStyle.Render("j/k select · enter toggle · f1 help · esc close"))
 	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
 	bg := strings.Split(background, "\n")
 	box := strings.Split(modal, "\n")

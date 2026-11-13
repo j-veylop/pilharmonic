@@ -49,19 +49,37 @@ func (m model) boardFooter(w int) string {
 	return strings.Join(hints, " · ")
 }
 
+// hintRows counts the rows text occupies once the separators are rendered and
+// the footer is hard-wrapped at width. A hint is only worth adding when it costs
+// no extra row.
+func hintRows(text string, w int) int {
+	return len(strings.Split(ansi.Hardwrap(strings.ReplaceAll(text, " · ", "  ·  "), w, true), "\n"))
+}
+
+// withHelpHint advertises the help overlay where there is room for it. F1 is
+// the one help key that works inside a text field, so the entry surfaces
+// advertise that key rather than ?.
+func withHelpHint(text string, w int) string {
+	withHelp := text + " · f1 help"
+	if hintRows(withHelp, w) <= hintRows(text, w) {
+		return withHelp
+	}
+	return text
+}
+
 func (m model) footer(w int) string {
 	footerText := m.boardFooter(w)
 	switch {
 	case m.router:
 		if m.routerFocus != routerFocusComposer {
-			footerText = "j/k move · enter open · tab next · esc tasks"
+			footerText = withHelpHint("j/k move · enter open · tab next · esc tasks", w)
 		} else if _, ok := m.routerMentionQuery(); ok {
-			footerText = "tab complete · enter submit · esc tasks · ctrl+c quit"
+			footerText = withHelpHint("tab complete · enter submit · esc tasks · ctrl+c quit", w)
 		} else {
-			footerText = "enter submit · tab lists · esc tasks · ctrl+c quit"
+			footerText = withHelpHint("enter submit · tab lists · esc tasks · ctrl+c quit", w)
 		}
 	case m.input.kind != "":
-		footerText = "enter submit · ctrl+j/alt+enter newline · esc cancel"
+		footerText = withHelpHint("enter submit · ctrl+j/alt+enter newline · esc cancel", w)
 	case m.activity:
 		if m.activityExpanded {
 			footerText = "esc collapse · t output · f filter · ? help · q quit"
@@ -85,22 +103,22 @@ func (m model) footer(w int) string {
 		footer = accentStyle.Render("› "+strings.ReplaceAll(terminalText(m.notice), "\n", " ")) + "\n" + footer
 	}
 	if m.cleanup.kind == deleteTask {
-		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+strings.ReplaceAll(terminalText(m.cleanup.title), "\n", " ")) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Removes its worktree; source workspace is untouched.")
+		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+strings.ReplaceAll(terminalText(m.cleanup.title), "\n", " ")) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Removes its worktree; source workspace is untouched.")
 	}
 	if m.cleanup.kind == deleteCompleted {
-		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept; worktrees are removed.")
+		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept; worktrees are removed.")
 	}
 	if m.cleanup.kind == discardTask {
-		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+strings.ReplaceAll(terminalText(m.cleanup.title), "\n", " ")) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Refuses uncommitted or unmerged work; task history is kept.")
+		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+strings.ReplaceAll(terminalText(m.cleanup.title), "\n", " ")) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Refuses uncommitted or unmerged work; task history is kept.")
 	}
 	if m.cleanup.kind == discardMerged {
-		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel") + "\n" + mutedStyle.Render("Skips uncommitted or unmerged work; task history is kept.")
+		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Skips uncommitted or unmerged work; task history is kept.")
 	}
 	if m.agentPicker.target != "" {
-		footer = mutedStyle.Render("↑↓/j/k choose agent · enter select · esc cancel")
+		footer = mutedStyle.Render("↑↓/j/k choose agent · enter select · f1 help · esc cancel")
 	}
 	if m.profilePicker.target != "" {
-		footer = mutedStyle.Render("↑↓/j/k choose profile · enter select · esc cancel")
+		footer = mutedStyle.Render("↑↓/j/k choose profile · enter select · f1 help · esc cancel")
 	}
 	return ansi.Hardwrap(footer, w, true)
 }

@@ -134,17 +134,19 @@ func (m model) View() string {
 	}
 	rows = append(rows, footer)
 	screen := fit(strings.Join(rows, "\n"), w, h)
+	// Menus compose over the board and help composes over everything, so the
+	// overlay an operator opened is always the one on top.
 	if m.loginMenu {
-		return m.loginMenuView(screen, w, h)
+		screen = m.loginMenuView(screen, w, h)
 	}
 	if m.modelMenu {
-		return m.modelMenuView(screen, w, h)
+		screen = m.modelMenuView(screen, w, h)
 	}
 	if m.agentClassMenu {
-		return m.agentClassMenuView(screen, w, h)
+		screen = m.agentClassMenuView(screen, w, h)
 	}
 	if m.help {
-		return m.helpView(screen, w, h)
+		screen = m.helpView(screen, w, h)
 	}
 	return screen
 }

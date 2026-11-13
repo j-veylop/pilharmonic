@@ -264,7 +264,9 @@ func TestSlashHelpOpensTheOverlay(t *testing.T) {
 		m.helpPage = i
 	}
 	plain := ansi.Strip(strings.Join(m.helpLines(70), "\n"))
-	for _, want := range []string{"/login — pick a provider", "/logout <provider>", "/providers", "/model [big|small]", "/agents", "/help"} {
+	// The commands sit in the key column and their argument forms are documented
+	// once, in the topic intro, so the table stays aligned.
+	for _, want := range []string{"/login", "/logout", "/providers", "/model", "/agents", "/help", "/login <provider>", "/model [big|small]"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("help overlay missing %q: %q", want, plain)
 		}

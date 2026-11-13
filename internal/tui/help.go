@@ -2,18 +2,20 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	keys "github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
 // A help topic is structured rather than pre-formatted, so one definition feeds
-// both projections: helpLines projects it to plain text (tests and copy/paste)
-// and the overlay projects the same lines to styled cells. Nothing is inferred
-// from indentation, so a description can wrap without being mistaken for a
-// heading.
+// both projections: helpLines projects it to plain text, which the tests and the
+// slash-command test read, and the overlay projects the same lines to styled
+// cells. Nothing is inferred from indentation, so a description can wrap without
+// being mistaken for a heading.
 type helpTopic struct {
 	title    string
 	intro    []string
@@ -105,17 +107,17 @@ var helpTopics = []helpTopic{
 	{
 		title: "Commands",
 		intro: []string{
-			"Type these into the NEW REQUEST form; they are never submitted as a request.",
+			"Type these into the NEW REQUEST form; they are never submitted as a request. Arguments follow the command name, as in /login <provider> or /model [big|small].",
 		},
 		sections: []helpSection{{
 			heading: "SLASH COMMANDS",
 			rows: []helpRow{
-				{desc: "/login — pick a provider (or /login <provider>)"},
-				{desc: "/logout <provider>   Forget a provider's stored key"},
-				{desc: "/providers     List providers and whether a key is stored"},
-				{desc: "/model [big|small]   Choose the models, or open the menu"},
-				{desc: "/agents        Choose an agent's model class"},
-				{desc: "/help          Open this help"},
+				{"/login", "Pick a provider"},
+				{"/logout", "Forget a provider's stored key"},
+				{"/providers", "List providers and whether a key is stored"},
+				{"/model", "Choose the models, or open the menu"},
+				{"/agents", "Choose an agent's model class"},
+				{"/help", "Open this help"},
 			},
 		}},
 	},
@@ -166,16 +168,43 @@ var helpTopics = []helpTopic{
 }
 
 const (
-	// helpKeyGutter separates the shortcut column from its description column.
-	helpKeyGutter = 2
+	// helpMaxWidth and helpMaxHeight bound the modal on a generous terminal.
+	helpMaxWidth  = 76
+	helpMaxHeight = 28
+	// helpKeyGutter is the breathing room between the shortcut column and its
+	// description column.
+	helpKeyGutter = 3
 	// helpHangIndent is the hanging indent used when the frame is too narrow for
 	// two columns: the keys take one line and the description hangs below them.
 	helpHangIndent = 2
 	// helpMinDescCols is the narrowest description column worth aligning to.
 	helpMinDescCols = 12
+	// helpBodyIndent is the left margin every body line shares, so the text never
+	// touches the frame.
+	helpBodyIndent = 1
+	// helpScrollGutter is the column reserved for the scrollbar. It is reserved
+	// on every topic, not just the long ones, so the text keeps one column and
+	// never re-wraps when the operator switches topics.
+	helpScrollGutter = 2
+	// helpChromeRows is everything the frame draws around the body: the two
+	// border rows, the title row, the topic strip, the gap under the header, the
+	// gap above the hint row and the hint row itself. A frame too narrow for a
+	// strip does not reserve its row either.
+	helpChromeRows       = 7
+	helpChromeRowsNarrow = 6
+	// helpHeadingRule is the gap between a section heading and its rule.
+	helpHeadingRule = 1
 	// helpActiveTabMarker precedes the topic the operator is reading, so the
 	// strip still marks it where the terminal cannot show the accent colour.
-	helpActiveTabMarker = "▸ "
+	// helpInactiveTabLead keeps every other tab exactly as wide as the marked
+	// one, so the strip never shifts when the active topic changes, and
+	// helpTabGap keeps a label from running into the next tab.
+	helpActiveTabMarker = "▸"
+	helpInactiveTabLead = " "
+	helpTabGap          = " "
+	// helpHintSeparator joins the footer hints drawn by the help bubble.
+	helpHintSeparator = " · "
+	helpHintEllipsis  = "…"
 )
 
 // helpLineKind separates the three things a help line can be, so the styled
@@ -190,29 +219,24 @@ const (
 
 // helpLine is one rendered line of a topic. keys is only set on the first line
 // of a shortcut row; a wrapped continuation carries the description alone and
-// is indented to the same column. lead is the already-present prefix of a prose
-// row that reads as a command word.
+// is indented to the same column.
 type helpLine struct {
 	kind helpLineKind
 	keys string
 	text string
-	lead string
 }
 
 // helpLayout is a topic projected onto a width: the measured key column plus the
 // lines it renders to. Both projections walk it in order, so the plain text the
 // tests assert on and the styled cells on screen can never disagree.
 type helpLayout struct {
+	width    int
 	keyWidth int
 	lines    []helpLine
 }
 
-// layoutHelpTopic wraps a topic to width. Descriptions align in one column and
-// wrapped continuations hang under that column; on a frame too narrow for two
-// columns each key takes its own line and the description hangs two cells in.
-func layoutHelpTopic(topic helpTopic, width int) helpLayout {
-	width = max(1, width)
-	layout := helpLayout{}
+// topicKeyWidth is the widest shortcut one topic lists.
+func topicKeyWidth(topic helpTopic) int {
 	widest := 0
 	for _, section := range topic.sections {
 		for _, row := range section.rows {
@@ -221,15 +245,49 @@ func layoutHelpTopic(topic helpTopic, width int) helpLayout {
 			}
 		}
 	}
-	switch {
-	case widest == 0:
-		layout.keyWidth = 0
-	case width-widest-helpKeyGutter >= helpMinDescCols:
-		layout.keyWidth = widest + helpKeyGutter
-	default:
-		layout.keyWidth = helpHangIndent
+	return widest
+}
+
+// helpKeyColumn is the column every topic aligns its descriptions to: the widest
+// shortcut anywhere in the overlay, plus its gutter. One column for the whole
+// overlay means a description never slides sideways when the operator changes
+// topic.
+func helpKeyColumn() int {
+	widest := 0
+	for _, topic := range helpTopics {
+		widest = max(widest, topicKeyWidth(topic))
 	}
-	stacked := widest > 0 && layout.keyWidth == helpHangIndent
+	if widest == 0 {
+		return 0
+	}
+	return widest + helpKeyGutter
+}
+
+// helpShortcutColumns decides how a topic lays out its shortcut column at width:
+// the shared column when it leaves a usable description column, a hanging indent
+// when it does not, and no column at all for a topic written in prose.
+func helpShortcutColumns(topic helpTopic, width int) (keyWidth int, stacked bool) {
+	if topicKeyWidth(topic) == 0 {
+		return 0, false
+	}
+	// A topic defined outside the overlay may list a shortcut wider than the
+	// shared column; it widens its own column instead of pushing the key into
+	// its description.
+	keyWidth = max(helpKeyColumn(), topicKeyWidth(topic)+helpKeyGutter)
+	if width-keyWidth >= helpMinDescCols {
+		return keyWidth, false
+	}
+	return helpHangIndent, true
+}
+
+// layoutHelpTopic wraps a topic to width. Descriptions align in one column and
+// wrapped continuations hang under that column; on a frame too narrow for two
+// columns each key takes its own line and the description hangs two cells in.
+func layoutHelpTopic(topic helpTopic, width int) helpLayout {
+	width = max(1, width)
+	layout := helpLayout{width: width}
+	var stacked bool
+	layout.keyWidth, stacked = helpShortcutColumns(topic, width)
 	descWidth := max(1, width-layout.keyWidth)
 
 	add := func(line helpLine) { layout.lines = append(layout.lines, line) }
@@ -249,16 +307,17 @@ func layoutHelpTopic(topic helpTopic, width int) helpLayout {
 	for _, section := range topic.sections {
 		if section.heading != "" {
 			blank()
-			add(helpLine{kind: helpHeadingLine, text: section.heading})
+			// A heading is a label, not a paragraph, but it still wraps rather
+			// than leaving the frame: the rule follows each part that does not
+			// fill the width on its own.
+			for _, part := range wrapHelp(section.heading, width) {
+				add(helpLine{kind: helpHeadingLine, text: part})
+			}
 		}
 		for _, row := range section.rows {
 			if row.keys == "" {
-				for i, part := range wrapHelp(row.desc, descWidth) {
-					line := helpLine{kind: helpProseLine, text: part}
-					if i == 0 {
-						line.lead = helpLead(part)
-					}
-					add(line)
+				for _, part := range wrapHelp(row.desc, width) {
+					add(helpLine{kind: helpProseLine, text: part})
 				}
 				continue
 			}
@@ -299,15 +358,6 @@ func wrapHelp(text string, width int) []string {
 	return strings.Split(ansi.Wrap(text, max(1, width), ""), "\n")
 }
 
-// helpLead returns the leading token of a prose row so the command word can be
-// accented without changing the text the operator reads.
-func helpLead(text string) string {
-	if i := strings.IndexByte(text, ' '); i > 0 {
-		return text[:i]
-	}
-	return ""
-}
-
 // padHelp pads a possibly styled cell string out to width cells. It never
 // truncates, so a long key keeps every character it needs.
 func padHelp(s string, width int) string {
@@ -332,13 +382,13 @@ func (l helpLayout) plain() []string {
 }
 
 // styled is the projection the overlay draws: keys in the accent style,
-// descriptions in ink, headings apart from both and prose muted.
+// descriptions in ink, headings as a labelled rule and prose muted.
 func (l helpLayout) styled() []string {
 	out := make([]string, 0, len(l.lines))
 	for _, line := range l.lines {
 		switch line.kind {
 		case helpHeadingLine:
-			out = append(out, helpHeadingStyle.Render(line.text))
+			out = append(out, l.heading(line.text))
 		case helpRowLine:
 			cell := ""
 			if line.keys != "" {
@@ -350,17 +400,26 @@ func (l helpLayout) styled() []string {
 			}
 			out = append(out, cell)
 		default:
-			switch {
-			case line.text == "":
+			if line.text == "" {
 				out = append(out, "")
-			case line.lead != "" && strings.HasPrefix(line.text, line.lead):
-				out = append(out, keyStyle.Render(line.lead)+mutedStyle.Render(strings.TrimPrefix(line.text, line.lead)))
-			default:
-				out = append(out, mutedStyle.Render(line.text))
+				continue
 			}
+			out = append(out, mutedStyle.Render(line.text))
 		}
 	}
 	return out
+}
+
+// heading draws a section heading as a label followed by a faint rule that
+// reaches the body width, so a section reads as a divider between groups
+// instead of as another shortcut.
+func (l helpLayout) heading(text string) string {
+	label := helpHeadingStyle.Render(text)
+	ruleCols := l.width - lipgloss.Width(text) - helpHeadingRule
+	if ruleCols < 1 {
+		return label
+	}
+	return label + strings.Repeat(" ", helpHeadingRule) + helpTrackStyle.Render(strings.Repeat("─", ruleCols))
 }
 
 func (m model) helpKey(key string) (model, tea.Cmd) {
@@ -395,8 +454,13 @@ func (m model) helpLines(width int) []string {
 }
 
 func (m *model) scrollHelp(delta int) {
-	m.helpPage = max(0, min(len(helpTopics)-1, m.helpPage+delta))
-	m.helpScroll = 0
+	page := max(0, min(len(helpTopics)-1, m.helpPage+delta))
+	if page == m.helpPage {
+		// Already at that end of the strip: keep the line the operator is on
+		// rather than jumping them back to the top of the topic.
+		return
+	}
+	m.helpPage, m.helpScroll = page, 0
 }
 
 func (m *model) scrollHelpBody(delta int) {
@@ -408,6 +472,10 @@ func (m *model) scrollHelpBody(delta int) {
 		h = 24
 	}
 	_, bodyRows, _, lines := m.helpBody(w, h)
+	if bodyRows < 1 {
+		m.helpScroll = 0
+		return
+	}
 	m.helpScroll = max(0, min(max(0, len(lines)-bodyRows), m.helpScroll+delta))
 }
 
@@ -416,75 +484,135 @@ func (m model) helpPageIndex() int {
 	return max(0, min(len(helpTopics)-1, m.helpPage))
 }
 
+// helpContentWidth is the frame width minus its borders.
+func helpContentWidth(mw int) int { return max(1, mw-4) }
+
+// helpBodyWidth is the width a topic is wrapped to inside a frame of mw cells.
+// The body indent and the scrollbar gutter are always subtracted, whether or not
+// the topic scrolls, so a topic keeps its line breaks from page to page.
+func helpBodyWidth(mw int) int {
+	return max(1, helpContentWidth(mw)-helpBodyIndent-helpScrollGutter)
+}
+
+// helpTabTitles and helpTabNumbers are the two label sets the strip can use.
+func helpTabTitles() []string {
+	titles := make([]string, len(helpTopics))
+	for i, topic := range helpTopics {
+		titles[i] = topic.title
+	}
+	return titles
+}
+
+func helpTabNumbers() []string {
+	numbers := make([]string, len(helpTopics))
+	for i := range helpTopics {
+		numbers[i] = strconv.Itoa(i + 1)
+	}
+	return numbers
+}
+
+// helpTabRow renders the strip for one page. Every tab reserves the marker
+// column the active one uses, so the row is exactly as wide whichever topic is
+// active and the strip never shifts under the operator's eyes.
+func helpTabRow(labels []string, page int) string {
+	tabs := make([]string, 0, len(labels))
+	for i, label := range labels {
+		if i == page {
+			tabs = append(tabs, activeTabStyle.Render(helpActiveTabMarker+label)+helpTabGap)
+			continue
+		}
+		tabs = append(tabs, inactiveTabStyle.Render(helpInactiveTabLead+label)+helpTabGap)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+}
+
+// helpTabLabels picks the label set for a content width: topic titles when they
+// fit, positions when they do not, and nothing when even those overflow, because
+// the title row already names the current topic. The choice depends on the width
+// alone, so paging never swaps the strip for a different one.
+func helpTabLabels(inner int) []string {
+	for _, labels := range [][]string{helpTabTitles(), helpTabNumbers()} {
+		if lipgloss.Width(helpTabRow(labels, 0)) <= inner {
+			return labels
+		}
+	}
+	return nil
+}
+
 // helpBody projects the current page for a terminal of w by h, returning the
-// window rows, the width the body is wrapped to and the styled lines. The
-// overlay and the scroll clamp both read it, so keyboard scrolling always
-// reaches the last line the overlay draws.
+// frame width, the window rows, the width the body is wrapped to and the styled
+// lines. The overlay and the scroll clamp both read it, so keyboard scrolling
+// always reaches the last line the overlay draws.
 func (m model) helpBody(w, h int) (mw, bodyRows, bodyWidth int, lines []string) {
 	mw, _, bodyRows = helpFrame(w, h)
-	inner := max(1, mw-4)
-	topic := helpTopics[m.helpPageIndex()]
-	layout := layoutHelpTopic(topic, inner)
-	bodyWidth = inner
-	// A topic taller than the window keeps a scrollbar column; wrapping narrower
-	// only ever adds lines, so the column stays after the re-wrap.
-	if len(layout.lines) > bodyRows {
-		bodyWidth = max(1, inner-2)
-		layout = layoutHelpTopic(topic, bodyWidth)
-	}
-	return mw, bodyRows, bodyWidth, layout.styled()
+	return mw, bodyRows, helpBodyWidth(mw), m.helpBodyStyled(mw)
+}
+
+// helpBodyStyled projects the current page inside a frame of mw cells.
+func (m model) helpBodyStyled(mw int) []string {
+	return layoutHelpTopic(helpTopics[m.helpPageIndex()], helpBodyWidth(mw)).styled()
 }
 
 // helpFrame returns the modal size and the number of body rows that fit inside
-// it for a terminal of w by h cells. The title row and the topic strip sit above
-// the body and the hint row below it.
+// it for a terminal of w by h cells. The title row, the topic strip, the gap
+// under it and the hint row sit around the body. The frame is only as tall as
+// the tallest topic needs, measured for this width, so a short topic does not sit
+// on a slab of empty rows and switching topics never resizes the modal.
 func helpFrame(w, h int) (mw, mh, bodyRows int) {
-	mw = min(76, max(4, w-4))
-	mh = min(28, max(3, h-2))
-	return mw, mh, max(1, mh-5)
+	mw = min(helpMaxWidth, max(4, w-4))
+	ceiling := min(helpMaxHeight, max(3, h-2))
+	bodyWidth := helpBodyWidth(mw)
+	tallest := 1
+	for _, topic := range helpTopics {
+		tallest = max(tallest, len(layoutHelpTopic(topic, bodyWidth).lines))
+	}
+	chrome := helpChromeRowsNarrow
+	if helpTabLabels(helpContentWidth(mw)) != nil {
+		chrome = helpChromeRows
+	}
+	if ceiling <= chrome {
+		// Not even one body row fits between the header and the hint row, so
+		// there is nothing for the overlay to draw.
+		return mw, ceiling, 0
+	}
+	bodyRows = min(tallest, ceiling-chrome)
+	return mw, bodyRows + chrome, bodyRows
 }
 
 // helpTabs draws the topic strip: the active topic carries a marker and the
-// accent style, the others are muted. A strip too wide for the frame falls back
-// to the position chip so it can never overflow the modal.
+// accent style, the others are muted. When the frame is too narrow for any strip
+// there is none, and the title row carries the topic name on its own.
 func (m model) helpTabs(width int) string {
-	var tabs []string
-	page := max(0, min(len(helpTopics)-1, m.helpPage))
-	for i, topic := range helpTopics {
-		style := inactiveTabStyle.Padding(0, 1)
-		label := topic.title
-		if i == page {
-			style = activeTabStyle.Padding(0, 1)
-			label = helpActiveTabMarker + label
-		}
-		tabs = append(tabs, style.Render(label))
+	if labels := helpTabLabels(width); labels != nil {
+		return helpTabRow(labels, m.helpPageIndex())
 	}
-	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
-	if lipgloss.Width(row) > width {
-		return fit(accentStyle.Render("‹ "+helpTopics[page].title+" ›")+mutedStyle.Render(fmt.Sprintf(" %d/%d", page+1, len(helpTopics))), width, 1)
-	}
-	return row
+	return ""
 }
 
-// helpHintRow keeps the footer hints inside the modal: keys in the accent style,
-// descriptions muted, and a shorter set of hints when the frame is narrow.
+// helpHintRow keeps the footer hints inside the modal. The bubbles help view
+// renders the row and marks a truncated tail with an ellipsis, and a hint is
+// dropped whole when the rendered row would still overflow the frame, so a
+// narrow frame never has to cut a label in half.
 func (m model) helpHintRow(width int) string {
-	hints := func(pairs [][2]string) string {
-		var parts []string
-		for _, pair := range pairs {
-			parts = append(parts, keyStyle.Render(pair[0])+mutedStyle.Render(" "+pair[1]))
-		}
-		return strings.Join(parts, faintStyle.Render(" · "))
+	view := helpHints
+	view.Width = max(1, width)
+	bindings := helpHintBindings()
+	row := view.ShortHelpView(bindings)
+	for len(bindings) > 1 && lipgloss.Width(row) > width {
+		bindings = bindings[:len(bindings)-1]
+		row = view.ShortHelpView(bindings)
 	}
-	full := hints([][2]string{{"h/l", "tabs"}, {"j/k", "scroll"}, {"esc", "close"}})
-	if lipgloss.Width(full) <= width {
-		return full
+	return fit(row, width, 1)
+}
+
+// helpHintBindings are the overlay's own keys, most useful first so a narrow
+// frame truncates the tail rather than the way out.
+func helpHintBindings() []keys.Binding {
+	return []keys.Binding{
+		keys.NewBinding(keys.WithKeys("esc", "?", "f1", "q"), keys.WithHelp("esc", "close")),
+		keys.NewBinding(keys.WithKeys("h", "l"), keys.WithHelp("h/l", "topics")),
+		keys.NewBinding(keys.WithKeys("j", "k"), keys.WithHelp("j/k", "scroll")),
 	}
-	short := hints([][2]string{{"esc", "close"}, {"h/l", "tabs"}})
-	if lipgloss.Width(short) <= width {
-		return short
-	}
-	return fit(hints([][2]string{{"esc", "close"}}), width, 1)
 }
 
 // helpScrollBar draws the scrollbar column so the body shows where the window
@@ -501,38 +629,49 @@ func helpScrollBar(row, bodyRows, start, total int) string {
 	return helpTrackStyle.Render("│")
 }
 
+// helpTitleRow names the overlay and the topic being read, and puts the position
+// against the right edge where it stays put while the topics page past.
+func (m model) helpTitleRow(width int) string {
+	page := m.helpPageIndex()
+	left := accentStyle.Render("HELP") + faintStyle.Render(helpHintSeparator) + mutedStyle.Render(helpTopics[page].title)
+	right := faintStyle.Render(fmt.Sprintf("%d/%d", page+1, len(helpTopics)))
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		return fit(left, width, 1)
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
 // helpModal builds the content of the frame for the current page: the title row,
-// the topic strip, one window of body rows and the hint row. Every returned line
-// already fits the content area, and there are never more of them than the frame
-// can draw.
+// the topic strip, the gap under it, one window of body rows, the gap above the
+// hint row and the hint row itself. Every returned line already fits the content
+// area, and there are never more of them than the frame can draw.
 func (m model) helpModal(w, h int) (mw, mh int, content []string) {
-	mw, mh, _ = helpFrame(w, h)
-	if mw < 12 || mh < 6 {
-		// Below this the frame cannot hold a title, a strip, one body row and
+	mw, mh, bodyRows := helpFrame(w, h)
+	if mw < 12 || bodyRows < 1 {
+		// Below this the frame cannot hold a title, the header, a body row and
 		// the hint row, so the overlay steps out of the way entirely.
 		return mw, mh, nil
 	}
-	page := m.helpPageIndex()
-	inner := mw - 4
-	_, bodyRows, bodyWidth, lines := m.helpBody(w, h)
-	// A narrower body is the scrollbar column, which only appears when the
-	// topic is taller than the window.
-	scrolling := bodyWidth < inner
+	inner := helpContentWidth(mw)
+	bodyWidth := helpBodyWidth(mw)
+	lines := m.helpBodyStyled(mw)
 	total := len(lines)
 	start := min(max(0, m.helpScroll), max(0, total-bodyRows))
-	header := accentStyle.Render("HELP") + mutedStyle.Render(fmt.Sprintf("  Page %d / %d", page+1, len(helpTopics)))
-	content = append(content, fit(header, inner, 1), m.helpTabs(inner))
+	content = append(content, m.helpTitleRow(inner))
+	if strip := m.helpTabs(inner); strip != "" {
+		content = append(content, strip)
+	}
+	content = append(content, "")
 	for row := 0; row < bodyRows; row++ {
 		line := ""
 		if i := start + row; i < total {
 			line = fit(lines[i], bodyWidth, 1)
 		}
-		if scrolling {
-			line = padHelp(line, bodyWidth) + " " + helpScrollBar(row, bodyRows, start, total)
-		}
-		content = append(content, line)
+		content = append(content, strings.Repeat(" ", helpBodyIndent)+padHelp(line, bodyWidth)+
+			" "+helpScrollBar(row, bodyRows, start, total))
 	}
-	content = append(content, m.helpHintRow(inner))
+	content = append(content, "", m.helpHintRow(inner))
 	return mw, mh, content
 }
 

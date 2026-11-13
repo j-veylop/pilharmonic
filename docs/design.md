@@ -40,6 +40,22 @@ action in grouped display order and wraps at the end. Needs action covers
 blocked, waiting, awaiting review, input undelivered, merge failed, failed and
 interrupted tasks.
 
+The help overlay keeps one shape while the operator pages through it. A title
+row names the topic and puts its position, such as `2/7`, against the right
+edge. The topic strip below it marks the active topic with `▸` in a marker
+column every tab reserves, so the strip keeps its cells instead of shifting when
+the reader changes topic, and a faint rule under the strip sets the reference
+apart from its header. Every topic shares one shortcut column, measured across
+the whole overlay, so a description never slides sideways when the topic
+changes, and the scrollbar column is reserved on every topic, so a long topic
+scrolls without re-wrapping the text of a short one. The frame is only as tall
+as the tallest topic needs at the current width, never taller than the screen
+allows, so paging never resizes it. Section headings are labels followed by a
+rule to the body width, and the hint row is rendered by the bubbles help view,
+which drops hints that no longer fit rather than overflowing the border. When
+the frame is too narrow for the titles the strip falls back to topic positions
+and then to nothing, because the title row already names the topic.
+
 The request form and every composer render as one input box docked at the
 bottom of the screen. Its label sits on the box's top border, the draft wraps
 inside it and grows to at most six rows, and the footer below keeps the key

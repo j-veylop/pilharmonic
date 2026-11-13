@@ -166,7 +166,8 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 	if factory == nil {
 		factory = DefaultFantasyModelFactory
 	}
-	model, err := factory(ctx, f.RequestedModel(t.ProfileSpec))
+	selector := f.RequestedModel(t.ProfileSpec)
+	model, err := factory(ctx, selector)
 	if err != nil {
 		return err
 	}
@@ -316,6 +317,15 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		}
 		for _, step := range result.Steps {
 			history = append(history, step.Messages...)
+		}
+		// Fantasy totals one Stream call across all of its steps and across
+		// retried attempts of a step, so recording this total per call counts
+		// each token once. The adapter prices it as the attempt's model.
+		if usageErr := adapterUsage(out, selector, TokenUsage{
+			InputTokens:  result.TotalUsage.InputTokens,
+			OutputTokens: result.TotalUsage.OutputTokens,
+		}); usageErr != nil {
+			return usageErr
 		}
 		if failure != nil {
 			message := sanitizeTranscript(failure.Error())

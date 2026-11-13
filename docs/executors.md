@@ -21,6 +21,16 @@ automatic integration from the recorded profile.
 
 An adapter may declare optional capabilities by implementing `CapabilityReporter`; the registry checks the `LiveRunner` interface directly for live follow-ups. Tool activity and structured reports default to disabled unless declared. An adapter that can produce an explicit structured observation may type-assert its `io.Writer` output sink to `ReportRecorder` and call `RecordReport(kind, message)`. Such reports are accepted only while the task's attempt is running, are stored with an `adapter` source and the attempt ID, and are never derived from assistant prose. If the sink does not support reporting, the adapter simply omits the observation. The Fantasy adapter declares live context, tool activity and structured reports, and records a progress report when it accepts the initial prompt, a `waiting` report when it retries after a provider error, and a `failed` report when a step ends with an error or content-filter finish reason or produces no assistant response.
 
+An adapter that can report token usage may type-assert the same sink to
+`UsageRecorder` and call `RecordUsage(model, usage)` with the input and output
+counts a provider reported for one model call. The service prices the call at the
+rate in force, adds it to the running attempt and refuses it once that attempt
+has ended, so an adapter that kept a stale sink cannot charge a retry. A count of
+zero tokens is ignored, and an adapter that reports nothing leaves the attempt
+without a usage record rather than implying the run cost nothing. The Fantasy
+adapter reports each stream call's total (`AgentResult.TotalUsage`, which already
+folds the retried attempts of a step).
+
 Adapters must treat `Task.Workspace` as the execution directory they are given. For an isolated task that is a prepared Git worktree created from committed `HEAD`, and retries reuse the same worktree; an adapter must not clean, reset or relocate it. The service may commit remaining worktree changes after a successful attempt and merge the prepared commit into the source repository only after operator review approval, so an adapter must not assume the worktree stays at its initial commit. Isolation does not grant new authority or make the agent sandboxed.
 
 A live attempt may receive process-scoped subagent credentials (`ORCHESTRATOR_CONTROL_SOCKET`, `ORCHESTRATOR_TASK_ID`, `ORCHESTRATOR_SUBAGENT_TOKEN`, and `ORCHESTRATOR_SUBAGENT_CLI`). Adapters must pass this environment to the code the agent runs (for the Fantasy adapter, the tools it invokes) and must not persist or log the token as task output. Agent processes receive an allowlisted environment (`PATH`, `HOME`, `LANG`, `LC_*`, `TERM`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, and any `ORCHESTRATOR_*` variable) rather than the operator's full environment, so cloud credentials and unrelated tokens do not reach model-directed code. The built-in adapters append pilharmonic's delegation guidance to the initial prompt. The environment variable names retain the `ORCHESTRATOR_` prefix for compatibility. An agent requests a child only through the local owner-only control socket, using `pilharmonic subagent`; the resulting child is a separate task with its own mandate. The helper never executes agent output. Adapters that cannot propagate the environment simply do not expose delegation.

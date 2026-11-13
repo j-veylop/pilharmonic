@@ -79,6 +79,10 @@ type Attempt struct {
 	OutputTruncated bool      `json:"output_truncated,omitempty"`
 	Output          string    `json:"output,omitempty"`
 	Error           string    `json:"error,omitempty"`
+	// Usage is the token count the provider reported for this attempt and the
+	// cost estimated when it was recorded. An adapter that reports no usage
+	// leaves it nil rather than implying an attempt cost nothing.
+	Usage *AttemptUsage `json:"usage,omitempty"`
 }
 
 type Task struct {
@@ -199,6 +203,9 @@ type Service struct {
 	idleTimeout time.Duration
 	// attemptRetention bounds how many attempts per task keep their output.
 	attemptRetention int
+	// sessionStartedAt marks when this process opened the state file. Usage
+	// recorded by attempts started after it is this session's usage.
+	sessionStartedAt time.Time
 
 	defaultIsolation bool
 
@@ -231,6 +238,7 @@ func Open(path string) (*Service, error) {
 		subagentMaxDepth:    DefaultMaxSubagentDepth,
 		subagentMaxChildren: DefaultMaxSubagents,
 		attemptRetention:    DefaultAttemptRetention,
+		sessionStartedAt:    time.Now().UTC(),
 		controlConns:        make(map[net.Conn]struct{}),
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -344,6 +352,10 @@ func clone(t Task) Task {
 	t.Attempts = append([]Attempt(nil), t.Attempts...)
 	for i := range t.Attempts {
 		t.Attempts[i].Tools = append([]string(nil), t.Attempts[i].Tools...)
+		if t.Attempts[i].Usage != nil {
+			usage := *t.Attempts[i].Usage
+			t.Attempts[i].Usage = &usage
+		}
 	}
 	return t
 }

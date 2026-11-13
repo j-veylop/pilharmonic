@@ -47,6 +47,11 @@ func (f *fakeLoginService) ListTasks() []orchestrator.Task       { return nil }
 func (f *fakeLoginService) ListAgents() []orchestrator.AgentInfo { return nil }
 func (f *fakeLoginService) ListProfiles() []orchestrator.Profile { return nil }
 
+// SessionUsage reports no recorded tokens: slash-command tests never run work.
+func (f *fakeLoginService) SessionUsage() orchestrator.SessionUsage {
+	return orchestrator.SessionUsage{}
+}
+
 func (f *fakeLoginService) SubmitRequest(text, _ string) (orchestrator.Task, error) {
 	f.submitCalls = append(f.submitCalls, text)
 	return orchestrator.Task{}, nil

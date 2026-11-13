@@ -159,9 +159,9 @@ func TestFantasyRunnerRecordsToolActivity(t *testing.T) {
 	var running, finished *ToolActivity
 	for i := range sink.activities {
 		switch sink.activities[i].Status {
-		case activityRunning:
+		case ActivityRunning:
 			running = &sink.activities[i]
-		case activityFinished:
+		case ActivityFinished:
 			finished = &sink.activities[i]
 		}
 	}

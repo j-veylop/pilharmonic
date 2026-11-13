@@ -70,7 +70,7 @@ func TestEditorUpFromFullWrappedLineAdvancesOneLine(t *testing.T) {
 func TestComposerBoxWrapsLongDraft(t *testing.T) {
 	text := strings.Repeat("keep this visible ", 8) + "final-marker"
 	m := model{width: 48, height: 24, input: composer{kind: newTaskInput, text: text, cursor: len(text)}}
-	box := ansi.Strip(strings.Join(m.composerBox(48, m.composerDraftRows(1)), "\n"))
+	box := ansi.Strip(strings.Join(m.composerBox(m.composerDraftRows(1)), "\n"))
 	if strings.Count(box, "\n") < 3 {
 		t.Fatalf("composer box stayed single-line: %q", box)
 	}
@@ -170,14 +170,14 @@ func TestComposerPageKeysScrollLongDraft(t *testing.T) {
 	}
 	text := strings.Join(lines, "\n")
 	m := model{width: 80, height: 24, input: composer{kind: newTaskInput, text: text, cursor: len(text)}}
-	before := ansi.Strip(strings.Join(m.composerBox(80, m.composerHeight()), "\n"))
+	before := ansi.Strip(strings.Join(m.composerBox(m.composerHeight()), "\n"))
 	if !strings.Contains(before, "line-30") || strings.Contains(before, "line-01") {
 		t.Fatalf("long composer did not open at the cursor: %q", before)
 	}
 	for i := 0; i < 6; i++ {
 		m = key(m, tea.KeyMsg{Type: tea.KeyPgUp})
 	}
-	after := ansi.Strip(strings.Join(m.composerBox(80, m.composerHeight()), "\n"))
+	after := ansi.Strip(strings.Join(m.composerBox(m.composerHeight()), "\n"))
 	if !strings.Contains(after, "line-01") || strings.Contains(after, "line-30") {
 		t.Fatalf("pgup did not scroll the composer: %q", after)
 	}
@@ -347,7 +347,7 @@ func TestRequestFormBoxCarriesItsAuthorizationAndFocus(t *testing.T) {
 	m := boardWithTask()
 	m.router.open = true
 	m.router.draft = "inspect the parser"
-	box := ansi.Strip(strings.Join(m.composerBox(m.width, 2), "\n"))
+	box := ansi.Strip(strings.Join(m.composerBox(2), "\n"))
 	if !strings.Contains(box, "NEW REQUEST") || !strings.Contains(box, "authorization "+orchestrator.LocalPolicyVersion) {
 		t.Fatalf("request box lost its label or authorization note: %q", box)
 	}
@@ -359,7 +359,8 @@ func TestRequestFormBoxCarriesItsAuthorizationAndFocus(t *testing.T) {
 		t.Fatal("request box still reports focus while the attention list owns keys")
 	}
 	// The label must survive a narrow terminal without the authorization note.
-	narrow := ansi.Strip(strings.Join(m.composerBox(30, 2), "\n"))
+	m.width = 30
+	narrow := ansi.Strip(strings.Join(m.composerBox(2), "\n"))
 	if !strings.Contains(narrow, "NEW REQUEST") || strings.Contains(narrow, "authorization") {
 		t.Fatalf("narrow request box label or note is wrong: %q", narrow)
 	}
@@ -378,7 +379,7 @@ func TestComposerGeometryMatchesTheRenderedBox(t *testing.T) {
 		if got, want := m.composerWidth(), width-4-lipgloss.Width(composerPrompt)-1; got != want {
 			t.Fatalf("width %d: draft width = %d, want %d", width, got, want)
 		}
-		box := m.composerBox(width, 2)
+		box := m.composerBox(2)
 		if len(box) != 4 {
 			t.Fatalf("width %d: box rows = %d", width, len(box))
 		}
@@ -410,11 +411,11 @@ func TestComposerBoxHidesTheCursorWhenTheListHasFocus(t *testing.T) {
 	m.router.open = true
 	m.router.draft = "hello"
 	m.router.cursor = len("hello")
-	if box := strings.Join(m.composerBox(m.width, 2), "\n"); !strings.Contains(box, "▏") {
+	if box := strings.Join(m.composerBox(2), "\n"); !strings.Contains(box, "▏") {
 		t.Fatalf("focused request box has no cursor: %q", box)
 	}
 	m.router.focus = 1
-	box := strings.Join(m.composerBox(m.width, 2), "\n")
+	box := strings.Join(m.composerBox(2), "\n")
 	if strings.Contains(box, "▏") {
 		t.Fatalf("unfocused request box still draws a cursor: %q", box)
 	}

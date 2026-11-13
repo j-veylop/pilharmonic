@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 
+	"pilharmonic/internal/orchestrator"
+
 	"github.com/charmbracelet/glamour"
 	glamouransi "github.com/charmbracelet/glamour/ansi"
 	glamourstyles "github.com/charmbracelet/glamour/styles"
@@ -21,11 +23,20 @@ type markdownCache struct {
 	lines    []string
 }
 
+// toolMarkerStatuses are the activity statuses an adapter writes into the
+// inline markers the transcript parser recognises.
+var toolMarkerStatuses = []string{
+	orchestrator.ActivityRunning,
+	orchestrator.ActivityFinished,
+	orchestrator.ActivityFailed,
+	orchestrator.ActivityInterrupted,
+}
+
 // toolMarkerPattern matches the inline tool markers written by the Pi adapter.
 // It is a display hint only: agent text that happens to look like a marker is
 // still untrusted data, and the structured activity retained on the task
 // remains authoritative.
-var toolMarkerPattern = regexp.MustCompile(`^\[(running|finished|failed|interrupted)\] ?(.*)$`)
+var toolMarkerPattern = regexp.MustCompile(`^\[(` + strings.Join(toolMarkerStatuses, "|") + `)\] ?(.*)$`)
 
 type transcriptToolCall struct {
 	status  string
@@ -286,7 +297,7 @@ func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 	result := make([]transcriptToolCall, 0, len(calls))
 	for _, call := range calls {
 		matched := false
-		if call.status != "running" {
+		if call.status != orchestrator.ActivityRunning {
 			name, detail := splitToolSummary(call.summary)
 			index := lastRunningWithSummary(result, call.summary)
 			if index < 0 {
@@ -294,11 +305,11 @@ func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 			}
 			if index < 0 && !namesTool(result, name) {
 				switch {
-				case (call.status == "failed" || call.status == "interrupted") && detail == "":
+				case (call.status == orchestrator.ActivityFailed || call.status == orchestrator.ActivityInterrupted) && detail == "":
 					// The completion is a message, not a tool call of its
 					// own, so it belongs to the call that was running.
 					index = onlyUnfinishedCall(result)
-				case call.status == "finished" && name == "":
+				case call.status == orchestrator.ActivityFinished && name == "":
 					// An empty completion carries nothing to show on its own.
 					index = onlyUnfinishedCall(result)
 				}
@@ -320,7 +331,7 @@ func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 // summary, which is the usual repeat of a start marker's arguments.
 func lastRunningWithSummary(calls []transcriptToolCall, summary string) int {
 	for i := len(calls) - 1; i >= 0; i-- {
-		if calls[i].status == "running" && calls[i].summary == summary {
+		if calls[i].status == orchestrator.ActivityRunning && calls[i].summary == summary {
 			return i
 		}
 	}
@@ -333,7 +344,7 @@ func firstRunningNamed(calls []transcriptToolCall, name string) int {
 		return -1
 	}
 	for i := range calls {
-		if runningName, _ := splitToolSummary(calls[i].summary); runningName == name && calls[i].status == "running" {
+		if runningName, _ := splitToolSummary(calls[i].summary); runningName == name && calls[i].status == orchestrator.ActivityRunning {
 			return i
 		}
 	}
@@ -362,7 +373,7 @@ func namesTool(calls []transcriptToolCall, name string) bool {
 func onlyUnfinishedCall(calls []transcriptToolCall) int {
 	index := -1
 	for i := range calls {
-		if calls[i].status != "running" {
+		if calls[i].status != orchestrator.ActivityRunning {
 			continue
 		}
 		if index >= 0 {

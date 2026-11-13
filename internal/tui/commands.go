@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -272,7 +273,7 @@ func (m model) modelClasses() []string {
 
 // knownClass reports whether name is a valid model class.
 func (m model) knownClass(name string) bool {
-	return name == orchestrator.ModelClassBig || name == orchestrator.ModelClassSmall
+	return slices.Contains(m.modelClasses(), name)
 }
 
 // configuredProviders lists the providers that hold an API key. Only they can

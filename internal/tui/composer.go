@@ -181,9 +181,9 @@ func (m model) composerPlaceholder() string {
 
 // composerBoxLines renders the draft inside the border: the prompt marker on
 // the first row and a hanging indent on wrapped rows.
-func (m model) composerBoxLines(width, rows int) []string {
-	inner := max(1, width-4)
-	contentWidth := max(1, inner-lipgloss.Width(composerPrompt)-1)
+func (m model) composerBoxLines(rows int) []string {
+	inner := m.composerInnerWidth()
+	contentWidth := m.composerWidth()
 	prefix := accentStyle.Render(composerPrompt)
 	if !m.composerFocused() {
 		prefix = mutedStyle.Render(composerPrompt)
@@ -217,12 +217,13 @@ func (m model) composerBoxLines(width, rows int) []string {
 
 // composerBox draws the docked input box. Its label sits on the top border and
 // the border brightens while the draft has focus.
-func (m model) composerBox(width, rows int) []string {
+func (m model) composerBox(rows int) []string {
 	title, note := m.composerTitle()
 	color := border
 	if m.composerFocused() {
 		color = accent
 	}
+	width := m.composerBoxWidth()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(color).
@@ -231,7 +232,7 @@ func (m model) composerBox(width, rows int) []string {
 		Height(rows).
 		MaxWidth(width).
 		MaxHeight(rows + 2)
-	content := fit(strings.Join(m.composerBoxLines(width, rows), "\n"), width-4, rows)
+	content := fit(strings.Join(m.composerBoxLines(rows), "\n"), m.composerInnerWidth(), rows)
 	box := strings.Split(style.Render(content), "\n")
 	if len(box) == 0 {
 		return nil
@@ -271,10 +272,10 @@ func composerTopBorder(title, note string, width int, color lipgloss.Color, focu
 
 // composerBlock is the whole docked block: the box plus the request form's
 // executor hints.
-func (m model) composerBlock(width, rows int) []string {
-	lines := m.composerBox(width, rows)
+func (m model) composerBlock(rows int) []string {
+	lines := m.composerBox(rows)
 	if m.router.open {
-		lines = append(lines, m.routerMentionHintLines(width)...)
+		lines = append(lines, m.routerMentionHintLines(m.composerBoxWidth())...)
 	}
 	return lines
 }

@@ -233,7 +233,7 @@ func TestComposerBoxKeepsCellWidthForWideText(t *testing.T) {
 	m := model{width: 40, height: 20, tasks: []orchestrator.Task{{ID: "task", Title: "work"}}}
 	text := strings.Repeat("日本語のテキスト ", 6)
 	m.input = composer{kind: newTaskInput, text: text, cursor: len(text)}
-	for _, row := range m.composerBox(40, m.composerHeight()) {
+	for _, row := range m.composerBox(m.composerHeight()) {
 		if width := lipgloss.Width(ansi.Strip(row)); width != 40 {
 			t.Fatalf("box row is %d cells: %q", width, ansi.Strip(row))
 		}

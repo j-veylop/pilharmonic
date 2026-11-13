@@ -128,7 +128,7 @@ func (m model) View() string {
 		rows = append(rows, body)
 	}
 	if l.composerRows > 0 {
-		rows = append(rows, m.composerBlock(w, l.composerDraft)...)
+		rows = append(rows, m.composerBlock(l.composerDraft)...)
 	}
 	rows = append(rows, footer)
 	screen := fit(strings.Join(rows, "\n"), w, h)

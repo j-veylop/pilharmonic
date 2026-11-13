@@ -38,19 +38,6 @@ type FantasyRunner struct {
 	ModelFactory ModelFactory
 }
 
-// NewFantasyRunner builds a runner with no extra instructions. Use
-// WithInstructions to add role guidance.
-func NewFantasyRunner(model string, defaultTools []string) FantasyRunner {
-	return FantasyRunner{model: model, defaultTools: append([]string(nil), defaultTools...)}
-}
-
-// WithInstructions returns a copy of the runner that appends trusted role
-// guidance to the executor policy in the system prompt.
-func (f FantasyRunner) WithInstructions(instructions string) FantasyRunner {
-	f.instructions = instructions
-	return f
-}
-
 // RequestedModel resolves the model selector used for this attempt, in
 // priority order: the operator's per-agent override, the runner's configured
 // model (from profiles.json or the -model flag), then the task profile's model.

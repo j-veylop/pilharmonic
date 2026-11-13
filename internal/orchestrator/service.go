@@ -996,11 +996,6 @@ func (s *Service) addContextLocked(taskID, triggerID, text string) error {
 	return errors.New("task thread not found")
 }
 
-// AddManualContext creates a unique trigger for a local follow-up.
-func (s *Service) AddManualContext(taskID, text string) error {
-	return s.AddContext(taskID, newID(), text)
-}
-
 // Retry returns an unsuccessful task to the queue without changing its mandate.
 func (s *Service) Retry(id string) error {
 	s.mu.Lock()

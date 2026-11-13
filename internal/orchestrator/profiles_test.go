@@ -45,6 +45,28 @@ func profileNamed(profiles []Profile, name string) (Profile, bool) {
 	return Profile{}, false
 }
 
+// registerProfileForTest installs a profile with the same validation the
+// config loader applies. Production registers profiles only through
+// LoadProfiles.
+func registerProfileForTest(t *testing.T, s *Service, p Profile) {
+	t.Helper()
+	if err := p.validate(); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.profiles == nil {
+		s.profiles = builtinProfiles()
+	}
+	s.profiles[p.Name] = cloneProfile(p)
+}
+
+// spawnSubagentWithProfileForTest drives the operator path directly with a
+// named profile, which is what the CLI and terminal entry points use.
+func spawnSubagentWithProfileForTest(s *Service, parentID, title, prompt, agent, profile string) (Task, error) {
+	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, profile, "", true)
+}
+
 func TestBuiltinProfileDefaultsAndConfigOverlay(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
 	profiles := s.ListProfiles()
@@ -60,7 +82,7 @@ func TestBuiltinProfileDefaultsAndConfigOverlay(t *testing.T) {
 	if err := s.LoadProfiles(writeProfileConfig(t, config)); err != nil {
 		t.Fatal(err)
 	}
-	overridden, _ := s.GetProfile(CoordinatorProfileName)
+	overridden, _ := profileNamed(s.ListProfiles(), CoordinatorProfileName)
 	if overridden.Model != "provider/parent" || overridden.Description != coordinator.Description || overridden.CoordinatorInstructions != "" {
 		t.Fatalf("partial override lost built-in values: %+v", overridden)
 	}
@@ -75,7 +97,7 @@ func TestBuiltinProfileDefaultsAndConfigOverlay(t *testing.T) {
 	if err = s.LoadProfiles(writeProfileConfig(t, custom)); err != nil {
 		t.Fatal(err)
 	}
-	customized, _ := s.GetProfile(CoordinatorProfileName)
+	customized, _ := profileNamed(s.ListProfiles(), CoordinatorProfileName)
 	if customized.CoordinatorInstructions != "Ask before delegating." || customized.Description != "" || customized.Model != "" {
 		t.Fatalf("explicit overlay values were not applied: %+v", customized)
 	}
@@ -110,9 +132,7 @@ func TestProfileCatalogSnapshotAndSelection(t *testing.T) {
 		t.Fatalf("profile not snapshotted: %+v", task)
 	}
 	// A later catalog edit must not change what the accepted task will run with.
-	if err = s.RegisterProfile(Profile{Name: "reviewer", Description: "changed", Model: "other/model"}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "reviewer", Description: "changed", Model: "other/model"})
 	got, _ := s.GetTask(task.ID)
 	if got.ProfileSpec == nil || got.ProfileSpec.Model != "test/model" {
 		t.Fatalf("accepted snapshot changed: %+v", got.ProfileSpec)
@@ -151,22 +171,20 @@ func TestProfileCatalogSnapshotAndSelection(t *testing.T) {
 	if got.ProfileName != "gitter" || got.ProfileSpec == nil {
 		t.Fatalf("profile not persisted: %+v", got)
 	}
-	if _, ok := restored.GetProfile("reviewer"); ok {
+	if _, ok := profileNamed(restored.ListProfiles(), "reviewer"); ok {
 		t.Fatal("profiles are configuration, not durable task state")
 	}
 	if err = restored.LoadProfiles(writeProfileConfig(t, config)); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := restored.GetProfile("reviewer"); !ok {
+	if _, ok := profileNamed(restored.ListProfiles(), "reviewer"); !ok {
 		t.Fatal("profile catalog did not reload")
 	}
 }
 
 func TestRelatedTaskRunsWithAcceptedProfile(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.RegisterProfile(Profile{Name: "review", Model: "test/review"}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "review", Model: "test/review"})
 	workspace := t.TempDir()
 	parent, err := s.CreateTask("parent", "parent mandate", workspace)
 	if err != nil {
@@ -185,9 +203,7 @@ func TestRelatedTaskRunsWithAcceptedProfile(t *testing.T) {
 	if err = s.SetRoutingProfile(DefaultProfileName); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.RegisterProfile(Profile{Name: "review", Model: "test/changed"}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "review", Model: "test/changed"})
 	run := make(chan Task, 1)
 	s.RegisterRunner("general", supportingRunner{runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		run <- task
@@ -228,20 +244,18 @@ func TestProfileConfigValidationIsAtomic(t *testing.T) {
 		if err := s.LoadProfiles(writeProfileConfig(t, text)); err == nil {
 			t.Fatalf("accepted %s", text)
 		}
-		if _, ok := s.GetProfile("ok"); ok {
+		if _, ok := profileNamed(s.ListProfiles(), "ok"); ok {
 			t.Fatalf("partial registration after %s", text)
 		}
 	}
-	if _, ok := s.GetProfile("gitter"); !ok {
+	if _, ok := profileNamed(s.ListProfiles(), "gitter"); !ok {
 		t.Fatal("failed load removed an existing profile")
 	}
 }
 
 func TestProfileAdapterSupportIsEnforced(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.RegisterProfile(Profile{Name: "explorer", Tools: []string{"read", "grep"}}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "explorer", Tools: []string{"read", "grep"}})
 	if err := validateProfileForRunner(FantasyRunner{}, Profile{Name: "explorer", Tools: []string{"read"}, Model: "provider/model"}); err != nil {
 		t.Fatalf("general executor rejected a translatable profile: %v", err)
 	}
@@ -284,9 +298,7 @@ func TestQueuedTaskFailsWhenProfileBecomesUnsupported(t *testing.T) {
 		}
 	})})
 	workspace := t.TempDir()
-	if err := s.RegisterProfile(Profile{Name: "explorer", Tools: []string{"read"}}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "explorer", Tools: []string{"read"}})
 	first, err := s.CreateTask("first", "hold the slot", workspace)
 	if err != nil {
 		t.Fatal(err)
@@ -318,9 +330,7 @@ func TestQueuedTaskFailsWhenProfileBecomesUnsupported(t *testing.T) {
 func TestNonIntegratingProfileRetainsWorktree(t *testing.T) {
 	repo := committedRepo(t)
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.RegisterProfile(Profile{Name: "reviewer", Description: "Review only", NoIntegrate: true, NoSubagents: true}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "reviewer", Description: "Review only", NoIntegrate: true, NoSubagents: true})
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		return os.WriteFile(filepath.Join(task.Workspace, "review.txt"), []byte("reviewed\n"), 0600)
 	}))
@@ -362,9 +372,7 @@ func TestSubagentProfileInheritanceAndContainment(t *testing.T) {
 		{Name: "explorer", Tools: []string{"read", "grep", "find", "ls"}, NoIntegrate: true},
 		{Name: "narrow", Tools: []string{"read"}, NoIntegrate: true},
 	} {
-		if err := s.RegisterProfile(profile); err != nil {
-			t.Fatal(err)
-		}
+		registerProfileForTest(t, s, profile)
 	}
 	if err := s.SetConcurrencyLimit(4); err != nil {
 		t.Fatal(err)
@@ -396,10 +404,10 @@ func TestSubagentProfileInheritanceAndContainment(t *testing.T) {
 		t.Fatalf("child did not inherit the parent profile: %+v", child)
 	}
 	<-started
-	if _, err = s.SpawnSubagentWithProfile(parent.ID, "", "widen", "", DefaultProfileName); err == nil {
+	if _, err = spawnSubagentWithProfileForTest(s, parent.ID, "", "widen", "", DefaultProfileName); err == nil {
 		t.Fatal("child widened the parent profile")
 	}
-	narrow, err := s.SpawnSubagentWithProfile(parent.ID, "", "narrow", "", "narrow")
+	narrow, err := spawnSubagentWithProfileForTest(s, parent.ID, "", "narrow", "", "narrow")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +415,7 @@ func TestSubagentProfileInheritanceAndContainment(t *testing.T) {
 		t.Fatalf("narrow child profile not recorded: %+v", narrow)
 	}
 	<-started
-	if _, err = s.SpawnSubagentWithProfile(parent.ID, "", "other executor", "other", "narrow"); err == nil {
+	if _, err = spawnSubagentWithProfileForTest(s, parent.ID, "", "other executor", "other", "narrow"); err == nil {
 		t.Fatal("child changed executor with a different profile")
 	}
 	close(release)
@@ -418,9 +426,7 @@ func TestSubagentProfileInheritanceAndContainment(t *testing.T) {
 
 func TestNoSubagentsProfileWithholdsCredentials(t *testing.T) {
 	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.RegisterProfile(Profile{Name: "lone", NoSubagents: true}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "lone", NoSubagents: true})
 	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
 		t.Fatal(err)
 	}

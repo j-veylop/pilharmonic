@@ -514,9 +514,7 @@ func TestCoordinatorGuidanceRequiresShellAccess(t *testing.T) {
 	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RegisterProfile(Profile{Name: "inspect", Tools: []string{"read"}, CoordinatorInstructions: "Use the helper."}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "inspect", Tools: []string{"read"}, CoordinatorInstructions: "Use the helper."})
 	started := make(chan Task, 1)
 	s.RegisterRunner(DefaultRouteAgent, supportingRunner{runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		started <- task
@@ -555,9 +553,7 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 		return nil
 	}))
 	const instruction = "Delegate repository inspection to explorer."
-	if err := s.RegisterProfile(Profile{Name: "lead", CoordinatorInstructions: instruction}); err != nil {
-		t.Fatal(err)
-	}
+	registerProfileForTest(t, s, Profile{Name: "lead", CoordinatorInstructions: instruction})
 	task, err := s.CreateTaskWithProfile("parent", "mandate", t.TempDir(), "lead")
 	if err != nil {
 		t.Fatal(err)

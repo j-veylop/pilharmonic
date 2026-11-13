@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -42,6 +43,19 @@ func newTestService(t *testing.T) *orchestrator.Service {
 	}
 	t.Cleanup(func() { _ = s.Shutdown() })
 	return s
+}
+
+// addTestProfile registers a profile through the production config loader,
+// the only path that adds profiles now.
+func addTestProfile(t *testing.T, s *orchestrator.Service, definition string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	if err := os.WriteFile(path, []byte(`{"profiles":[`+definition+`]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LoadProfiles(path); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // assertFits fails when a rendered surface exceeds the terminal's cell box.

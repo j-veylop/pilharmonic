@@ -108,19 +108,11 @@ type SkippedDeletion struct {
 	Reason string
 }
 
-// DeleteCompletedTasks permanently removes the still-eligible confirmed tasks, their
-// threads when no remaining task uses them, and their dedicated worktrees.
-// Files in the source workspace are not touched. It returns the number of
-// deleted tasks. Cleanup continues for every task and reports joined failures;
-// the deletions are already durable when a cleanup error is returned.
-func (s *Service) DeleteCompletedTasks(ids []string) (int, error) {
-	deleted, _, err := s.DeleteCompletedTasksDetailed(ids)
-	return deleted, err
-}
-
-// DeleteCompletedTasksDetailed is DeleteCompletedTasks plus an explanation for
-// every requested task it left in place, so the caller can report which tasks
-// were skipped and why instead of silently dropping stale IDs.
+// DeleteCompletedTasksDetailed permanently removes the still-eligible
+// confirmed tasks, their threads when no remaining task uses them, and their
+// dedicated worktrees, and explains every requested task it left in place so
+// the caller can report which tasks were skipped and why instead of silently
+// dropping stale IDs. Files in the source workspace are not touched.
 func (s *Service) DeleteCompletedTasksDetailed(ids []string) (int, []SkippedDeletion, error) {
 	s.mu.Lock()
 	if s.closing {

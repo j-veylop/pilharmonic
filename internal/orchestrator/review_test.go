@@ -22,7 +22,7 @@ func TestReviewTransitionValidation(t *testing.T) {
 	if err := task.beginReview("abc123"); err != nil {
 		t.Fatal(err)
 	}
-	if !task.AwaitingReview() || task.ReviewSettled() || task.ReviewCommit != "abc123" {
+	if !task.AwaitingReview() || reviewSettledForTest(task) || task.ReviewCommit != "abc123" {
 		t.Fatalf("unexpected pending review: %+v", task)
 	}
 	if err := task.beginReview("def456"); err == nil {
@@ -43,7 +43,7 @@ func TestReviewTransitionValidation(t *testing.T) {
 	if task.ReviewStatus != ReviewApproved || task.ReviewedBy != LocalActor || task.ReviewNote != "looks good" || task.ReviewedAt.IsZero() {
 		t.Fatalf("approval not recorded: %+v", task)
 	}
-	if task.AwaitingReview() || !task.ReviewSettled() {
+	if task.AwaitingReview() || !reviewSettledForTest(task) {
 		t.Fatalf("unexpected settled review: %+v", task)
 	}
 	if err := task.settleReview(ReviewRejected, "abc123", LocalActor, ""); err == nil {
@@ -71,6 +71,12 @@ func TestResetReviewClearsDecisionOnly(t *testing.T) {
 	if !task.Isolated || task.ExecutionWorkspace != "/tmp/tree" {
 		t.Fatalf("resetReview touched workspace state: %+v", task)
 	}
+}
+
+// reviewSettledForTest is the settled-review predicate the tests assert; the
+// production code only needs AwaitingReview plus the recorded status.
+func reviewSettledForTest(t Task) bool {
+	return t.ReviewStatus == ReviewApproved || t.ReviewStatus == ReviewRejected
 }
 
 func TestReviewStatePersistsAcrossReopen(t *testing.T) {
@@ -314,7 +320,7 @@ func TestRejectReviewRecordsReason(t *testing.T) {
 	if got.ReviewStatus != ReviewRejected || got.ReviewNote != "not needed" || got.ReviewedBy != LocalActor || got.ReviewedAt.IsZero() {
 		t.Fatalf("rejection not recorded: %+v", got)
 	}
-	if got.AwaitingReview() || !got.ReviewSettled() {
+	if got.AwaitingReview() || !reviewSettledForTest(got) {
 		t.Fatalf("unexpected review state: %+v", got)
 	}
 	if err = s.ApproveReview("missing", "abc123", ""); err == nil {

@@ -51,13 +51,6 @@ func (s *Service) SpawnSubagent(parentID, title, prompt, agent string) (Task, er
 	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, "", "", true)
 }
 
-// SpawnSubagentWithProfile requests a child with a named profile. The child
-// profile must not grant more than the parent's recorded profile; see
-// checkDelegatedProfile.
-func (s *Service) SpawnSubagentWithProfile(parentID, title, prompt, agent, profile string) (Task, error) {
-	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, profile, "", true)
-}
-
 // spawnSubagent handles control-socket requests. The credential is mandatory so
 // a request cannot borrow the parent's authority merely by omitting its token.
 func (s *Service) spawnSubagent(parentID, title, prompt, agent, profile, token string) (Task, error) {

@@ -35,9 +35,8 @@ const (
 	PurposeSubagent = "subagent"
 
 	// Authorization outcomes. Only accept currently creates a task.
-	OutcomeAccept      = "accept"
-	OutcomeReject      = "reject"
-	OutcomeNeedsReview = "needs_review"
+	OutcomeAccept = "accept"
+	OutcomeReject = "reject"
 
 	authorizationDigestSchema = "orchestrator.authorization/v1"
 )

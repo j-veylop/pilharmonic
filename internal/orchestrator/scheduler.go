@@ -39,17 +39,6 @@ func (s *Service) SetConcurrencyLimit(limit int) error {
 	return s.scheduleLocked()
 }
 
-// ResumeScheduled activates persisted start requests after configuration is loaded.
-// It is explicit so startup can configure concurrency and register runners first.
-func (s *Service) ResumeScheduled() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	return s.scheduleLocked()
-}
-
 // startLocked persists the assignment before launching a worker. Caller holds mu.
 func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	runner, ok := s.runners[t.Agent]

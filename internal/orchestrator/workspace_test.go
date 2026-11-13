@@ -432,7 +432,7 @@ func TestDeleteCompletedTasksCleansUpWorktrees(t *testing.T) {
 		}
 		reservations = append(reservations, filepath.Join(filepath.Dir(s.path), "workspaces", task.ID))
 	}
-	deleted, err := s.DeleteCompletedTasks(s.CompletedDeletionCandidates())
+	deleted, _, err := s.DeleteCompletedTasksDetailed(s.CompletedDeletionCandidates())
 	if err != nil {
 		t.Fatal(err)
 	}

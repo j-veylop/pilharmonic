@@ -229,7 +229,7 @@ func TestApprovedMergeIntentResumesAfterRestart(t *testing.T) {
 	if stored.ReviewStatus != ReviewApproved || stored.MergeStatus != "" {
 		t.Fatalf("approval intent was not durable: %+v", stored)
 	}
-	if err = restored.ResumeScheduled(); err != nil {
+	if err = restored.SetConcurrencyLimit(DefaultConcurrency); err != nil {
 		t.Fatal(err)
 	}
 	merged := awaitIntegration(t, restored, task.ID)

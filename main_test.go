@@ -9,6 +9,16 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
+// findProfile looks one profile up by name from the service snapshot.
+func findProfile(s *orchestrator.Service, name string) (orchestrator.Profile, bool) {
+	for _, profile := range s.ListProfiles() {
+		if profile.Name == name {
+			return profile, true
+		}
+	}
+	return orchestrator.Profile{}, false
+}
+
 func TestShippedProfilesUseBuiltInCoordination(t *testing.T) {
 	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
@@ -19,7 +29,7 @@ func TestShippedProfilesUseBuiltInCoordination(t *testing.T) {
 	if err := loadStartupProfiles(s, "profiles.json", false); err != nil {
 		t.Fatal(err)
 	}
-	profile, ok := s.GetProfile(orchestrator.CoordinatorProfileName)
+	profile, ok := findProfile(s, orchestrator.CoordinatorProfileName)
 	if !ok || profile.Model == "" {
 		t.Fatalf("shipped coordinator profile not loaded: %+v", profile)
 	}
@@ -49,7 +59,7 @@ func TestStartupProfiles(t *testing.T) {
 	if err := loadStartupProfiles(s, "profiles.json", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.GetProfile("local"); !ok {
+	if _, ok := findProfile(s, "local"); !ok {
 		t.Fatal("profile from profiles.json missing")
 	}
 	if err := os.WriteFile("profiles.json", []byte("{"), 0600); err != nil {

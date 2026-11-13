@@ -64,8 +64,9 @@ The primary path starts at the **NEW REQUEST** form. Pressing Enter there calls
 removes that token from the request, derives a display title from the first
 remaining line, and persists it through the same path as a manual draft. Without
 a mention it assigns `general`; an unavailable name or a missing request is
-rejected. The decision records the local policy ID/version (`local` / `local-1`),
-the trusted local source and actor, and a versioned digest of the policy input. A
+rejected. The decision records the trusted local source and actor, the
+recorded policy ID/version (`local` / `local-1`) and a versioned digest of the
+authorization input. A
 `routed` event records the assignment (selected executor, an isolated worktree or shared
 workspace as applicable, execution requested). The router then calls `Start`
 immediately. The same form lists **NEEDS ACTION** and **RECENT TASKS**, each
@@ -80,10 +81,10 @@ the router does not decompose requests or evaluate them with a model.
    selects automatic isolation only for that case when the workspace is a
    repository with a committed `HEAD`. Read-only and ambiguous work stays in the
    source workspace. It records whether the choice was automatic, then
-   generates task, trigger and thread IDs, runs the local authorization policy,
-   and records the explicit request as an accepted trigger, decision and event.
-   All of it is persisted before the call returns; a save failure rolls the
-   slices back. A manual draft is `queued` but deliberately not started. An
+   generates task, trigger and thread IDs, runs the compiled-in authorization
+   step, and records the explicit request as an accepted trigger, decision and
+   event. All of it is persisted before the call returns; a save failure rolls
+   the slices back. A manual draft is `queued` but deliberately not started. An
    explicit `w` choice is preserved across later executor changes; changing the
    executor alone does not reclassify the automatic choice.
 2. **Explicit start.** `r` (or the router after routing) calls `Start`. An unavailable executor causes a start error. If a
@@ -303,10 +304,10 @@ task for an explicit start without expanding its mandate.
 
 - The original request, the accept decision, the mandate and each attempt are
   distinct records; follow-ups are context, never a new mandate.
-- Task creation goes through the source's authorization policy. Policies return
-  an explicit outcome and policy ID/version, and the decision stores a digest of
-  the exact normalized input so it can be recomputed later. Model or agent
-  output never supplies an authorization decision.
+- Task creation goes through one compiled-in authorization step. It returns an
+  explicit outcome and records the policy ID/version of its source, and the
+  decision stores a digest of the exact normalized input so it can be recomputed
+  later. Model or agent output never supplies an authorization decision.
 - State transitions are persisted before they are acknowledged, with
   compensating rollback on synchronous save errors.
 - At most `-max-concurrent` runners execute at once, including when starts and
@@ -358,11 +359,12 @@ task for an explicit start without expanding its mandate.
 
 ## Known limits and current gaps
 
-- Only the trusted local UI and bounded subagent delegation are sources. The
-  built-in local and subagent policies are compiled in and both accept their
-  trusted source; there is no policy file, chooser or per-request policy
-  selection, no persistence of rejected requests, no dedicated audit export,
-  no external trigger authentication and no model-assisted routing.
+- Only the trusted local UI and bounded subagent delegation are sources. One
+  compiled-in authorization step accepts both and records `local` / `local-1`
+  or `subagent` / `subagent-1` with each decision. There is no configuration
+  file, chooser or per-request selection for it, no persistence of rejected
+  requests, no dedicated audit export, no external trigger authentication and
+  no model-assisted routing.
 - The state file is intended for one running instance. An instance lock
   (see `instance.go`) refuses a second instance on the same path; concurrent
   instances are not supported. The whole state file is rewritten on each save,

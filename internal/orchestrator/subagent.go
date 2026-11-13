@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	// SubagentPolicyVersion identifies the fixed policy that accepts a child
-	// mandate delegated by a running task. A subagent is a new task with its own
-	// mandate and attempt; delegation does not expand the parent's mandate.
+	// SubagentPolicyVersion identifies the authorization record written for a
+	// child mandate delegated by a running task. A subagent is a new task with
+	// its own mandate and attempt; delegation does not expand the parent's
+	// mandate.
 	SubagentPolicyVersion = "subagent-1"
 
 	// DefaultMaxSubagentDepth bounds how many delegation levels can run.
@@ -178,7 +179,7 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token 
 	threadID := newID()
 	now := time.Now().UTC()
 	trigger := Trigger{ID: triggerID, Source: SubagentPolicySource, Text: prompt, CreatedAt: now}
-	decision, err := s.authorizeLocked(AuthorizationRequest{
+	decision, err := s.authorize(AuthorizationRequest{
 		Source:    SubagentPolicySource,
 		Actor:     "task:" + parent.ID,
 		Purpose:   PurposeSubagent,
@@ -213,7 +214,7 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token 
 		Decision:        decision,
 		Events: []Event{
 			{now, "accepted", "Subagent mandate accepted from running task " + parent.ID},
-			{now, "delegated", "Policy " + SubagentPolicyVersion + " · depth " + fmt.Sprint(depth) + " · profile " + childProfile.Name + " · workspace inherited from parent"},
+			{now, "delegated", "Authorization " + SubagentPolicyVersion + " · depth " + fmt.Sprint(depth) + " · profile " + childProfile.Name + " · workspace inherited from parent"},
 		},
 	}
 	s.data.Tasks = append(s.data.Tasks, task)

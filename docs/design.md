@@ -18,9 +18,9 @@ See the [executor contract](executors.md).
 The main view leads with a **NEW REQUEST** form, reached with `/` and opened on
 startup once a provider credential is configured; without one, startup opens the
 login menu instead.
-The local policy checks a submitted request before it becomes a task. `n` creates
-a task directly as a queued draft without the request form's automatic routing;
-its request is still checked by the local policy. The form lists
+The compiled-in authorization step checks a submitted request before it becomes
+a task. `n` creates a task directly as a queued draft without the request form's
+automatic routing; its request is still checked by the same step. The form lists
 **NEEDS ACTION** and **RECENT TASKS**, each showing up to eight rows. Tab moves
 from the draft to a list, skipping an empty one, `j`/`k` select a row and Enter
 opens that task on the board; the focused list scrolls inside the panel so the
@@ -45,9 +45,10 @@ a line boundary `Ctrl-k` and `Ctrl-u` join the neighbouring line.
 
 ## Requests and authority
 
-- A trigger identifies an incoming request in a thread. A compiled-in policy
-  evaluates the normalized request. An accepted task records its mandate,
-  trigger, decision, policy identity and input digest. A leading `@NAME` token
+- A trigger identifies an incoming request in a thread. One compiled-in
+  authorization step evaluates the normalized request and writes its audit
+  record. An accepted task records its mandate, trigger, decision, the recorded
+  policy identity and the input digest. A leading `@NAME` token
   selects a registered executor and is removed from the mandate; otherwise the
   local router assigns `general` and requests a start. Top-level routing does not
   infer an executor from the opening action. The implementer is available
@@ -62,15 +63,17 @@ a line boundary `Ctrl-k` and `Ctrl-u` join the neighbouring line.
 - A task-specific follow-up adds context to that task. For a terminal task it
   also requeues the task for an explicit start. Neither operation changes the
   mandate.
-- A running task can delegate a bounded request through the subagent policy.
-  The child gets a new thread, mandate, decision and parent link. It inherits
+- A running task can delegate a bounded request through the same authorization
+  step, using the subagent source. The child gets a new thread, mandate,
+  decision and parent link. It inherits
   the execution workspace and uses the parent executor as the fallback. A delegation-enabled
   parent receives a catalog of registered executors and their configured
   descriptions. It can select a named specialist for the child mandate. Depth and child limits
   bound delegation. An isolated parent can delegate once its execution workspace
   is ready. A child's lifecycle is independent once it exists.
 
-The local and subagent policies are compiled in. External triggers would need
+Authorization is a single compiled-in step; the trusted local source and the
+subagent source both pass through it. External triggers would need
 authenticated identities, stable request IDs, idempotent decisions and durable
 authorization evidence. See the [routing specification](routing-spec.md).
 

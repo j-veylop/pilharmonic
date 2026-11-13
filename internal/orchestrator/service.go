@@ -192,7 +192,6 @@ type Service struct {
 	limit             int
 	live              map[string]chan Trigger
 	pending           map[string]*pendingRequest
-	policies          map[string]Policy
 	agentDescriptions map[string]string
 	// activity signals the idle watchdog for each running task. It is empty
 	// unless an idle timeout is configured.
@@ -217,22 +216,18 @@ func Open(path string) (*Service, error) {
 		return nil, errors.New("state path is required")
 	}
 	s := &Service{
-		path:              path,
-		runners:           map[string]Runner{},
-		profiles:          builtinProfiles(),
-		routeProfile:      DefaultProfileName,
-		cancel:            make(map[string]context.CancelFunc),
-		discarding:        make(map[string]bool),
-		limit:             defaultConcurrency,
-		live:              make(map[string]chan Trigger),
-		pending:           make(map[string]*pendingRequest),
-		activity:          make(map[string]chan struct{}),
-		defaultIsolation:  true,
-		agentDescriptions: map[string]string{DefaultRouteAgent: "General-purpose coding agent."},
-		policies: map[string]Policy{
-			LocalPolicySource:    localPolicy{},
-			SubagentPolicySource: subagentPolicy{},
-		},
+		path:                path,
+		runners:             map[string]Runner{},
+		profiles:            builtinProfiles(),
+		routeProfile:        DefaultProfileName,
+		cancel:              make(map[string]context.CancelFunc),
+		discarding:          make(map[string]bool),
+		limit:               defaultConcurrency,
+		live:                make(map[string]chan Trigger),
+		pending:             make(map[string]*pendingRequest),
+		activity:            make(map[string]chan struct{}),
+		defaultIsolation:    true,
+		agentDescriptions:   map[string]string{DefaultRouteAgent: "General-purpose coding agent."},
 		subagentMaxDepth:    DefaultMaxSubagentDepth,
 		subagentMaxChildren: DefaultMaxSubagents,
 		attemptRetention:    DefaultAttemptRetention,
@@ -461,8 +456,8 @@ func (s *Service) CreateTaskWithProfile(title, prompt, workspace, profile string
 		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual}, agent, profile)
 }
 
-// createTaskWithIsolation persists an accepted request after the source's
-// authorization policy approves it. Routing details are optional so the
+// createTaskWithIsolation persists an accepted request after the compiled-in
+// authorization step approves it. Routing details are optional so the
 // deterministic router can record its assignment events in the same write as
 // the decision.
 func (s *Service) createTaskWithIsolation(title, prompt, workspace string, plan workspacePlan, auth AuthorizationRequest, agent, profile string, routedMessages ...string) (Task, error) {

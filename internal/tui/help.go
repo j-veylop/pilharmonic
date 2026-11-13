@@ -10,9 +10,10 @@ import (
 )
 
 var helpTopics = []struct{ title, body string }{
-	{"Concepts", `Request   Work submitted with /. The policy decides acceptance.
+	{"Concepts", `Request   Work submitted with /. One compiled-in authorization
+          step decides acceptance and records its audit evidence.
 Task      Accepted work with its own mandate, executor, status and history.
-Route     The automatic policy check that accepts a request and picks an executor.
+Route     The automatic acceptance step that picks an executor.
 Action    Tasks that need you: blocked, waiting, awaiting review,
           undelivered input, merge failed, failed or interrupted.
 Attempt   One run of a task. Retry keeps the task and adds an attempt.
@@ -33,7 +34,7 @@ z              Toggle full-width details
 Esc            Return / collapse expanded call`},
 	{"Tasks", `@executor      Prefix a request; Tab completes names
 n              New task without routing
-/              New request; policy decides acceptance
+/              New request; acceptance is decided and recorded
 a              Related task in selected thread
 b              Spawn subagent from running task
 A              Choose executor before starting

@@ -141,13 +141,13 @@ func (m model) composerExtraRows() int {
 }
 
 // composerTitle names the box on its top border and, when it fits, shows the
-// policy that decides acceptance on the right.
+// compiled-in authorization step whose decision is recorded on the right.
 func (m model) composerTitle() (title, note string) {
 	if m.router {
 		if m.loginProvider != "" {
 			return "API KEY", terminalText(m.loginProvider)
 		}
-		return "NEW REQUEST", "policy " + orchestrator.LocalPolicyVersion
+		return "NEW REQUEST", "authorization " + orchestrator.LocalPolicyVersion
 	}
 	if m.input.kind == rejectReviewInput {
 		return string(m.input.kind), "keeps worktree · F requeues"

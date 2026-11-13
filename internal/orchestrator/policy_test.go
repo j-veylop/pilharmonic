@@ -8,16 +8,167 @@ import (
 	"testing"
 )
 
-type fakePolicy struct {
-	id      string
-	version string
-	decide  func(AuthorizationRequest) AuthorizationResult
+func TestAuthorizeAcceptsLocalRequests(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+
+	cases := []struct {
+		purpose string
+		reason  string
+	}{
+		{PurposeRouter, "trusted local request accepted by the deterministic router"},
+		{PurposeRelated, "explicit local request in existing thread"},
+		{PurposeManual, "explicit local request"},
+	}
+	for _, tc := range cases {
+		req := AuthorizationRequest{
+			Source:    LocalPolicySource,
+			Actor:     LocalActor,
+			Purpose:   tc.purpose,
+			TriggerID: "trigger",
+			ThreadID:  "thread",
+			Text:      "do the work",
+			Workspace: "/workspace",
+		}
+		decision, err := s.authorize(req)
+		if err != nil {
+			t.Fatalf("%s: local request rejected: %v", tc.purpose, err)
+		}
+		if decision.Outcome != OutcomeAccept || decision.Reason != tc.reason {
+			t.Fatalf("%s: unexpected decision: %+v", tc.purpose, decision)
+		}
+		if decision.Outcome == OutcomeNeedsReview {
+			t.Fatalf("%s: authorization produced an unreachable outcome: %+v", tc.purpose, decision)
+		}
+		if decision.PolicyID != LocalPolicyID || decision.PolicyVersion != LocalPolicyVersion {
+			t.Fatalf("%s: authorization record missing its identifiers: %+v", tc.purpose, decision)
+		}
+		if decision.Source != LocalPolicySource || decision.Actor != LocalActor {
+			t.Fatalf("%s: source or actor not recorded: %+v", tc.purpose, decision)
+		}
+		if decision.TriggerID != req.TriggerID {
+			t.Fatalf("%s: trigger not recorded: %+v", tc.purpose, decision)
+		}
+		if decision.InputDigest != authorizationInputDigest(req) || !strings.HasPrefix(decision.InputDigest, "sha256:") {
+			t.Fatalf("%s: input digest not recorded: %+v", tc.purpose, decision)
+		}
+	}
 }
 
-func (p fakePolicy) ID() string      { return p.id }
-func (p fakePolicy) Version() string { return p.version }
-func (p fakePolicy) Authorize(req AuthorizationRequest) AuthorizationResult {
-	return p.decide(req)
+func TestAuthorizeAcceptsDelegatedRequest(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+	req := AuthorizationRequest{
+		Source:    SubagentPolicySource,
+		Actor:     "task:parent",
+		Purpose:   PurposeSubagent,
+		TriggerID: "trigger",
+		ThreadID:  "thread",
+		ParentID:  "parent",
+		Text:      "child mandate",
+		Workspace: "/workspace",
+		Depth:     1,
+	}
+	decision, err := s.authorize(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Outcome != OutcomeAccept {
+		t.Fatalf("delegated request rejected: %+v", decision)
+	}
+	if decision.PolicyID != SubagentPolicyID || decision.PolicyVersion != SubagentPolicyVersion {
+		t.Fatalf("authorization record missing its identifiers: %+v", decision)
+	}
+	if want := "delegated by running task parent; child has a separate mandate"; decision.Reason != want {
+		t.Fatalf("delegation reason drifted: %q", decision.Reason)
+	}
+	if decision.Outcome == OutcomeNeedsReview {
+		t.Fatalf("authorization produced an unreachable outcome: %+v", decision)
+	}
+	if decision.InputDigest != authorizationInputDigest(req) {
+		t.Fatalf("input digest not recorded: %+v", decision)
+	}
+}
+
+func TestAuthorizeRejectsBlankMandateAndUnknownSource(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+	cases := []struct {
+		name string
+		req  AuthorizationRequest
+		want string
+		err  string
+	}{
+		{
+			"blank local",
+			AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeManual, Text: "  "},
+			"local request has no mandate",
+			"request rejected by policy local-1: local request has no mandate",
+		},
+		{
+			"blank delegated",
+			AuthorizationRequest{Source: SubagentPolicySource, ParentID: "parent", Depth: 1},
+			"subagent request has no mandate",
+			"request rejected by policy subagent-1: subagent request has no mandate",
+		},
+		{
+			"delegated without parent",
+			AuthorizationRequest{Source: SubagentPolicySource, Depth: 1, Text: "work"},
+			"subagent policy requires a delegated request with a parent task",
+			"request rejected by policy subagent-1: subagent policy requires a delegated request with a parent task",
+		},
+		{
+			"delegated without depth",
+			AuthorizationRequest{Source: SubagentPolicySource, ParentID: "parent", Text: "work"},
+			"subagent policy requires a delegated request with a parent task",
+			"request rejected by policy subagent-1: subagent policy requires a delegated request with a parent task",
+		},
+	}
+	for _, tc := range cases {
+		decision, err := s.authorize(tc.req)
+		if err == nil || err.Error() != tc.err {
+			t.Fatalf("%s: rejection text drifted: %v", tc.name, err)
+		}
+		if decision.Outcome != OutcomeReject || decision.Reason != tc.want {
+			t.Fatalf("%s: unexpected decision: %+v", tc.name, decision)
+		}
+	}
+
+	decision, err := s.authorize(AuthorizationRequest{Source: "external", Text: "work"})
+	if err == nil || !strings.Contains(err.Error(), "external") {
+		t.Fatalf("unknown source not rejected: %v", err)
+	}
+	if decision.Outcome != OutcomeReject || decision.PolicyID != "" {
+		t.Fatalf("unknown source claimed an authorization record: %+v", decision)
+	}
+	if decision.InputDigest == "" {
+		t.Fatalf("rejected request lost its input digest: %+v", decision)
+	}
+}
+
+func TestAuthorizationRejectionCreatesNoTask(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+	_, err = s.createTaskWithIsolation("title", "should not run", t.TempDir(), workspacePlan{},
+		AuthorizationRequest{Source: "external", Actor: "intruder", Purpose: PurposeManual}, DefaultRouteAgent, "")
+	if err == nil || !strings.Contains(err.Error(), "external") {
+		t.Fatalf("rejection not reported: %v", err)
+	}
+	if tasks := s.ListTasks(); len(tasks) != 0 {
+		t.Fatalf("rejected requests created tasks: %+v", tasks)
+	}
 }
 
 func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
@@ -31,28 +182,16 @@ func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
 		_, err := io.WriteString(out, "done")
 		return err
 	}))
-	if err = s.RegisterPolicy(LocalPolicySource, fakePolicy{
-		id:      "test-local",
-		version: "test-1",
-		decide: func(req AuthorizationRequest) AuthorizationResult {
-			if req.Purpose != PurposeRouter || req.Actor != LocalActor {
-				t.Fatalf("unexpected policy input: %+v", req)
-			}
-			return AuthorizationResult{Outcome: OutcomeAccept, Reason: "approved by test policy"}
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
 	task, err := s.SubmitRequest("audit this request", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	done := await(t, s, task.ID, Completed)
 	decision := done.Decision
-	if decision.Outcome != OutcomeAccept || decision.Reason != "approved by test policy" {
+	if decision.Outcome != OutcomeAccept || !strings.Contains(decision.Reason, "router") {
 		t.Fatalf("unexpected decision: %+v", decision)
 	}
-	if decision.PolicyID != "test-local" || decision.PolicyVersion != "test-1" {
+	if decision.PolicyID != LocalPolicyID || decision.PolicyVersion != LocalPolicyVersion {
 		t.Fatalf("policy identity not recorded: %+v", decision)
 	}
 	if decision.Source != LocalPolicySource || decision.Actor != LocalActor {
@@ -89,30 +228,28 @@ func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
 	}
 }
 
-func TestAuthorizationRejectionCreatesNoTask(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
+// TestAuthorizationInputDigestFormatIsStable pins the digest schema and one
+// recorded value. Digests are persisted in state.json, so a changed payload or
+// schema would silently invalidate every audit record written by earlier builds
+// even if the digest stayed deterministic.
+func TestAuthorizationInputDigestFormatIsStable(t *testing.T) {
+	if authorizationDigestSchema != "orchestrator.authorization/v1" {
+		t.Fatalf("digest schema drifted: %q", authorizationDigestSchema)
 	}
-	defer func() { _ = s.Shutdown() }()
-	if err = s.RegisterPolicy(LocalPolicySource, fakePolicy{
-		id:      "reject-local",
-		version: "reject-1",
-		decide: func(AuthorizationRequest) AuthorizationResult {
-			return AuthorizationResult{Outcome: OutcomeReject, Reason: "not allowed in this test"}
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	_, err = s.SubmitRequest("should not run", t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "not allowed in this test") {
-		t.Fatalf("rejection not reported: %v", err)
-	}
-	if _, err = s.CreateTask("manual", "also rejected", t.TempDir()); err == nil || !strings.Contains(err.Error(), "not allowed in this test") {
-		t.Fatalf("manual rejection not reported: %v", err)
-	}
-	if tasks := s.ListTasks(); len(tasks) != 0 {
-		t.Fatalf("rejected requests created tasks: %+v", tasks)
+	want := "sha256:41f759f3d1edaacea0198ccd5dd934b7e87c7aa2cc5ade743bddb9b35bbe39fd"
+	got := authorizationInputDigest(AuthorizationRequest{
+		Source:    LocalPolicySource,
+		Actor:     LocalActor,
+		Purpose:   PurposeManual,
+		TriggerID: "trigger",
+		ThreadID:  "thread",
+		ParentID:  "parent",
+		Text:      "mandate",
+		Workspace: "/workspace",
+		Depth:     1,
+	})
+	if got != want {
+		t.Fatalf("recorded digest changed: %q", got)
 	}
 }
 
@@ -149,22 +286,5 @@ func TestAuthorizationInputDigestIsCanonicalAndSensitive(t *testing.T) {
 			t.Fatalf("digest collision for change %+v", changed)
 		}
 		seen[next] = true
-	}
-}
-
-func TestBuiltInLocalPolicyKeepsLocalOneSemantics(t *testing.T) {
-	policy := localPolicy{}
-	result := policy.Authorize(AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter, Text: "work"})
-	if result.Outcome != OutcomeAccept || result.PolicyID != LocalPolicyID || result.PolicyVersion != LocalPolicyVersion {
-		t.Fatalf("unexpected local result: %+v", result)
-	}
-	if result.Reason != "trusted local request accepted by the deterministic router" {
-		t.Fatalf("router reason changed: %+v", result)
-	}
-	if rejected := policy.Authorize(AuthorizationRequest{Source: "external", Text: "work"}); rejected.Outcome != OutcomeReject {
-		t.Fatalf("local policy accepted an untrusted source: %+v", rejected)
-	}
-	if rejected := policy.Authorize(AuthorizationRequest{Source: LocalPolicySource, Text: "  "}); rejected.Outcome != OutcomeReject {
-		t.Fatalf("local policy accepted an empty mandate: %+v", rejected)
 	}
 }

@@ -72,6 +72,21 @@ var (
 			Bold(true)
 )
 
+// The help overlay is prose plus a two-column shortcut table, so it needs a
+// heading, a description and a scrollbar style of its own. They reuse the
+// palette above and never set a background colour.
+var (
+	helpHeadingStyle = lipgloss.NewStyle().
+				Foreground(cyan).
+				Bold(true)
+	helpDescStyle = lipgloss.NewStyle().
+			Foreground(ink)
+	helpThumbStyle = lipgloss.NewStyle().
+			Foreground(accent)
+	helpTrackStyle = lipgloss.NewStyle().
+			Foreground(faint)
+)
+
 // gradientText paints a wordmark from violet to teal without changing its
 // visible text or width. ANSI styling is applied per rune, so callers can
 // continue to use normal cell-width helpers for layout.

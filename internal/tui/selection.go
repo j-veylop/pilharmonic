@@ -277,6 +277,12 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Help covers the text underneath it; a click must not start a selection
+	// in a pane the operator cannot see.
+	if m.help {
+		return m, nil
+	}
+
 	switch msg.Action {
 	case tea.MouseActionPress:
 		viewport, ok := m.detailViewport()

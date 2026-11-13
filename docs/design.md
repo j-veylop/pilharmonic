@@ -25,11 +25,19 @@ automatic routing; its request is still checked by the same step. The form lists
 from the draft to a list, skipping an empty one, `j`/`k` select a row and Enter
 opens that task on the board; the focused list scrolls inside the panel so the
 selected row stays visible. Tab and Shift-Tab cycle the focus back to the
-draft, which keeps its text while a list owns the keys. Help (`?`) opens on
-**Concepts**, which defines request, task, route, action and attempt. On the
-task board, the `! action` hint selects the next task needing action in
-grouped display order and wraps at the end. Needs action covers blocked,
-waiting, awaiting review, input undelivered, merge failed, failed and
+draft, which keeps its text while a list owns the keys. The help overlay is
+reachable from every screen: F1 opens and closes it anywhere, including inside
+the draft, an API key prompt and a custom model ID, while `?` opens it only
+where that character is not part of the text being typed, so the board, the
+request form's lists, the pickers, the confirmations and the login, model and
+agent-class menus open it but no draft loses the character. Sending `/help` in
+the request form opens the same overlay, whose **Commands** topic lists the
+slash commands. Help starts on **Concepts**, which defines request, task,
+route, action, attempt and review; `h`/`l` switch topics, `j`/`k` scroll, and
+closing it returns to the surface it covered with the draft, selection and menu
+intact. On the task board, the `! action` hint selects the next task needing
+action in grouped display order and wraps at the end. Needs action covers
+blocked, waiting, awaiting review, input undelivered, merge failed, failed and
 interrupted tasks.
 
 The request form and every composer render as one input box docked at the
@@ -200,12 +208,15 @@ review decisions for a pending commit, cancel and activity for a running task,
 start for an unscheduled queued task, and retry for a retryable task. Modal,
 activity and detail-focus footers keep their own controls, while the request
 form and composers keep their editing hints below the docked input box.
-Optional hints are dropped when they would exceed two footer lines. On the
-board, `!`
-selects the next task that needs action in grouped display order and wraps;
-request and task composers retain `!` as text. When the sidebar is hidden, the
-detail title prefixes the selected task's grouped position so narrow layouts
-still show where the selection sits.
+Optional hints are dropped when they would exceed two footer lines. Every
+footer advertises help, naming `? help` on the board, in activity and in
+detail focus and `f1 help` in the request form, the composers, the pickers,
+the confirmations and the menus, because F1 is the help key a text field leaves
+free; the help hint is dropped only when that footer has no room for it. On
+the board, `!` selects the next task that needs action in grouped display
+order and wraps; request and task composers retain `!` as text. When the
+sidebar is hidden, the detail title prefixes the selected task's grouped
+position so narrow layouts still show where the selection sits.
 
 Mouse drag selection is limited to the detail content pane. Releasing a
 nonempty selection writes its plain text as an OSC 52 clipboard sequence,

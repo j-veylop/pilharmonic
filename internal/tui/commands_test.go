@@ -210,11 +210,6 @@ func TestSlashCommandsSetNotices(t *testing.T) {
 			command:    "/foo",
 			wantNotice: []string{"Unknown command", "/login <provider>"},
 		},
-		{
-			name:       "help lists the vocabulary",
-			command:    "/help",
-			wantNotice: []string{"/login — pick a provider", "/login <provider>", "/logout <provider>", "/providers", "/model [big|small]", "/help"},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -247,6 +242,32 @@ func TestSlashCommandsSetNotices(t *testing.T) {
 				t.Fatal("slash command closed the router")
 			}
 		})
+	}
+}
+
+// /help opens the real help overlay rather than printing a notice, and the
+// commands an operator can type are documented inside the menu.
+func TestSlashHelpOpensTheOverlay(t *testing.T) {
+	fake := &fakeLoginService{}
+	m := model{service: fake, router: true, width: 120, height: 35}
+	m = typeSlash(m, "/help")
+	if !m.help {
+		t.Fatal("/help did not open the help overlay")
+	}
+	if !m.router {
+		t.Fatal("/help closed the request form underneath")
+	}
+	for i, topic := range helpTopics {
+		if topic.title != "Commands" {
+			continue
+		}
+		m.helpPage = i
+	}
+	plain := ansi.Strip(strings.Join(m.helpLines(70), "\n"))
+	for _, want := range []string{"/login — pick a provider", "/logout <provider>", "/providers", "/model [big|small]", "/agents", "/help"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("help overlay missing %q: %q", want, plain)
+		}
 	}
 }
 

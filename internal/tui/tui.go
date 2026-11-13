@@ -57,6 +57,10 @@ type fetchModelsMsg struct {
 // testable and lets slow service calls run outside the update loop.
 type Service interface {
 	ListTasks() []orchestrator.Task
+	// SessionUsage is the running process's token total and estimate. The board
+	// reads it with the task snapshot on the existing refresh tick, so it never
+	// starts a second polling loop.
+	SessionUsage() orchestrator.SessionUsage
 	ListAgents() []orchestrator.AgentInfo
 	ListProfiles() []orchestrator.Profile
 	SubmitRequest(text, workspace string) (orchestrator.Task, error)
@@ -105,6 +109,7 @@ type model struct {
 	service       Service
 	workspace     string
 	tasks         []orchestrator.Task
+	usage         orchestrator.SessionUsage
 	selected      int
 	router        routerState
 	width, height int
@@ -207,6 +212,7 @@ func newModel(service Service, workspace string) model {
 		service:   service,
 		workspace: workspace,
 		tasks:     service.ListTasks(),
+		usage:     service.SessionUsage(),
 		router:    routerState{open: true},
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		markdown:  &markdownCache{},
@@ -442,6 +448,10 @@ func (m *model) refreshTasks() {
 		return
 	}
 	m.tasks = m.service.ListTasks()
+	// The session total is read with the same snapshot on the same tick: the
+	// header and the task list can never describe different moments, and the
+	// update loop still does nothing that can block.
+	m.usage = m.service.SessionUsage()
 	if selected != "" {
 		for i, task := range m.tasks {
 			if task.ID == selected {

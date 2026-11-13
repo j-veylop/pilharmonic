@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -38,6 +39,16 @@ func (m model) detailContent(width int) []string {
 	add(mutedStyle.Render(agentLine))
 	if n := len(t.Attempts); n > 0 && t.Attempts[n-1].RequestedModel != "" {
 		add(mutedStyle.Render("Last attempt model: " + terminalText(t.Attempts[n-1].RequestedModel)))
+	}
+	// Usage is the task's own recorded history, not the session total, so it
+	// stays readable after a restart. The price line describes the rate in force
+	// now, because the recorded rate only says what an earlier attempt was
+	// charged.
+	if usage := t.Usage(); !usage.IsZero() {
+		add(mutedStyle.Render("Usage: " + terminalText(taskUsageLine(usage))))
+		if price, ok := priceLine(usage.Model, usage.Rate, time.Now()); ok {
+			add(mutedStyle.Render(terminalText(price)))
+		}
 	}
 	if t.ProfileName != "" {
 		label := t.ProfileName
@@ -177,7 +188,11 @@ func (m model) detailContent(width int) []string {
 			add(accentStyle.Render("ATTEMPTS"))
 		}
 		for _, a := range t.Attempts {
-			add(fmt.Sprintf("%s  %s  %s", a.StartedAt.Local().Format("Jan 02 15:04"), statusLabel(a.Status), terminalText(a.ID)))
+			row := fmt.Sprintf("%s  %s  %s", a.StartedAt.Local().Format("Jan 02 15:04"), statusLabel(a.Status), terminalText(a.ID))
+			// The attempt's own usage stays on its row, shortened to fit
+			// rather than wrapped: one run reads as one line.
+			row += attemptUsageSuffix(a.Usage, width-lipgloss.Width(row))
+			add(row)
 		}
 		for _, e := range t.Events {
 			add(mutedStyle.Render(e.Time.Local().Format("15:04:05")) + "  " + terminalText(e.Kind) + "  " + terminalText(e.Message))

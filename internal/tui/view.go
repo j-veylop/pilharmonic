@@ -109,21 +109,7 @@ func (m model) View() string {
 		}
 		return fit("PILHARMONIC\nResize terminal to at least 30 × 10\n"+prompt, w, h)
 	}
-	header := gradientText("◈ PILHARMONIC")
-	mode, modeColor := " TASKS ", accent
-	if m.detailFocus || m.fullscreen {
-		mode, modeColor = " DETAILS ", cyan
-	}
-	if m.input.kind != "" {
-		mode, modeColor = " INSERT ", amber
-	}
-	if m.router.open {
-		mode, modeColor = " REQUEST ", accent
-	}
-	mode = modeBadge(mode, modeColor)
-	summary := m.headerSummary(max(1, w-lipgloss.Width(header)-lipgloss.Width(mode)-1))
-	gap := max(1, w-lipgloss.Width(header+summary)-lipgloss.Width(mode))
-	top := fit(header+summary+strings.Repeat(" ", gap)+mode, w, 1)
+	top := m.headerRow(w)
 	footer := m.footer(w)
 	bodyHeight := l.bodyHeight
 	var body string

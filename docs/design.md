@@ -224,8 +224,11 @@ unchanged.
 The task-board header summarises the task count, the displayed running state,
 the queued process state and the derived action count. Because a running
 parent with active children is displayed as waiting for subagents, it is not
-counted as running. The board footer renders actions valid for the selected
-task in the current mode, using the same stage and service guards as the keys:
+counted as running. It also shows the session's token usage and estimate in the
+gap before the mode badge once an adapter has reported any, shortening that
+segment before the counters lose their wording, so naming what needs action
+always wins over a total the detail panel can show in full. The board footer
+renders actions valid for the selected task in the current mode, using the same stage and service guards as the keys:
 review decisions for a pending commit, cancel and activity for a running task,
 start for an unscheduled queued task, and retry for a retryable task. Modal,
 activity and detail-focus footers keep their own controls, while the request
@@ -310,6 +313,37 @@ coordinator role. The model decides when to call the helper. Profile instruction
 and tools remain bounded by the task snapshot and delegation containment; a
 child cannot widen the profile's tool list, integration or delegation
 permissions beyond what it inherits.
+## Usage and cost accounting
+
+Token usage is execution metadata, not authority. The Fantasy adapter records the
+total one stream call reported (`AgentResult.TotalUsage`, which already folds the
+retried attempts of a step) through the attempt's output sink, so the tokens land
+on the attempt that ran and a late or stale report is refused like any other
+write scoped to a running attempt. A report is attributed to the model selector
+the adapter asked for and priced when it arrives. An adapter that reports nothing
+leaves the attempt without a usage record, rather than implying the run cost
+nothing.
+
+Costs are estimated at recording time, because a provider with time-of-day
+pricing charges the rate in force then, not the rate in force when the operator
+reads the total. The price table is a curated snapshot in US dollars per 1M
+tokens. It is advisory bookkeeping, not billing: it covers the OpenAI and
+DeepSeek models listed in the model catalog, and a selector without an entry is
+left unpriced. A session that counted an unpriced model reports its tokens with
+that model named in `Unpriced` instead of a dollar figure, so no surface prints a
+cost it cannot support. DeepSeek discounts a daily off-peak window (00:30–08:30
+Beijing time, which is 16:30–00:30 UTC), so its entries carry the discounted pair
+as well and `ModelPrice.Rate` names the window in force.
+
+A session is one orchestrator process. `Service.SessionUsage` sums the usage
+recorded by attempts that started after the process opened, which includes
+delegated children because they are tasks of the same service; restarting starts
+a new total. Durable attempt records keep their own usage, so a task's history
+and its own total survive restarts even though the session total does not. The
+terminal only formats this data — the header's session segment, the detail
+panel's per-task line and per-1M price, and the history rows — and never derives
+a cost or a rate itself.
+
 ## Open work
 
 These are milestones, not claims about the current implementation.

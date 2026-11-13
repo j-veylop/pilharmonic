@@ -34,9 +34,9 @@ func (m model) profilePickerKey(key string) (model, tea.Cmd) {
 		if len(m.profilePicker.choices) > 0 {
 			profile := m.profilePicker.choices[m.profilePicker.index]
 			if err := m.service.SetTaskProfile(m.profilePicker.target, profile.Name); err != nil {
-				m.notice = err.Error()
+				m.notice.text = err.Error()
 			} else {
-				m.notice = "Profile selected: " + profileLabel(profile)
+				m.notice.text = "Profile selected: " + profileLabel(profile)
 			}
 			m.refreshTasks()
 		}
@@ -57,9 +57,9 @@ func (m model) agentPickerKey(key string) (model, tea.Cmd) {
 		if len(m.agentPicker.choices) > 0 {
 			name := m.agentPicker.choices[m.agentPicker.index].Name
 			if err := m.service.SetTaskAgent(m.agentPicker.target, name); err != nil {
-				m.notice = err.Error()
+				m.notice.text = err.Error()
 			} else {
-				m.notice = "Agent selected: " + name
+				m.notice.text = "Agent selected: " + name
 			}
 			m.refreshTasks()
 		}

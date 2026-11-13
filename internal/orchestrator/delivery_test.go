@@ -203,3 +203,69 @@ func TestOpeningStateSettlesPendingDeliveryRecords(t *testing.T) {
 		t.Fatalf("recovery did not report the uncertainty: %+v", got)
 	}
 }
+
+func TestAddManualContextRecordsTrigger(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+	task, err := s.CreateTask("ctx", "original mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AddManualContext(task.ID, "extra context"); err != nil {
+		t.Fatal(err)
+	}
+	updated, ok := s.GetTask(task.ID)
+	if !ok || len(updated.Context) != 1 || updated.Context[0].Text != "extra context" {
+		t.Fatalf("context not recorded: %+v", updated.Context)
+	}
+	if updated.Prompt != "original mandate" {
+		t.Fatalf("mandate changed to %q", updated.Prompt)
+	}
+}
+
+// liveTestRunner is a fake LiveRunner that acknowledges the first follow-up
+// with "queued" and then waits for release.
+type liveTestRunner struct {
+	started  chan struct{}
+	received chan Trigger
+	release  chan struct{}
+}
+
+func (r liveTestRunner) Run(context.Context, Task, io.Writer) error { return nil }
+func (r liveTestRunner) RunLive(ctx context.Context, _ Task, _ io.Writer, follow <-chan Trigger, ack func(string, bool, string)) error {
+	close(r.started)
+	select {
+	case trigger := <-follow:
+		r.received <- trigger
+		ack(trigger.ID, true, "queued")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-r.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// unackedRunner is a fake LiveRunner that receives a follow-up but never acks it.
+type unackedRunner struct {
+	started  chan struct{}
+	received chan struct{}
+}
+
+func (r unackedRunner) Run(context.Context, Task, io.Writer) error { return nil }
+func (r unackedRunner) RunLive(ctx context.Context, _ Task, _ io.Writer, follow <-chan Trigger, _ func(string, bool, string)) error {
+	close(r.started)
+	select {
+	case <-follow:
+		close(r.received)
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}

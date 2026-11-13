@@ -311,3 +311,22 @@ func TestFollowUpRequeuesTerminalTaskWithoutChangingMandate(t *testing.T) {
 		t.Fatalf("follow-up did not persist: %+v", got)
 	}
 }
+
+func TestAddManualThreadContextReachesSubscribers(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+	task, err := s.CreateTask("thread", "original mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AddManualThreadContext(task.ID, "shared context"); err != nil {
+		t.Fatal(err)
+	}
+	updated, ok := s.GetTask(task.ID)
+	if !ok || len(updated.Context) != 1 || updated.Context[0].Text != "shared context" {
+		t.Fatalf("thread context not recorded: %+v", updated.Context)
+	}
+}

@@ -177,12 +177,12 @@ func TestComposerStandardShortcutsReachTheDraft(t *testing.T) {
 		t.Fatalf("alt+backspace left %q", m.input.text)
 	}
 
-	r := model{width: 80, height: 24, router: true, routerDraft: "keep drop", routerCursor: len("keep drop")}
+	r := model{width: 80, height: 24, router: routerState{open: true, draft: "keep drop", cursor: len("keep drop")}}
 	r = key(r, tea.KeyMsg{Type: tea.KeyCtrlW})
-	if r.routerDraft != "keep " || r.routerCursor != len("keep ") {
-		t.Fatalf("request form ctrl+w left %q at %d", r.routerDraft, r.routerCursor)
+	if r.router.draft != "keep " || r.router.cursor != len("keep ") {
+		t.Fatalf("request form ctrl+w left %q at %d", r.router.draft, r.router.cursor)
 	}
-	if !r.router {
+	if !r.router.open {
 		t.Fatal("ctrl+w closed the request form")
 	}
 }
@@ -204,9 +204,9 @@ func TestEditorDeletesForwardWithDeleteKeys(t *testing.T) {
 
 func TestEditorMovesWrappedLinesWithCtrlNP(t *testing.T) {
 	m := model{width: 40, height: 24, input: composer{kind: newTaskInput}}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("first")})
+	m = key(m, runeKey("first"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyCtrlJ})
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("second")})
+	m = key(m, runeKey("second"))
 	m = key(m, shortcutKey(t, "ctrl+p"))
 	if m.input.cursor != len("first") {
 		t.Fatalf("ctrl+p moved to %d", m.input.cursor)
@@ -237,5 +237,87 @@ func TestComposerBoxKeepsCellWidthForWideText(t *testing.T) {
 		if width := lipgloss.Width(ansi.Strip(row)); width != 40 {
 			t.Fatalf("box row is %d cells: %q", width, ansi.Strip(row))
 		}
+	}
+}
+
+func TestVimMotionsAndFocus(t *testing.T) {
+	m := model{width: 120, height: 24, tasks: make([]orchestrator.Task, 20)}
+	for i := range m.tasks {
+		m.tasks[i].Output = strings.Repeat("line\n", 100)
+	}
+	for _, key := range []string{"5", "j"} {
+		if !m.vimNavigation(key) {
+			t.Fatal(key)
+		}
+	}
+	if m.selected != 5 {
+		t.Fatalf("5j selected %d", m.selected)
+	}
+	m.vimNavigation("G")
+	if m.selected != 19 {
+		t.Fatal("G")
+	}
+	m.vimNavigation("g")
+	if m.selected != 19 {
+		t.Fatal("first g moved")
+	}
+	m.vimNavigation("g")
+	if m.selected != 0 {
+		t.Fatal("gg")
+	}
+	m.vimNavigation("l")
+	if !m.detailFocus {
+		t.Fatal("l")
+	}
+	m.vimNavigation("ctrl+u")
+	if m.historyOffset == 0 {
+		t.Fatal("half page up")
+	}
+	m.vimNavigation("g")
+	m.vimNavigation("g")
+	if m.historyOffset != m.maxScroll() {
+		t.Fatal("detail gg")
+	}
+	m.vimNavigation("G")
+	if m.historyOffset != 0 {
+		t.Fatal("detail G")
+	}
+	m.vimNavigation("h")
+	if m.detailFocus {
+		t.Fatal("h")
+	}
+}
+func TestVimKeysRemainTextInComposer(t *testing.T) {
+	m := model{input: composer{kind: newTaskInput}}
+	for _, r := range "ggGhjkl123" {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(model)
+	}
+	if m.input.text != "ggGhjkl123" || m.vimG || m.vimCount != 0 {
+		t.Fatalf("composer consumed motions: %+v", m)
+	}
+}
+
+func TestCancelComposerClearsTargetAndDraft(t *testing.T) {
+	m := model{input: composer{kind: threadInput, target: "previous", text: "discard me"}}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.input != (composer{}) {
+		t.Fatalf("canceled input retained state: %+v", m.input)
+	}
+}
+
+func TestBracketedPasteEntersComposers(t *testing.T) {
+	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q?\nsecond line"), Paste: true}
+
+	m := model{input: composer{kind: newTaskInput}}
+	m = key(m, paste)
+	if m.input.text != "q?\nsecond line" || m.help.open {
+		t.Fatalf("composer did not retain pasted text: %q", m.input.text)
+	}
+
+	m = model{router: routerState{open: true}}
+	m = key(m, paste)
+	if m.router.draft != "q?\nsecond line" || !m.router.open {
+		t.Fatalf("router did not retain pasted text: %q", m.router.draft)
 	}
 }

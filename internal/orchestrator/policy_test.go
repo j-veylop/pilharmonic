@@ -288,3 +288,24 @@ func TestAuthorizationInputDigestIsCanonicalAndSensitive(t *testing.T) {
 		seen[next] = true
 	}
 }
+
+func TestAuthorizationIdentifiersStayStable(t *testing.T) {
+	if LocalPolicyID != "local" || LocalPolicyVersion != "local-1" {
+		t.Fatalf("local authorization identifiers drifted: %q %q", LocalPolicyID, LocalPolicyVersion)
+	}
+	if SubagentPolicyID != "subagent" || SubagentPolicyVersion != "subagent-1" {
+		t.Fatalf("subagent authorization identifiers drifted: %q %q", SubagentPolicyID, SubagentPolicyVersion)
+	}
+	if LocalPolicySource != "manual" || SubagentPolicySource != "subagent" {
+		t.Fatalf("source names drifted: %q %q", LocalPolicySource, SubagentPolicySource)
+	}
+	if LocalActor != "local-user" {
+		t.Fatalf("local actor drifted: %q", LocalActor)
+	}
+	if PurposeRouter != "router" || PurposeManual != "manual" || PurposeRelated != "related" || PurposeSubagent != "subagent" {
+		t.Fatal("request purpose names drifted")
+	}
+	if OutcomeAccept != "accept" || OutcomeReject != "reject" || OutcomeNeedsReview != "needs_review" {
+		t.Fatal("authorization outcome names drifted")
+	}
+}

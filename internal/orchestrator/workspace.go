@@ -38,40 +38,32 @@ func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 		if t.ID != id {
 			continue
 		}
-		if t.Status != Queued || t.ScheduleRequested {
-			return errors.New("isolation can only be changed on an unscheduled queued task")
-		}
-		if t.Isolated == enabled {
-			if !t.IsolationAuto {
+		return s.mutateTaskLocked(t, func(t *Task) error {
+			if t.Status != Queued || t.ScheduleRequested {
+				return errors.New("isolation can only be changed on an unscheduled queued task")
+			}
+			if t.Isolated == enabled {
+				if !t.IsolationAuto {
+					return nil
+				}
+				t.IsolationAuto = false
+				t.UpdatedAt = time.Now().UTC()
+				t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Workspace choice confirmed by operator"})
 				return nil
 			}
-			old := clone(*t)
+			if t.ExecutionWorkspace != "" {
+				return errors.New("prepared workspace must be retained for retries; create a new task to change isolation")
+			}
+			t.Isolated = enabled
 			t.IsolationAuto = false
 			t.UpdatedAt = time.Now().UTC()
-			t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Workspace choice confirmed by operator"})
-			if err := s.save(); err != nil {
-				*t = old
-				return err
+			message := "Shared source workspace selected"
+			if enabled {
+				message = "Isolated committed-HEAD worktree selected; uncommitted files are excluded"
 			}
+			t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
 			return nil
-		}
-		if t.ExecutionWorkspace != "" {
-			return errors.New("prepared workspace must be retained for retries; create a new task to change isolation")
-		}
-		old := clone(*t)
-		t.Isolated = enabled
-		t.IsolationAuto = false
-		t.UpdatedAt = time.Now().UTC()
-		message := "Shared source workspace selected"
-		if enabled {
-			message = "Isolated committed-HEAD worktree selected; uncommitted files are excluded"
-		}
-		t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
-		if err := s.save(); err != nil {
-			*t = old
-			return err
-		}
-		return nil
+		})
 	}
 	return errors.New("task not found")
 }
@@ -105,11 +97,11 @@ func (s *Service) recordIsolationUnavailable(id string) error {
 		if t.ID != id {
 			continue
 		}
-		old := clone(*t)
-		t.UpdatedAt = time.Now().UTC()
-		t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Isolation unavailable: workspace is not a Git repository with a committed HEAD"})
-		if err := s.save(); err != nil {
-			*t = old
+		if err := s.mutateTaskLocked(t, func(t *Task) error {
+			t.UpdatedAt = time.Now().UTC()
+			t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Isolation unavailable: workspace is not a Git repository with a committed HEAD"})
+			return nil
+		}); err != nil {
 			return err
 		}
 		return errors.New("workspace cannot be isolated: it is not a Git repository with a committed HEAD")
@@ -199,24 +191,7 @@ func writeWorkspaceOwner(reservation string, owner workspaceOwner) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(reservation), ".owner-*.json")
-	if err != nil {
-		return err
-	}
-	temp := file.Name()
-	defer os.Remove(temp)
-	if _, err = file.Write(b); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temp, filepath.Join(reservation, "owner.json"))
+	return writeFileAtomic(filepath.Join(reservation, "owner.json"), ".owner-*.json", b)
 }
 
 // removeReservation deletes an ownership record and its directory without
@@ -274,12 +249,19 @@ func (s *Service) cleanupTaskWorkspace(t Task) error {
 	return removeTaskWorkspace(ctx, s.path, t)
 }
 
+// validTaskID reports whether id can safely name a path component under the
+// workspaces directory. filepath.IsLocal rejects an empty id, ".", "..", an
+// absolute path and any embedded separator.
+func validTaskID(id string) bool {
+	return filepath.IsLocal(id)
+}
+
 // removeTaskWorkspace validates the reservation's ownership record before
 // removing anything. A missing reservation is a successful no-op, so shared
 // workspace tasks and tasks that never prepared a worktree need no special
 // handling.
 func removeTaskWorkspace(ctx context.Context, statePath string, t Task) error {
-	if statePath == "" || t.ID == "" || filepath.Base(t.ID) != t.ID || t.ID == "." || t.ID == ".." {
+	if statePath == "" || !validTaskID(t.ID) {
 		return errors.New("invalid task identity for workspace cleanup")
 	}
 	base, err := filepath.Abs(filepath.Join(filepath.Dir(statePath), "workspaces"))
@@ -343,7 +325,7 @@ func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, st
 	if err != nil {
 		return "", "", err
 	}
-	if t.ID == "" || filepath.Base(t.ID) != t.ID || t.ID == "." || t.ID == ".." {
+	if !validTaskID(t.ID) {
 		return "", "", errors.New("invalid task identity")
 	}
 	base, err := filepath.Abs(filepath.Join(filepath.Dir(statePath), "workspaces"))

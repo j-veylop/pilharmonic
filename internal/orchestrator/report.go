@@ -81,20 +81,17 @@ func (s *Service) RecordReport(taskID, kind, message string) error {
 // appendReportLocked persists one report and its history event. The caller
 // holds s.mu.
 func (s *Service) appendReportLocked(t *Task, kind, message, source, attemptID string, truncated bool) error {
-	old := clone(*t)
-	now := time.Now().UTC()
-	t.Reports = append(t.Reports, Report{Kind: kind, Message: message, Truncated: truncated, Source: source, AttemptID: attemptID, CreatedAt: now})
-	t.UpdatedAt = now
-	eventMessage := message
-	if source != "" && source != "operator" {
-		eventMessage = source + ": " + message
-	}
-	t.Events = append(t.Events, Event{now, "report_" + kind, eventMessage})
-	if err := s.save(); err != nil {
-		*t = old
-		return err
-	}
-	return nil
+	return s.mutateTaskLocked(t, func(t *Task) error {
+		now := time.Now().UTC()
+		t.Reports = append(t.Reports, Report{Kind: kind, Message: message, Truncated: truncated, Source: source, AttemptID: attemptID, CreatedAt: now})
+		t.UpdatedAt = now
+		eventMessage := message
+		if source != "" && source != "operator" {
+			eventMessage = source + ": " + message
+		}
+		t.Events = append(t.Events, Event{now, "report_" + kind, eventMessage})
+		return nil
+	})
 }
 
 // ReportRecorder is an optional capability of a runner's output sink. It lets an

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
@@ -86,8 +85,8 @@ func TestQuitConfirmationCancelKeepsSurface(t *testing.T) {
 		{Type: tea.KeyEsc},
 	} {
 		m := boardWithTask()
-		m.router = true
-		m.routerDraft = "keep this draft"
+		m.router.open = true
+		m.router.draft = "keep this draft"
 		m = m.requestQuit()
 		next, cmd := m.Update(msg)
 		m = next.(model)
@@ -97,11 +96,11 @@ func TestQuitConfirmationCancelKeepsSurface(t *testing.T) {
 		if m.quitConfirm {
 			t.Fatalf("%q left the confirmation armed", msg.String())
 		}
-		if !m.router || m.routerDraft != "keep this draft" {
-			t.Fatalf("%q disturbed the surface underneath: router=%v draft=%q", msg.String(), m.router, m.routerDraft)
+		if !m.router.open || m.router.draft != "keep this draft" {
+			t.Fatalf("%q disturbed the surface underneath: router=%v draft=%q", msg.String(), m.router.open, m.router.draft)
 		}
-		if m.notice != "Quit canceled." {
-			t.Fatalf("%q did not report the cancellation: %q", msg.String(), m.notice)
+		if m.notice.text != "Quit canceled." {
+			t.Fatalf("%q did not report the cancellation: %q", msg.String(), m.notice.text)
 		}
 	}
 }
@@ -109,13 +108,13 @@ func TestQuitConfirmationCancelKeepsSurface(t *testing.T) {
 func TestQuitConfirmationOutranksEverySurface(t *testing.T) {
 	base := boardWithTask()
 	surfaces := map[string]model{
-		"help":        func() model { m := base; m.help = true; return m }(),
-		"router":      func() model { m := base; m.router = true; return m }(),
+		"help":        func() model { m := base; m.help.open = true; return m }(),
+		"router":      func() model { m := base; m.router.open = true; return m }(),
 		"composer":    func() model { m := base; m.input = composer{kind: newTaskInput}; return m }(),
 		"cleanup":     func() model { m := base; m.cleanup = cleanupRequest{kind: deleteTask, ids: []string{"task"}}; return m }(),
-		"login menu":  func() model { m := base; m.loginMenu = true; return m }(),
-		"model menu":  func() model { m := base; m.modelMenu = true; return m }(),
-		"agent class": func() model { m := base; m.agentClassMenu = true; return m }(),
+		"login menu":  func() model { m := base; m.login.menu = true; return m }(),
+		"model menu":  func() model { m := base; m.models.menu = true; return m }(),
+		"agent class": func() model { m := base; m.agentClass.menu = true; return m }(),
 	}
 	for name, m := range surfaces {
 		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -133,13 +132,13 @@ func TestQuitConfirmationOutranksEverySurface(t *testing.T) {
 		before := m
 		after := key(m, quitPressed('j'))
 		after = key(after, quitPressed('a'))
-		if after.helpScroll != before.helpScroll || after.selected != before.selected ||
-			after.routerDraft != before.routerDraft || after.modelIndex != before.modelIndex ||
-			after.modelCustomInput != before.modelCustomInput ||
+		if after.help.scroll != before.help.scroll || after.selected != before.selected ||
+			after.router.draft != before.router.draft || after.models.index != before.models.index ||
+			after.models.customInput != before.models.customInput ||
 			after.input.text != before.input.text ||
 			after.agentPicker.index != before.agentPicker.index ||
 			after.profilePicker.index != before.profilePicker.index ||
-			after.loginProvider != before.loginProvider || after.loginKey != before.loginKey ||
+			after.login.provider != before.login.provider || after.login.key != before.login.key ||
 			after.cleanup.kind != before.cleanup.kind {
 			t.Fatalf("%s: key reached the surface under the confirmation", name)
 		}
@@ -166,9 +165,7 @@ func TestQuitConfirmationFitsTerminal(t *testing.T) {
 		m.width, m.height = size[0], size[1]
 		m = m.requestQuit()
 		view := m.View()
-		if lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
-			t.Fatalf("%v: rendered %dx%d", size, lipgloss.Width(view), lipgloss.Height(view))
-		}
+		assertFits(t, view, size[0], size[1])
 		if !strings.Contains(ansi.Strip(view), "y quit") {
 			t.Fatalf("%v: no answer keys on screen: %s", size, ansi.Strip(view))
 		}
@@ -228,7 +225,7 @@ func TestQuitConfirmationCountsLiveAttempts(t *testing.T) {
 
 func TestQuitConfirmationOwnsTheMouse(t *testing.T) {
 	m := boardWithTask()
-	m.help = true
+	m.help.open = true
 	m = m.requestQuit()
 	wheel := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
 	next, cmd := m.Update(wheel)
@@ -236,8 +233,8 @@ func TestQuitConfirmationOwnsTheMouse(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("wheel returned a command while the dialog was open")
 	}
-	if m.helpScroll != 0 {
-		t.Fatalf("wheel scrolled the help overlay under the dialog: %d", m.helpScroll)
+	if m.help.scroll != 0 {
+		t.Fatalf("wheel scrolled the help overlay under the dialog: %d", m.help.scroll)
 	}
 	press := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 10, Y: 8}
 	next, _ = m.Update(press)

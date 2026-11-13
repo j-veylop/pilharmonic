@@ -114,28 +114,7 @@ func saveModelConfig(path string, selection, agents map[string]string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".models-*")
-	if err != nil {
-		return err
-	}
-	name := f.Name()
-	defer func() { _ = os.Remove(name) }()
-	if err := f.Chmod(0600); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return syncStateFile(path, name)
+	return writeFileAtomic(path, ".models-*", b)
 }
 
 // SetModel pins a model class ("big" or "small") to a provider/model selector.
@@ -244,13 +223,6 @@ func (s *Service) applyModelSelectionLocked() {
 		fr.modelOverride = s.modelSelection[class]
 		s.runners[name] = fr
 	}
-}
-
-// applyModelSelection re-applies stored selections after runner (re)configuration.
-func (s *Service) applyModelSelection() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.applyModelSelectionLocked()
 }
 
 // validateModelSelector reports whether a model is a well-formed provider/model

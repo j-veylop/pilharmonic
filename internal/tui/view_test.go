@@ -36,9 +36,7 @@ func TestViewFitsTerminal(t *testing.T) {
 		for _, history := range []bool{false, true} {
 			m.history = history
 			view := m.View()
-			if lipgloss.Height(view) > size[1] || lipgloss.Width(view) > size[0] {
-				t.Fatalf("%v: rendered %dx%d", size, lipgloss.Width(view), lipgloss.Height(view))
-			}
+			assertFits(t, view, size[0], size[1])
 			if !strings.Contains(view, "PILHARMONIC") {
 				t.Fatalf("missing header: %s", view)
 			}
@@ -51,9 +49,7 @@ func TestViewWithToolOutputFitsTerminal(t *testing.T) {
 	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 10}} {
 		m := model{width: size[0], height: size[1], tasks: []orchestrator.Task{task}}
 		view := m.View()
-		if lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
-			t.Fatalf("%v: rendered %dx%d", size, lipgloss.Width(view), lipgloss.Height(view))
-		}
+		assertFits(t, view, size[0], size[1])
 	}
 }
 
@@ -144,7 +140,7 @@ func TestDetailTabsOmitActivityTab(t *testing.T) {
 	task := orchestrator.Task{ID: "task", Title: "work", Prompt: "do work", Agent: "general"}
 	m := model{width: 120, height: 30, tasks: []orchestrator.Task{task}}
 	for _, activity := range []bool{false, true} {
-		m.activity = activity
+		m.activity.open = activity
 		tabs := ansi.Strip(m.detailTabRow(task, 100))
 		if strings.Contains(tabs, "ACTIVITY") {
 			t.Fatalf("activity tab still present: %q", tabs)
@@ -227,7 +223,7 @@ func TestTextUsesNoBackgroundColour(t *testing.T) {
 		Output: "`inline code`\n\n```\ncode block\n```\n",
 	}}}
 	views := []string{m.View()}
-	m.help = true
+	m.help.open = true
 	views = append(views, m.View())
 	for _, view := range views {
 		if strings.Contains(view, "\x1b[48;") {

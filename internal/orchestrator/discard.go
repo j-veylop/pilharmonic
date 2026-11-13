@@ -118,7 +118,7 @@ func (t *Task) finishDiscardWithKind(gone bool, kind, message string) {
 // reconcileDiscard never removes a surviving tree. If Git removed it, only
 // an empty reservation or the task's validated ownership record may remain.
 func reconcileDiscard(statePath string, t Task) (bool, error) {
-	if t.ID == "." || !filepath.IsLocal(t.ID) || filepath.Base(t.ID) != t.ID {
+	if !validTaskID(t.ID) {
 		return false, errors.New("invalid task identity for discard")
 	}
 	base := filepath.Join(filepath.Dir(statePath), "workspaces")

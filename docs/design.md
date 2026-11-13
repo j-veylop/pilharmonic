@@ -99,7 +99,13 @@ a line boundary `Ctrl-k` and `Ctrl-u` join the neighbouring line.
 Authorization is a single compiled-in step; the trusted local source and the
 subagent source both pass through it. External triggers would need
 authenticated identities, stable request IDs, idempotent decisions and durable
-authorization evidence. See the [routing specification](routing-spec.md).
+authorization evidence. A normalized request (source, actor, purpose,
+trigger/thread/parent identity, mandate, workspace and depth) deterministically
+becomes an accept or reject decision plus an audit record. Every task decision
+records that policy ID/version, source, actor and a versioned SHA-256 digest of
+the exact input, so a reviewer can recompute what was authorized. Rejected
+requests create no task and are returned as errors rather than persisted as
+audit records.
 
 ## Attempts, delivery and storage
 
@@ -244,9 +250,6 @@ and release reuse that snapshot. If new output, scrolling or a resize changes
 the mapping, the pending selection is canceled rather than copying text the
 pointer no longer covers.
 
-For a walkthrough of startup, state migration, request routing, execution and
-cleanup, see the [implementation notes](status.md).
-
 The CLI registers the bundled specialists before resuming scheduled tasks. A
 specialist selects the executor instructions. A profile configures execution
 settings and can apply to any compatible executor. The built-in profile catalog
@@ -307,3 +310,62 @@ coordinator role. The model decides when to call the helper. Profile instruction
 and tools remain bounded by the task snapshot and delegation containment; a
 child cannot widen the profile's tool list, integration or delegation
 permissions beyond what it inherits.
+## Open work
+
+These are milestones, not claims about the current implementation.
+
+1. Add explicit authorization and auditable decisions for external sources
+   before introducing them. Rejected-request records and external-source
+   authentication remain open.
+2. Extend structured reports to configured command adapters and richer
+   assignment policy. Fantasy capabilities and adapter reports exist; operator
+   reports already support waiting, blocked, ready and failed attention states.
+3. Extend isolated-worktree handling. Review-gated merging and worktree cleanup
+   on deletion exist, and explicit discard is available for clean, integrated
+   worktrees. An in-app diff and conflict resolution remain open.
+4. Add external sources and model-assisted evaluation only after the
+   deterministic authorization gate; evaluator output is untrusted and cannot
+   authorize itself.
+
+Tests should cover duplicate triggers, subscriber changes during retries,
+partial or uncertain delivery, process crash, restart, concurrent scheduling,
+save failure and shutdown. Use fake sources and runners so tests do not need
+model credentials.
+## Startup, flags and recovery
+
+`go run .` accepts these flags:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-state` | `<user config dir>/orchestrator/state.json` | durable state file (legacy location retained) |
+| `-workspace` | current directory | working directory for newly created tasks |
+| `-max-concurrent` | `4` | maximum simultaneously running agents |
+| `-idle-timeout` | `0` | cancel an agent that produces no output for this long; `0` disables |
+| `-isolation` | `true` | allow automatic Git worktrees for mandates that request changes |
+| `-agents` | none | optional trusted command-executor configuration |
+| `-specialist-tools` | none | optional JSON file that sets per-specialist tool limits |
+| `-model` | none | model selector for executors with no model from `profiles.json` |
+| `-profiles` | `profiles.json` beside the state file | profile and specialist configuration |
+| `-profile` | unset | default profile for routed work and unchosen tasks |
+| `-subagents` | `true` | allow running agents to delegate child tasks |
+| `-subagent-socket` | `subagent.sock` beside the state file | owner-only local control socket |
+| `-max-subagent-depth` | `2` | maximum delegation depth below a root task |
+| `-max-subagents` | `4` | maximum child tasks one task may spawn |
+| `-attempt-retention` | `8` | attempt transcripts kept in full per task; `0` keeps every attempt |
+| `-version` | n/a | print the build version and exit |
+
+The state file is opened read-only first, then repaired in memory and saved if
+anything changed:
+
+- follow-ups still marked `pending` become `unknown` ("orchestrator stopped
+  before acknowledgement"), because delivery cannot be proven;
+- legacy tasks without `ThreadID` are given one and a thread record;
+- legacy tasks without attempts get one synthesized attempt from their first
+  `started` event;
+- tasks that were `running` become `interrupted`, and their latest attempt gets
+  a finish time and an error. No worker is assumed to have survived.
+
+`Shutdown` cancels running work, closes pending start requests, closes the
+subagent control socket and waits for workers to finish writing state. Quitting
+therefore ends active tasks as `canceled`, not `interrupted`; interrupted only
+comes from reopening state after a crash or kill.

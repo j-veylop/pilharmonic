@@ -300,26 +300,7 @@ func (s *Service) save() error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".state-*")
-	if err != nil {
-		return err
-	}
-	name := f.Name()
-	defer func() { _ = os.Remove(name) }()
-	if err = f.Chmod(0600); err == nil {
-		_, err = f.Write(b)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	closeErr := f.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err = syncStateFile(s.path, name); err != nil {
+	if err = writeFileAtomic(s.path, ".state-*", b); err != nil {
 		return err
 	}
 	// A successful write persisted every in-memory change, including output
@@ -385,6 +366,48 @@ func (s *Service) GetTask(id string) (Task, bool) {
 		}
 	}
 	return Task{}, false
+}
+
+// updateTask applies fn to a copy of the task and persists the result before
+// returning. Any error from fn, or from the save, restores the in-memory task,
+// so a rejected transition never leaves a half-applied state. It expects the
+// caller to hold mu.
+func (s *Service) updateTask(id string, fn func(*Task) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return errors.New("service is shutting down")
+	}
+	return s.updateTaskLocked(id, fn)
+}
+
+// updateTaskLocked is updateTask for callers that already hold mu.
+func (s *Service) updateTaskLocked(id string, fn func(*Task) error) error {
+	for i := range s.data.Tasks {
+		t := &s.data.Tasks[i]
+		if t.ID != id {
+			continue
+		}
+		return s.mutateTaskLocked(t, fn)
+	}
+	return errors.New("task not found")
+}
+
+// mutateTaskLocked applies fn to a task the caller already located, persists it
+// and restores the previous value if either step fails. It expects the caller to
+// hold mu, which lets a caller do further locked work (such as scheduling a
+// worker) only after the change is durable.
+func (s *Service) mutateTaskLocked(t *Task, fn func(*Task) error) error {
+	old := clone(*t)
+	if err := fn(t); err != nil {
+		*t = old
+		return err
+	}
+	if err := s.save(); err != nil {
+		*t = old
+		return err
+	}
+	return nil
 }
 
 // PersistenceError returns the most recent background save failure, or nil.
@@ -606,13 +629,13 @@ func (s *Service) Start(ctx context.Context, id string) error {
 		if len(s.cancel) < s.limit {
 			return s.startLocked(ctx, t)
 		}
-		old := clone(*t)
-		t.ScheduleRequested = true
-		t.ScheduledAt = time.Now().UTC()
-		t.UpdatedAt = t.ScheduledAt
-		t.Events = append(t.Events, Event{t.UpdatedAt, "scheduled", "Waiting for agent capacity"})
-		if err := s.save(); err != nil {
-			*t = old
+		if err := s.mutateTaskLocked(t, func(t *Task) error {
+			t.ScheduleRequested = true
+			t.ScheduledAt = time.Now().UTC()
+			t.UpdatedAt = t.ScheduledAt
+			t.Events = append(t.Events, Event{t.UpdatedAt, "scheduled", "Waiting for agent capacity"})
+			return nil
+		}); err != nil {
 			return err
 		}
 		request := &pendingRequest{ctx: ctx, stop: make(chan struct{})}
@@ -988,23 +1011,19 @@ func (s *Service) Retry(id string) error {
 		if t.Status != Failed && t.Status != Interrupted && t.Status != Canceled && !mergeFailed {
 			return fmt.Errorf("cannot retry task in %s state", t.Status)
 		}
-		old := clone(*t)
-		t.Status = Queued
-		t.UpdatedAt = time.Now().UTC()
-		t.Error = ""
-		t.MergeStatus, t.MergeError, t.MergeWarning, t.MergeCommit, t.WorktreeCommit = "", "", "", "", ""
-		t.MergedAt = time.Time{}
-		t.resetReview()
-		message := "Manual retry requested"
-		if mergeFailed {
-			message = "Manual retry requested after automatic merge failure"
-		}
-		t.Events = append(t.Events, Event{t.UpdatedAt, "requeued", message})
-		if err := s.save(); err != nil {
-			*t = old
-			return err
-		}
-		return nil
+		return s.mutateTaskLocked(t, func(t *Task) error {
+			t.Status = Queued
+			t.UpdatedAt = time.Now().UTC()
+			t.Error = ""
+			t.clearIntegration()
+			t.resetReview()
+			message := "Manual retry requested"
+			if mergeFailed {
+				message = "Manual retry requested after automatic merge failure"
+			}
+			t.Events = append(t.Events, Event{t.UpdatedAt, "requeued", message})
+			return nil
+		})
 	}
 	return errors.New("task not found")
 }
@@ -1038,4 +1057,79 @@ func (w outputWriter) contextAck(triggerID string, accepted bool, reason string)
 		}
 		return
 	}
+}
+
+// ErrIdleTimeout is the cancellation cause recorded when a running agent
+// stops producing output for the configured idle timeout.
+var ErrIdleTimeout = errors.New("agent idle timeout")
+
+// SetIdleTimeout bounds how long a running agent may stay silent. Output
+// counts as activity, so a healthy agent is never interrupted; the timer only
+// fires when the runner produces nothing at all. Zero, the default, disables
+// the watchdog and never cancels a quiet agent. The setting applies to
+// attempts started after the change.
+func (s *Service) SetIdleTimeout(timeout time.Duration) error {
+	if timeout < 0 {
+		return errors.New("idle timeout must not be negative")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return errors.New("service is shutting down")
+	}
+	s.idleTimeout = timeout
+	return nil
+}
+
+// watchIdle cancels an attempt once it stays silent for the configured
+// timeout. It returns the attempt context and a stop function; run calls the
+// stop function after the runner exits so the watchdog cannot cancel a later
+// attempt or leak its goroutine.
+func (s *Service) watchIdle(parent context.Context, taskID string) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	s.mu.Lock()
+	timeout := s.idleTimeout
+	ping := make(chan struct{}, 1)
+	if timeout > 0 {
+		s.activity[taskID] = ping
+	}
+	s.mu.Unlock()
+	if timeout <= 0 {
+		return ctx, func() { cancel(nil) }
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ping:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(timeout)
+			case <-timer.C:
+				cancel(fmt.Errorf("%w: no agent output for %s", ErrIdleTimeout, timeout))
+				return
+			}
+		}
+	}()
+	stop := func() {
+		cancel(nil)
+		<-done
+		s.mu.Lock()
+		// A later attempt of the same task installs a fresh ping; only remove
+		// our own so a retried run keeps its watchdog.
+		if s.activity[taskID] == ping {
+			delete(s.activity, taskID)
+		}
+		s.mu.Unlock()
+	}
+	return ctx, stop
 }

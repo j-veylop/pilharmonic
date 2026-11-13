@@ -31,25 +31,25 @@ func helpSurfaces() map[string]model {
 	surfaces["fullscreen details"] = s
 
 	s = base
-	s.activity = true
+	s.activity.open = true
 	s.detailFocus = true
 	surfaces["activity list"] = s
 
 	s = base
-	s.activity = true
+	s.activity.open = true
 	s.detailFocus = true
-	s.activityExpanded = true
+	s.activity.expanded = true
 	surfaces["expanded tool call"] = s
 
 	s = base
-	s.router = true
-	s.routerDraft = "do work"
-	s.routerCursor = len(s.routerDraft)
+	s.router.open = true
+	s.router.draft = "do work"
+	s.router.cursor = len(s.router.draft)
 	surfaces["request form"] = s
 
 	s = base
-	s.router = true
-	s.routerFocus = routerFocusRecent
+	s.router.open = true
+	s.router.focus = routerFocusRecent
 	surfaces["request form recent list"] = s
 
 	s = base
@@ -75,26 +75,26 @@ func helpSurfaces() map[string]model {
 	surfaces["delete confirmation"] = s
 
 	s = base
-	s.loginMenu = true
+	s.login.menu = true
 	surfaces["login menu"] = s
 
 	s = base
-	s.loginProvider = "openai"
+	s.login.provider = "openai"
 	surfaces["api key entry"] = s
 
 	s = base
-	s.modelMenu = true
-	s.modelStep = modelStepClass
+	s.models.menu = true
+	s.models.step = modelStepClass
 	surfaces["model menu"] = s
 
 	s = base
-	s.modelMenu = true
-	s.modelStep = modelStepCustom
-	s.modelCustomInput = "custom-id"
+	s.models.menu = true
+	s.models.step = modelStepCustom
+	s.models.customInput = "custom-id"
 	surfaces["custom model entry"] = s
 
 	s = base
-	s.agentClassMenu = true
+	s.agentClass.menu = true
 	surfaces["agent class menu"] = s
 
 	return surfaces
@@ -104,14 +104,14 @@ func TestF1OpensHelpFromEverySurface(t *testing.T) {
 	for name, m := range helpSurfaces() {
 		t.Run(name, func(t *testing.T) {
 			m = key(m, f1Key())
-			if !m.help {
+			if !m.help.open {
 				t.Fatalf("F1 did not open help on the %s", name)
 			}
 			if view := ansi.Strip(m.View()); !strings.Contains(view, "HELP") {
 				t.Fatalf("help is not rendered on the %s: %q", name, view)
 			}
 			m = key(m, f1Key())
-			if m.help {
+			if m.help.open {
 				t.Fatalf("F1 did not close help on the %s", name)
 			}
 		})
@@ -124,7 +124,7 @@ func TestHelpCoversEverySurfaceWithoutBreakingLayout(t *testing.T) {
 			m := base
 			m.width, m.height = size[0], size[1]
 			m = key(m, f1Key())
-			if !m.help {
+			if !m.help.open {
 				t.Fatalf("%s at %v: F1 did not open help", name, size)
 			}
 			view := m.View()
@@ -143,7 +143,7 @@ func TestHelpReturnsToTheSurfaceItCovered(t *testing.T) {
 		t.Fatalf("help lost the draft: %q", m.input.text)
 	}
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.help {
+	if m.help.open {
 		t.Fatal("escape did not close help")
 	}
 	if m.input.kind != newTaskInput || m.input.text != "keep this draft" {
@@ -165,26 +165,26 @@ func TestHelpStacksAboveMenus(t *testing.T) {
 	}{
 		{
 			name:   "login menu",
-			setup:  func(m *model) { m.loginMenu = true },
+			setup:  func(m *model) { m.login.menu = true },
 			marker: "LOGIN",
 			restored: func(m model) bool {
-				return m.loginMenu
+				return m.login.menu
 			},
 		},
 		{
 			name:   "model menu",
-			setup:  func(m *model) { m.modelMenu = true; m.modelStep = modelStepClass },
+			setup:  func(m *model) { m.models.menu = true; m.models.step = modelStepClass },
 			marker: "MODEL",
 			restored: func(m model) bool {
-				return m.modelMenu && m.modelStep == modelStepClass
+				return m.models.menu && m.models.step == modelStepClass
 			},
 		},
 		{
 			name:   "agent class menu",
-			setup:  func(m *model) { m.agentClassMenu = true },
+			setup:  func(m *model) { m.agentClass.menu = true },
 			marker: "AGENT",
 			restored: func(m model) bool {
-				return m.agentClassMenu
+				return m.agentClass.menu
 			},
 		},
 	}
@@ -201,7 +201,7 @@ func TestHelpStacksAboveMenus(t *testing.T) {
 				t.Fatalf("the %s shows through help: %q", tc.name, view)
 			}
 			m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
-			if m.help {
+			if m.help.open {
 				t.Fatalf("escape did not close help over the %s", tc.name)
 			}
 			if !tc.restored(m) {
@@ -221,8 +221,8 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 	opening["board"] = base
 
 	s := base
-	s.router = true
-	s.routerFocus = routerFocusRecent
+	s.router.open = true
+	s.router.focus = routerFocusRecent
 	opening["request form list"] = s
 
 	s = base
@@ -234,14 +234,14 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 	opening["discard confirmation"] = s
 
 	s = base
-	s.modelMenu = true
-	s.modelStep = modelStepProvider
+	s.models.menu = true
+	s.models.step = modelStepProvider
 	opening["model menu"] = s
 
 	s = base
-	s.router = true
-	s.routerDraft = "keep"
-	s.routerCursor = len("keep")
+	s.router.open = true
+	s.router.draft = "keep"
+	s.router.cursor = len("keep")
 	typing["request form"] = s
 
 	s = base
@@ -249,18 +249,18 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 	typing["composer"] = s
 
 	s = base
-	s.modelMenu = true
-	s.modelStep = modelStepCustom
+	s.models.menu = true
+	s.models.step = modelStepCustom
 	typing["custom model entry"] = s
 
 	s = base
-	s.loginProvider = "openai"
+	s.login.provider = "openai"
 	typing["api key entry"] = s
 
 	for name, m := range opening {
 		t.Run(name, func(t *testing.T) {
 			next := key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-			if !next.help {
+			if !next.help.open {
 				t.Fatalf("? did not open help on the %s", name)
 			}
 		})
@@ -268,14 +268,14 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 	for name, m := range typing {
 		t.Run(name, func(t *testing.T) {
 			next := key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-			if next.help {
+			if next.help.open {
 				t.Fatalf("? was stolen from the %s", name)
 			}
 			switch {
 			case next.input.text == "keep?":
-			case next.routerDraft == "keep?":
-			case next.modelCustomInput == "?":
-			case next.loginKey == "?":
+			case next.router.draft == "keep?":
+			case next.models.customInput == "?":
+			case next.login.key == "?":
 			default:
 				t.Fatalf("%s did not receive the character: %+v", name, next)
 			}
@@ -288,7 +288,7 @@ func TestPastedQuestionMarkIsNotAShortcut(t *testing.T) {
 	m.input = composer{kind: newTaskInput, text: "keep", cursor: len("keep")}
 	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?"), Paste: true}
 	m = key(m, paste)
-	if m.help {
+	if m.help.open {
 		t.Fatal("a pasted ? opened help")
 	}
 	if m.input.text != "keep?" {
@@ -308,7 +308,7 @@ func TestHelpHintIsVisibleOnEverySurface(t *testing.T) {
 // A click belongs to the help overlay, not to the text it covers.
 func TestClicksBehindHelpDoNotStartASelection(t *testing.T) {
 	m := boardWithTask()
-	m.help = true
+	m.help.open = true
 	next, _ := m.Update(tea.MouseMsg{
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
@@ -326,7 +326,7 @@ func TestHelpDoesNotConfirmAPendingCleanup(t *testing.T) {
 	m := boardWithTask()
 	m.cleanup = cleanupRequest{kind: deleteTask, ids: []string{"task"}, title: "work"}
 	m = key(m, f1Key())
-	if !m.help {
+	if !m.help.open {
 		t.Fatal("help did not open over the confirmation")
 	}
 	if next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {

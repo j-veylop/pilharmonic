@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"pilharmonic/internal/orchestrator"
@@ -34,7 +33,7 @@ const (
 // with work in flight; the operator sees what they are about to stop first.
 func (m model) requestQuit() model {
 	m.quitConfirm = true
-	m.notice = ""
+	m.notice.text = ""
 	m.vimG, m.vimCount = false, 0
 	return m
 }
@@ -50,7 +49,7 @@ func (m model) quitKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		return m, tea.Quit
 	case "n", "N", "esc", "q":
 		m.quitConfirm = false
-		m.notice = "Quit canceled."
+		m.notice.text = "Quit canceled."
 	}
 	return m, nil
 }
@@ -152,21 +151,5 @@ func (m model) quitView(background string, w, h int) string {
 		return fit(background, w, h)
 	}
 	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
-	bg := strings.Split(background, "\n")
-	box := strings.Split(modal, "\n")
-	x, y := (w-mw)/2, (h-mh)/2
-	result := make([]string, max(0, h))
-	for row := range result {
-		line := ""
-		if row < len(bg) {
-			line = ansi.Strip(bg[row])
-		}
-		line = lipgloss.PlaceHorizontal(w, lipgloss.Left, line)
-		if row >= y && row < y+len(box) {
-			result[row] = mutedStyle.Faint(true).Render(ansi.Cut(line, 0, x)) + box[row-y] + mutedStyle.Faint(true).Render(ansi.Cut(line, x+mw, w))
-		} else {
-			result[row] = mutedStyle.Faint(true).Render(line)
-		}
-	}
-	return fit(strings.Join(result, "\n"), w, h)
+	return overlay(background, modal, w, h, mw, mh)
 }

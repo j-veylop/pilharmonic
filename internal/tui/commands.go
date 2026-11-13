@@ -10,7 +10,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
 
@@ -30,23 +29,23 @@ func (m model) slashCommand(line string) model {
 	}
 	switch fields[0] {
 	case "/providers":
-		m.notice = m.providerCredentialNotice()
+		m.notice.text = m.providerCredentialNotice()
 	case "/login":
 		provider := ""
 		if len(fields) > 1 {
 			provider = fields[1]
 		}
 		if provider == "" {
-			m.loginMenu = true
-			m.loginIndex = 0
-			m.router = false
-			m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
-			m.notice = "Select a provider"
+			m.login.menu = true
+			m.login.index = 0
+			m.router.open = false
+			m.clearRouterDraft()
+			m.notice.text = "Select a provider"
 			return m
 		}
-		m.loginProvider = provider
-		m.loginKey = ""
-		m.notice = "Enter API key for " + provider + " (Enter to save, Esc to cancel)"
+		m.login.provider = provider
+		m.login.key = ""
+		m.notice.text = "Enter API key for " + provider + " (Enter to save, Esc to cancel)"
 	case "/model":
 		class := ""
 		if len(fields) > 1 {
@@ -57,30 +56,30 @@ func (m model) slashCommand(line string) model {
 			return m
 		}
 		if !m.knownClass(class) {
-			m.notice = "Unknown class: " + class + " · use big or small"
+			m.notice.text = "Unknown class: " + class + " · use big or small"
 			return m
 		}
 		m.openModelMenu(class)
 		return m
 	case "/agents":
-		m.agentClassMenu = true
-		m.agentClassIndex = 0
-		m.router = false
-		m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
-		m.notice = "Select an agent to toggle big/small"
+		m.agentClass.menu = true
+		m.agentClass.index = 0
+		m.router.open = false
+		m.clearRouterDraft()
+		m.notice.text = "Select an agent to toggle big/small"
 		return m
 	case "/logout":
 		if len(fields) < 2 || fields[1] == "" {
-			m.notice = "Usage: /logout <provider>"
+			m.notice.text = "Usage: /logout <provider>"
 			return m
 		}
-		m.notice = m.removeProviderCredential(fields[1])
+		m.notice.text = m.removeProviderCredential(fields[1])
 	case "/help":
 		// The overlay documents the slash vocabulary too, so /help opens the
 		// real help menu instead of a one-line notice.
 		return m.openHelp()
 	default:
-		m.notice = "Unknown command · " + slashCommandsHelp
+		m.notice.text = "Unknown command · " + slashCommandsHelp
 	}
 	return m
 }
@@ -125,17 +124,17 @@ func (m model) loginKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 	case "enter":
 		return m.submitLoginKey()
 	case "esc":
-		m.loginProvider, m.loginKey = "", ""
-		m.notice = "Login canceled"
+		m.login.provider, m.login.key = "", ""
+		m.notice.text = "Login canceled"
 		return m, nil
 	case "ctrl+c":
 		return m.requestQuit(), nil
 	case "backspace", "ctrl+h":
-		m.loginKey = trimLastRune(m.loginKey)
+		m.login.key = trimLastRune(m.login.key)
 		return m, nil
 	}
 	if len(msg.Runes) > 0 {
-		m.loginKey += string(msg.Runes)
+		m.login.key += string(msg.Runes)
 	}
 	return m, nil
 }
@@ -143,18 +142,18 @@ func (m model) loginKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 // submitLoginKey stores the typed key and leaves login mode. The notice names
 // the provider only, never the key.
 func (m model) submitLoginKey() (model, tea.Cmd) {
-	provider, key := m.loginProvider, m.loginKey
-	m.loginProvider, m.loginKey = "", ""
-	m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
+	provider, key := m.login.provider, m.login.key
+	m.login.provider, m.login.key = "", ""
+	m.clearRouterDraft()
 	if m.service == nil {
-		m.notice = "Provider login is not connected to a service."
+		m.notice.text = "Provider login is not connected to a service."
 		return m, nil
 	}
 	if err := m.service.SetProviderCredential(provider, key); err != nil {
-		m.notice = err.Error()
+		m.notice.text = err.Error()
 		return m, nil
 	}
-	m.notice = "Stored API key for " + provider
+	m.notice.text = "Stored API key for " + provider
 	return m, nil
 }
 
@@ -162,10 +161,10 @@ func (m model) submitLoginKey() (model, tea.Cmd) {
 // draft, keeping the composer's single-row shape.
 func (m model) loginComposerLines(width int) []string {
 	masked := "(hidden)"
-	if m.loginKey != "" {
-		masked = strings.Repeat("*", utf8.RuneCountInString(m.loginKey))
+	if m.login.key != "" {
+		masked = strings.Repeat("*", utf8.RuneCountInString(m.login.key))
 	}
-	line := "Enter API key for " + terminalText(m.loginProvider) + ": " + masked
+	line := "Enter API key for " + terminalText(m.login.provider) + ": " + masked
 	content := max(1, width-lipgloss.Width(composerPrompt)-1)
 	return []string{fit(accentStyle.Render(composerPrompt)+line, content, 1) + "▏"}
 }
@@ -203,34 +202,31 @@ func (m model) providerMenuKey(key string) (model, tea.Cmd) {
 	case "ctrl+c":
 		return m.requestQuit(), nil
 	case "esc", "q":
-		m.loginMenu = false
+		m.login.menu = false
 		if m.anyProviderConfigured() {
-			m.notice = "Login closed"
+			m.notice.text = "Login closed"
 		} else {
-			m.notice = "No provider configured"
+			m.notice.text = "No provider configured"
 		}
 		return m, nil
-	case "up", "k":
-		m.loginIndex = max(0, min(last, m.loginIndex-1))
-		return m, nil
-	case "down", "j":
-		m.loginIndex = max(0, min(last, m.loginIndex+1))
+	case "up", "k", "down", "j":
+		moveMenuIndex(key, &m.login.index, len(credentials))
 		return m, nil
 	case "enter":
 		if len(credentials) == 0 {
-			m.notice = "No providers known"
+			m.notice.text = "No providers known"
 			return m, nil
 		}
-		provider := credentials[max(0, min(last, m.loginIndex))].Provider
-		m.loginMenu = false
-		m.loginProvider = provider
-		m.loginKey = ""
+		provider := credentials[max(0, min(last, m.login.index))].Provider
+		m.login.menu = false
+		m.login.provider = provider
+		m.login.key = ""
 		// The masked key prompt lives in the request composer, so key entry
 		// always happens there regardless of where the menu was opened.
-		m.router = true
-		m.routerFocus = routerFocusComposer
-		m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
-		m.notice = "Enter API key for " + provider + " (Enter to save, Esc to cancel)"
+		m.router.open = true
+		m.router.focus = routerFocusComposer
+		m.clearRouterDraft()
+		m.notice.text = "Enter API key for " + provider + " (Enter to save, Esc to cancel)"
 		m.clampRouter()
 		return m, nil
 	}
@@ -242,66 +238,25 @@ func (m model) providerMenuKey(key string) (model, tea.Cmd) {
 // are never rendered here.
 func (m model) loginMenuView(background string, w, h int) string {
 	credentials := m.providerCredentials()
-	inner := min(52, w-8)
-	mh := min(len(credentials)+8, h-2)
-	if inner < 12 || mh < 6 {
-		return fit(background, w, h)
-	}
-	mw := inner + 4
-	selected := max(0, min(len(credentials)-1, m.loginIndex))
-
-	var content []string
-	content = append(content, accentStyle.Render("LOGIN")+mutedStyle.Render("  Select a provider"), "")
-	if len(credentials) == 0 {
-		content = append(content, mutedStyle.Render("No providers known."))
-	}
-	// Window the list around the selection so the footer hint survives a
-	// terminal too short for every provider.
-	rows := max(1, mh-5)
-	start := 0
-	if selected >= rows {
-		start = min(selected-rows+1, max(0, len(credentials)-rows))
-	}
-	for i := start; i < len(credentials) && i < start+rows; i++ {
-		credential := credentials[i]
-		marker, name, tag := "  ", mutedStyle.Render(credential.Provider), mutedStyle.Render("no key")
-		if i == selected {
-			marker, name = accentStyle.Render("› "), titleStyle.Render(credential.Provider)
-		}
+	rows := make([]menuRow, len(credentials))
+	for i, credential := range credentials {
+		tag := mutedStyle.Render("no key")
 		if credential.Configured {
 			tag = accentStyle.Render("configured")
 		}
-		plain := 2 + lipgloss.Width(credential.Provider) + lipgloss.Width(ansi.Strip(tag))
-		content = append(content, marker+name+strings.Repeat(" ", max(1, inner-plain))+tag)
+		rows[i] = menuRow{label: credential.Provider, tag: tag}
 	}
-	for len(content) < mh-3 {
-		content = append(content, "")
-	}
-	content = append(content, accentStyle.Render("j/k select · enter login · f1 help · esc close"))
-	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
-	bg := strings.Split(background, "\n")
-	box := strings.Split(modal, "\n")
-	x, y := (w-mw)/2, (h-mh)/2
-	result := make([]string, h)
-	for row := range result {
-		line := ""
-		if row < len(bg) {
-			line = ansi.Strip(bg[row])
-		}
-		line = lipgloss.PlaceHorizontal(w, lipgloss.Left, line)
-		if row >= y && row < y+len(box) {
-			result[row] = mutedStyle.Faint(true).Render(ansi.Cut(line, 0, x)) + box[row-y] + mutedStyle.Faint(true).Render(ansi.Cut(line, x+mw, w))
-		} else {
-			result[row] = mutedStyle.Faint(true).Render(line)
-		}
-	}
-	return fit(strings.Join(result, "\n"), w, h)
+	mw := min(52, w-8) + 4
+	mh := min(len(credentials)+8, h-2)
+	return menuView(background, w, h, "LOGIN", "Select a provider", nil, rows, m.login.index, "No providers known.", "j/k select · enter login · f1 help · esc close", mw, mh)
 }
 
 // Model menu steps. The menu walks agent -> provider -> model, with a free-text
 // step for model IDs the curated catalog does not list.
+type modelStep int
+
 const (
-	modelStepClass = iota
+	modelStepClass modelStep = iota
 	modelStepProvider
 	modelStepModel
 	modelStepCustom
@@ -342,7 +297,7 @@ func (m model) modelsForProvider(provider string) []string {
 
 // modelChoices lists the selectable rows for the current step.
 func (m model) modelChoices() []string {
-	switch m.modelStep {
+	switch m.models.step {
 	case modelStepProvider:
 		credentials := m.configuredProviders()
 		names := make([]string, 0, len(credentials))
@@ -351,13 +306,13 @@ func (m model) modelChoices() []string {
 		}
 		return names
 	case modelStepModel:
-		if m.modelListProvider == m.modelProvider && len(m.modelList) > 0 {
-			return append(append([]string(nil), m.modelList...), customModelChoice)
+		if m.models.listProvider == m.models.provider && len(m.models.list) > 0 {
+			return append(append([]string(nil), m.models.list...), customModelChoice)
 		}
-		if m.modelsLoading {
+		if m.models.loading {
 			return nil
 		}
-		models := m.modelsForProvider(m.modelProvider)
+		models := m.modelsForProvider(m.models.provider)
 		return append(models, customModelChoice)
 	case modelStepCustom:
 		return nil
@@ -368,13 +323,13 @@ func (m model) modelChoices() []string {
 
 // modelMenuTitle is the heading for the current step.
 func (m model) modelMenuTitle() string {
-	switch m.modelStep {
+	switch m.models.step {
 	case modelStepProvider:
-		return "Select a provider for " + m.modelClass
+		return "Select a provider for " + m.models.class
 	case modelStepModel:
-		return "Select a model (" + m.modelProvider + ")"
+		return "Select a model (" + m.models.provider + ")"
 	case modelStepCustom:
-		return "Enter a model ID (" + m.modelProvider + ")"
+		return "Enter a model ID (" + m.models.provider + ")"
 	default:
 		return "Select a model class"
 	}
@@ -384,27 +339,27 @@ func (m model) modelMenuTitle() string {
 // named by /model <class>. Any open request form is cleared so the menu owns
 // the keyboard.
 func (m *model) openModelMenu(class string) {
-	m.modelMenu = true
-	m.modelIndex = 0
-	m.modelCustomInput = ""
-	m.modelProvider = ""
-	m.router = false
-	m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
+	m.models.menu = true
+	m.models.index = 0
+	m.models.customInput = ""
+	m.models.provider = ""
+	m.router.open = false
+	m.clearRouterDraft()
 	if class == "" {
-		m.modelClass = ""
-		m.modelStep = modelStepClass
-		m.notice = "Select a model class"
+		m.models.class = ""
+		m.models.step = modelStepClass
+		m.notice.text = "Select a model class"
 		return
 	}
-	m.modelClass = class
-	m.modelStep = modelStepProvider
-	m.notice = "Select a provider for " + class
+	m.models.class = class
+	m.models.step = modelStepProvider
+	m.notice.text = "Select a provider for " + class
 }
 
 // modelMenuKey drives the agent -> provider -> model menu. Selections reach the
 // service only on the final step, so an abandoned menu changes nothing.
 func (m model) modelMenuKey(key string) (model, tea.Cmd) {
-	if m.modelStep == modelStepCustom {
+	if m.models.step == modelStepCustom {
 		return m.modelCustomKey(key)
 	}
 	choices := m.modelChoices()
@@ -413,27 +368,24 @@ func (m model) modelMenuKey(key string) (model, tea.Cmd) {
 	case "ctrl+c":
 		return m.requestQuit(), nil
 	case "esc":
-		if m.modelStep == modelStepClass {
-			m.modelMenu = false
-			m.notice = "Model menu closed"
+		if m.models.step == modelStepClass {
+			m.models.menu = false
+			m.notice.text = "Model menu closed"
 			return m, nil
 		}
-		m.modelStep--
-		m.modelIndex = 0
-		m.notice = ""
+		m.models.step--
+		m.models.index = 0
+		m.notice.text = ""
 		return m, nil
-	case "up", "k":
-		m.modelIndex = max(0, min(last, m.modelIndex-1))
-		return m, nil
-	case "down", "j":
-		m.modelIndex = max(0, min(last, m.modelIndex+1))
+	case "up", "k", "down", "j":
+		moveMenuIndex(key, &m.models.index, len(choices))
 		return m, nil
 	case "enter":
 		if len(choices) == 0 {
-			m.notice = "Nothing to choose"
+			m.notice.text = "Nothing to choose"
 			return m, nil
 		}
-		return m.selectModelChoice(choices[max(0, min(last, m.modelIndex))])
+		return m.selectModelChoice(choices[max(0, min(last, m.models.index))])
 	}
 	return m, nil
 }
@@ -441,29 +393,29 @@ func (m model) modelMenuKey(key string) (model, tea.Cmd) {
 // selectModelChoice advances the menu or, on the model step, pins the agent to
 // the chosen provider/model selector.
 func (m model) selectModelChoice(choice string) (model, tea.Cmd) {
-	switch m.modelStep {
+	switch m.models.step {
 	case modelStepClass:
-		m.modelClass = choice
-		m.modelStep = modelStepProvider
-		m.modelIndex = 0
-		m.notice = "Select a provider for " + choice
+		m.models.class = choice
+		m.models.step = modelStepProvider
+		m.models.index = 0
+		m.notice.text = "Select a provider for " + choice
 		return m, nil
 	case modelStepProvider:
-		m.modelProvider = choice
-		m.modelStep = modelStepModel
-		m.modelIndex = 0
-		m.notice = ""
-		m.modelList = nil
-		m.modelListProvider = ""
-		m.modelsLoading = true
+		m.models.provider = choice
+		m.models.step = modelStepModel
+		m.models.index = 0
+		m.notice.text = ""
+		m.models.list = nil
+		m.models.listProvider = ""
+		m.models.loading = true
 		return m, m.fetchModelsCmd(choice)
 	case modelStepModel:
 		if choice == customModelChoice {
-			m.modelStep = modelStepCustom
-			m.modelCustomInput = ""
+			m.models.step = modelStepCustom
+			m.models.customInput = ""
 			return m, nil
 		}
-		return m.applyModelSelection(m.modelProvider + "/" + choice)
+		return m.applyModelSelection(m.models.provider + "/" + choice)
 	}
 	return m, nil
 }
@@ -471,20 +423,20 @@ func (m model) selectModelChoice(choice string) (model, tea.Cmd) {
 // applyModelSelection pins the chosen class and closes the menu. The notice
 // names the selector, never a credential.
 func (m model) applyModelSelection(selector string) (model, tea.Cmd) {
-	class := m.modelClass
-	m.modelMenu = false
-	m.modelStep = modelStepClass
-	m.modelIndex = 0
-	m.modelCustomInput = ""
+	class := m.models.class
+	m.models.menu = false
+	m.models.step = modelStepClass
+	m.models.index = 0
+	m.models.customInput = ""
 	if m.service == nil {
-		m.notice = "Model selection is not connected to a service."
+		m.notice.text = "Model selection is not connected to a service."
 		return m, nil
 	}
 	if err := m.service.SetModel(class, selector); err != nil {
-		m.notice = err.Error()
+		m.notice.text = err.Error()
 		return m, nil
 	}
-	m.notice = "Model for " + class + ": " + selector
+	m.notice.text = "Model for " + class + ": " + selector
 	return m, nil
 }
 
@@ -510,23 +462,23 @@ func (m model) modelCustomKey(key string) (model, tea.Cmd) {
 	case "ctrl+c":
 		return m.requestQuit(), nil
 	case "enter":
-		modelID := strings.TrimSpace(m.modelCustomInput)
+		modelID := strings.TrimSpace(m.models.customInput)
 		if modelID == "" {
-			m.notice = "Enter a model ID"
+			m.notice.text = "Enter a model ID"
 			return m, nil
 		}
-		return m.applyModelSelection(m.modelProvider + "/" + modelID)
+		return m.applyModelSelection(m.models.provider + "/" + modelID)
 	case "esc":
-		m.modelStep = modelStepModel
-		m.modelIndex = 0
-		m.modelCustomInput = ""
+		m.models.step = modelStepModel
+		m.models.index = 0
+		m.models.customInput = ""
 		return m, nil
 	case "backspace", "ctrl+h":
-		m.modelCustomInput = trimLastRune(m.modelCustomInput)
+		m.models.customInput = trimLastRune(m.models.customInput)
 		return m, nil
 	}
 	if modelTextKey(key) {
-		m.modelCustomInput += key
+		m.models.customInput += key
 	}
 	return m, nil
 }
@@ -554,83 +506,38 @@ func modelTextKey(key string) bool {
 // screen, reusing loginMenuView's overlay so both surfaces read as one family.
 func (m model) modelMenuView(background string, w, h int) string {
 	choices := m.modelChoices()
-	inner := min(52, w-8)
+	var body []string
+	if m.models.step == modelStepCustom {
+		prompt := m.models.provider + "/" + m.models.customInput
+		body = append(body, accentStyle.Render("› ")+titleStyle.Render(prompt)+accentStyle.Render("▏"))
+	}
+	if m.models.loading && m.models.step == modelStepModel {
+		body = append(body, mutedStyle.Render("Loading models…"))
+	}
+	rows := make([]menuRow, len(choices))
+	for i, choice := range choices {
+		rows[i] = menuRow{label: choice, tag: m.modelChoiceTag(choice)}
+	}
+	empty := ""
+	if m.models.step != modelStepCustom {
+		empty = m.modelEmptyHint()
+	}
+	footer := "j/k select · enter next · f1 help · esc back"
+	if m.models.step == modelStepCustom {
+		footer = "enter save · f1 help · esc back · ctrl+c quit"
+	}
+	mw := min(52, w-8) + 4
 	mh := min(len(choices)+8, h-2)
-	if m.modelStep == modelStepCustom {
+	if m.models.step == modelStepCustom {
 		mh = min(9, h-2)
 	}
-	if inner < 12 || mh < 6 {
-		return fit(background, w, h)
-	}
-	mw := inner + 4
-	selected := max(0, min(len(choices)-1, m.modelIndex))
-
-	var content []string
-	content = append(content, accentStyle.Render("MODEL")+mutedStyle.Render("  "+m.modelMenuTitle()), "")
-	if m.modelStep == modelStepCustom {
-		prompt := m.modelProvider + "/" + m.modelCustomInput
-		content = append(content, accentStyle.Render("› ")+titleStyle.Render(prompt)+accentStyle.Render("▏"))
-	}
-	if m.modelsLoading && m.modelStep == modelStepModel {
-		content = append(content, mutedStyle.Render("Loading models…"))
-	}
-	if len(choices) == 0 && m.modelStep != modelStepCustom {
-		content = append(content, mutedStyle.Render(m.modelEmptyHint()))
-	}
-	// Window the list around the selection so the footer hint survives a
-	// terminal too short for every choice.
-	rows := max(1, mh-5)
-	start := 0
-	if selected >= rows {
-		start = min(selected-rows+1, max(0, len(choices)-rows))
-	}
-	for i := start; i < len(choices) && i < start+rows; i++ {
-		choice := choices[i]
-		marker, name := "  ", mutedStyle.Render(choice)
-		if i == selected {
-			marker, name = accentStyle.Render("› "), titleStyle.Render(choice)
-		}
-		// Drop the tag rather than crowd out the name in a narrow modal.
-		tag := m.modelChoiceTag(choice)
-		plain := 2 + lipgloss.Width(choice) + lipgloss.Width(ansi.Strip(tag))
-		if tag == "" || plain >= inner {
-			content = append(content, marker+name)
-			continue
-		}
-		content = append(content, marker+name+strings.Repeat(" ", inner-plain)+tag)
-	}
-	for len(content) < mh-3 {
-		content = append(content, "")
-	}
-	if m.modelStep == modelStepCustom {
-		content = append(content, accentStyle.Render("enter save · f1 help · esc back · ctrl+c quit"))
-	} else {
-		content = append(content, accentStyle.Render("j/k select · enter next · f1 help · esc back"))
-	}
-	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
-	bg := strings.Split(background, "\n")
-	box := strings.Split(modal, "\n")
-	x, y := (w-mw)/2, (h-mh)/2
-	result := make([]string, h)
-	for row := range result {
-		line := ""
-		if row < len(bg) {
-			line = ansi.Strip(bg[row])
-		}
-		line = lipgloss.PlaceHorizontal(w, lipgloss.Left, line)
-		if row >= y && row < y+len(box) {
-			result[row] = mutedStyle.Faint(true).Render(ansi.Cut(line, 0, x)) + box[row-y] + mutedStyle.Faint(true).Render(ansi.Cut(line, x+mw, w))
-		} else {
-			result[row] = mutedStyle.Faint(true).Render(line)
-		}
-	}
-	return fit(strings.Join(result, "\n"), w, h)
+	return menuView(background, w, h, "MODEL", m.modelMenuTitle(), body, rows, m.models.index, empty, footer, mw, mh)
 }
 
 // modelChoiceTag is the muted right-hand note for a row: the class's current
 // model, the provider state, or the promise of free-text entry.
 func (m model) modelChoiceTag(choice string) string {
-	switch m.modelStep {
+	switch m.models.step {
 	case modelStepClass:
 		current := orchestrator.ModelSelection{}
 		if m.service != nil {
@@ -654,7 +561,7 @@ func (m model) modelChoiceTag(choice string) string {
 
 // modelEmptyHint explains an empty step so the operator knows what to fix.
 func (m model) modelEmptyHint() string {
-	switch m.modelStep {
+	switch m.models.step {
 	case modelStepClass:
 		return "No classes available."
 	case modelStepProvider:
@@ -682,33 +589,30 @@ func (m model) agentClassMenuKey(key string) (model, tea.Cmd) {
 	case "ctrl+c":
 		return m.requestQuit(), nil
 	case "esc":
-		m.agentClassMenu = false
-		m.notice = "Agent classes closed"
+		m.agentClass.menu = false
+		m.notice.text = "Agent classes closed"
 		return m, nil
-	case "up", "k":
-		m.agentClassIndex = max(0, min(last, m.agentClassIndex-1))
-		return m, nil
-	case "down", "j":
-		m.agentClassIndex = max(0, min(last, m.agentClassIndex+1))
+	case "up", "k", "down", "j":
+		moveMenuIndex(key, &m.agentClass.index, len(agents))
 		return m, nil
 	case "enter":
 		if len(agents) == 0 {
 			return m, nil
 		}
-		agent := agents[max(0, min(last, m.agentClassIndex))]
+		agent := agents[max(0, min(last, m.agentClass.index))]
 		class := orchestrator.ModelClassBig
 		if agent.Class == orchestrator.ModelClassBig {
 			class = orchestrator.ModelClassSmall
 		}
 		if m.service == nil {
-			m.notice = "Agent classes are not connected to a service."
+			m.notice.text = "Agent classes are not connected to a service."
 			return m, nil
 		}
 		if err := m.service.SetAgentClass(agent.Agent, class); err != nil {
-			m.notice = err.Error()
+			m.notice.text = err.Error()
 			return m, nil
 		}
-		m.notice = agent.Agent + " uses the " + class + " model"
+		m.notice.text = agent.Agent + " uses the " + class + " model"
 		return m, nil
 	}
 	return m, nil
@@ -717,50 +621,14 @@ func (m model) agentClassMenuKey(key string) (model, tea.Cmd) {
 // agentClassMenuView draws the per-agent big/small menu as a centered modal.
 func (m model) agentClassMenuView(background string, w, h int) string {
 	agents := m.agentClasses()
-	mw, mh := min(76, w-4), min(28, h-2)
-	inner := mw - 4
-	content := []string{
-		accentStyle.Render("AGENTS") + mutedStyle.Render("  big / small model"),
-		"",
-	}
-	selected := max(0, min(len(agents)-1, m.agentClassIndex))
-	rows := max(1, mh-5)
-	start := 0
-	if selected >= rows {
-		start = min(selected-rows+1, max(0, len(agents)-rows))
-	}
-	for i := start; i < len(agents) && i < start+rows; i++ {
-		agent := agents[i]
-		marker, name := "  ", mutedStyle.Render(agent.Agent)
-		if i == selected {
-			marker, name = accentStyle.Render("› "), titleStyle.Render(agent.Agent)
-		}
+	rows := make([]menuRow, len(agents))
+	for i, agent := range agents {
 		tag := mutedStyle.Render(agent.Class)
 		if agent.Overridden {
 			tag = accentStyle.Render(agent.Class)
 		}
-		content = append(content, marker+name+strings.Repeat(" ", inner-lipgloss.Width(agent.Agent)-lipgloss.Width(ansi.Strip(tag)))+tag)
+		rows[i] = menuRow{label: agent.Agent, tag: tag}
 	}
-	for len(content) < mh-3 {
-		content = append(content, "")
-	}
-	content = append(content, accentStyle.Render("j/k select · enter toggle · f1 help · esc close"))
-	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
-	bg := strings.Split(background, "\n")
-	box := strings.Split(modal, "\n")
-	x, y := (w-mw)/2, (h-mh)/2
-	result := make([]string, h)
-	for row := range result {
-		line := ""
-		if row < len(bg) {
-			line = ansi.Strip(bg[row])
-		}
-		line = lipgloss.PlaceHorizontal(w, lipgloss.Left, line)
-		if row >= y && row < y+len(box) {
-			result[row] = mutedStyle.Faint(true).Render(ansi.Cut(line, 0, x)) + box[row-y] + mutedStyle.Faint(true).Render(ansi.Cut(line, x+mw, w))
-		} else {
-			result[row] = mutedStyle.Faint(true).Render(line)
-		}
-	}
-	return fit(strings.Join(result, "\n"), w, h)
+	mw, mh := min(76, w-4), min(28, h-2)
+	return menuView(background, w, h, "AGENTS", "big / small model", nil, rows, m.agentClass.index, "", "j/k select · enter toggle · f1 help · esc close", mw, mh)
 }

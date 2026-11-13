@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,7 +43,7 @@ func TestDeleteConfirmation(t *testing.T) {
 	}
 	m := model{service: s, tasks: s.ListTasks(), width: 80, height: 24}
 	update := func(key string) {
-		result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		result, cmd := m.Update(runeKey(key))
 		m = result.(model)
 		if cmd != nil {
 			result, _ := m.Update(cmd())
@@ -85,15 +87,15 @@ func TestDeleteCompletedConfirmationAndAction(t *testing.T) {
 	}
 
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	m = key(m, runeKey("D"))
 	if !strings.Contains(m.View(), "DELETE 1 COMPLETED TASK(S)") {
 		t.Fatalf("missing bulk-delete confirmation: %s", m.View())
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m = key(m, runeKey("n"))
 	if _, ok := s.GetTask(done.ID); !ok {
 		t.Fatal("canceled bulk delete removed task")
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	m = key(m, runeKey("D"))
 	// A new completion after opening the confirmation is outside its scope.
 	if err := s.Start(context.Background(), queued.ID); err != nil {
 		t.Fatal(err)
@@ -106,8 +108,8 @@ func TestDeleteCompletedConfirmationAndAction(t *testing.T) {
 	if _, ok := s.GetTask(queued.ID); !ok {
 		t.Fatal("task completed after confirmation opened was deleted")
 	}
-	if !strings.Contains(m.notice, "Deleted 1 completed task") {
-		t.Fatalf("deletion not reported: %q", m.notice)
+	if !strings.Contains(m.notice.text, "Deleted 1 completed task") {
+		t.Fatalf("deletion not reported: %q", m.notice.text)
 	}
 }
 
@@ -123,11 +125,11 @@ func TestFollowUpComposerRecordsContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
+	m = key(m, runeKey("F"))
 	if !strings.Contains(m.View(), "FOLLOW UP") {
 		t.Fatalf("follow-up composer not shown: %s", m.View())
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("also update docs")})
+	m = key(m, runeKey("also update docs"))
 	key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	got, _ := s.GetTask(task.ID)
 	if got.Prompt != "original mandate" || len(got.Context) != 1 || got.Context[0].Text != "also update docs" {
@@ -137,7 +139,7 @@ func TestFollowUpComposerRecordsContext(t *testing.T) {
 
 func runCleanup(t *testing.T, m model) model {
 	t.Helper()
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	next, cmd := m.Update(runeKey("y"))
 	if cmd == nil || !next.(model).cleanupBusy {
 		t.Fatal("confirmation did not queue cleanup")
 	}
@@ -147,11 +149,7 @@ func runCleanup(t *testing.T, m model) model {
 
 // Hold the returned command so the test can navigate while cleanup is pending.
 func TestPendingCleanupKeepsTargetAndAllowsNavigation(t *testing.T) {
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	for _, title := range []string{"one", "two"} {
 		if _, err := s.CreateTask(title, title, t.TempDir()); err != nil {
 			t.Fatal(err)
@@ -159,8 +157,8 @@ func TestPendingCleanupKeepsTargetAndAllowsNavigation(t *testing.T) {
 	}
 	m := model{service: s, tasks: s.ListTasks(), width: 80, height: 24}
 	id := m.selectedID()
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = key(m, runeKey("d"))
+	next, cmd := m.Update(runeKey("y"))
 	if cmd == nil {
 		t.Fatal("missing cleanup command")
 	}
@@ -172,7 +170,7 @@ func TestPendingCleanupKeepsTargetAndAllowsNavigation(t *testing.T) {
 	if _, ok := s.GetTask(id); !ok {
 		t.Fatal("task was deleted in Update")
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	m = key(m, runeKey("D"))
 	if m.cleanup.kind != "" {
 		t.Fatal("opened a second cleanup during the pending command")
 	}
@@ -180,5 +178,67 @@ func TestPendingCleanupKeepsTargetAndAllowsNavigation(t *testing.T) {
 	m = next.(model)
 	if m.cleanupBusy || m.selectedID() != other || len(m.tasks) != 1 {
 		t.Fatalf("unexpected selection or completion: %+v", m)
+	}
+}
+
+func TestDiscardWorktreeConfirmation(t *testing.T) {
+	repo := reviewRepo(t)
+	s := newTestService(t)
+	s.RegisterRunner("general", reviewChangeRunner{})
+	done := startIsolatedReviewTask(t, s, repo, "discard")
+	// Merge is blocked while the review is pending, so discard requires the
+	// operator to approve and wait for integration first.
+	done = approveReviewAndAwaitMerge(t, s, done)
+
+	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
+	selectTask(t, &m, done.ID)
+	m = key(m, runeKey("x"))
+	if !strings.Contains(m.View(), "DISCARD RETAINED WORKTREE") {
+		t.Fatalf("missing discard confirmation: %s", m.View())
+	}
+	m = key(m, runeKey("n"))
+	if _, err := os.Stat(done.ExecutionWorkspace); err != nil {
+		t.Fatalf("canceled discard removed the worktree: %v", err)
+	}
+
+	m = key(m, runeKey("x"))
+	m = runCleanup(t, m)
+	if _, err := os.Stat(done.ExecutionWorkspace); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("confirmed discard left the worktree: %v", err)
+	}
+	if !strings.Contains(m.notice.text, "Worktree discarded") {
+		t.Fatalf("discard not acknowledged: %q", m.notice.text)
+	}
+	if _, ok := s.GetTask(done.ID); !ok {
+		t.Fatal("discard removed the task")
+	}
+}
+
+func TestDiscardAllMergedWorktreesConfirmation(t *testing.T) {
+	repo := reviewRepo(t)
+	s := newTestService(t)
+	s.RegisterRunner("general", reviewChangeRunner{})
+	first := startIsolatedReviewTask(t, s, repo, "first")
+	first = approveReviewAndAwaitMerge(t, s, first)
+	second := startIsolatedReviewTask(t, s, repo, "second")
+	second = approveReviewAndAwaitMerge(t, s, second)
+
+	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
+	m = key(m, runeKey("X"))
+	if !strings.Contains(m.View(), "DISCARD 2 MERGED WORKTREE(S)") {
+		t.Fatalf("missing bulk-discard confirmation: %s", m.View())
+	}
+	later := startIsolatedReviewTask(t, s, repo, "later")
+	m = runCleanup(t, m)
+	for _, task := range []orchestrator.Task{first, second} {
+		if _, err := os.Stat(task.ExecutionWorkspace); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("worktree %s still exists: %v", task.ID, err)
+		}
+	}
+	if _, err := os.Stat(later.ExecutionWorkspace); err != nil {
+		t.Fatalf("bulk discard included a later worktree: %v", err)
+	}
+	if !strings.Contains(m.notice.text, "Discarded 2 merged worktree(s)") {
+		t.Fatalf("bulk discard not acknowledged: %q", m.notice.text)
 	}
 }

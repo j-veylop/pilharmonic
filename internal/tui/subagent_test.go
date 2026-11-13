@@ -37,11 +37,11 @@ func TestSubagentComposerSpawnsChild(t *testing.T) {
 	}
 	<-started
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	m = key(m, runeKey("b"))
 	if !strings.Contains(m.View(), "SUBAGENT TASK") {
 		t.Fatal("subagent prompt not shown")
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("child mandate")})
+	m = key(m, runeKey("child mandate"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	var child orchestrator.Task
 	for _, task := range s.ListTasks() {
@@ -49,8 +49,8 @@ func TestSubagentComposerSpawnsChild(t *testing.T) {
 			child = task
 		}
 	}
-	if child.ID == "" || child.Prompt != "child mandate" || m.notice == "" {
-		t.Fatalf("subagent not created: %+v notice=%q", child, m.notice)
+	if child.ID == "" || child.Prompt != "child mandate" || m.notice.text == "" {
+		t.Fatalf("subagent not created: %+v notice=%q", child, m.notice.text)
 	}
 	plain := ansi.Strip(m.View())
 	if !strings.Contains(plain, "● child mandate") {

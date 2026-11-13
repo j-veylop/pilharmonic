@@ -121,23 +121,19 @@ func selectTask(t *testing.T, m *model, id string) {
 
 func TestReviewKeysApproveAndReject(t *testing.T) {
 	repo := reviewRepo(t)
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	s.RegisterRunner("general", reviewChangeRunner{})
 
 	approved := startIsolatedReviewTask(t, s, repo, "approve")
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selectTask(t, &m, approved.ID)
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+	m = key(m, runeKey("v"))
 	got, _ := s.GetTask(approved.ID)
 	if got.ReviewStatus != orchestrator.ReviewApproved || got.ReviewedBy != orchestrator.LocalActor {
 		t.Fatalf("approval key did not record a decision: %+v", got)
 	}
-	if !strings.Contains(m.notice, "Review approved") || !strings.Contains(m.notice, "merge") {
-		t.Fatalf("approval did not state the merge consequence: %q", m.notice)
+	if !strings.Contains(m.notice.text, "Review approved") || !strings.Contains(m.notice.text, "merge") {
+		t.Fatalf("approval did not state the merge consequence: %q", m.notice.text)
 	}
 	got = approveReviewAndAwaitMerge(t, s, got)
 	if got.MergeStatus != orchestrator.MergeMerged && got.MergeStatus != orchestrator.MergeUpToDate {
@@ -147,21 +143,21 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	rejected := startIsolatedReviewTask(t, s, repo, "reject")
 	m.tasks = s.ListTasks()
 	selectTask(t, &m, rejected.ID)
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("V")})
+	m = key(m, runeKey("V"))
 	if m.input.kind != rejectReviewInput || m.input.target != rejected.ID {
 		t.Fatalf("rejection key did not open a reason input: %+v", m)
 	}
-	if !strings.Contains(m.notice, "worktree") || !strings.Contains(m.notice, "F") {
-		t.Fatalf("rejection prompt did not mention retained work: %q", m.notice)
+	if !strings.Contains(m.notice.text, "worktree") || !strings.Contains(m.notice.text, "F") {
+		t.Fatalf("rejection prompt did not mention retained work: %q", m.notice.text)
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("not needed")})
+	m = key(m, runeKey("not needed"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	got, _ = s.GetTask(rejected.ID)
 	if got.ReviewStatus != orchestrator.ReviewRejected || got.ReviewNote != "not needed" {
 		t.Fatalf("rejection key did not record a decision: %+v", got)
 	}
-	if m.input.kind != "" || !strings.Contains(m.notice, "Review rejected") || !strings.Contains(m.notice, "F") {
-		t.Fatalf("rejection not acknowledged with follow-up: input=%v notice=%q", m.input, m.notice)
+	if m.input.kind != "" || !strings.Contains(m.notice.text, "Review rejected") || !strings.Contains(m.notice.text, "F") {
+		t.Fatalf("rejection not acknowledged with follow-up: input=%v notice=%q", m.input, m.notice.text)
 	}
 	if view := m.View(); !strings.Contains(view, "F adds follow-up") {
 		t.Fatalf("rejected detail does not suggest follow-up: %s", view)
@@ -169,11 +165,11 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 
 	// Rejection keeps the worktree and allows a follow-up that requeues the
 	// task without changing its original mandate.
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
+	m = key(m, runeKey("F"))
 	if m.input.kind != followUpInput || m.input.target != rejected.ID {
 		t.Fatalf("rejected task did not open a follow-up composer: %+v", m.input)
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("add regression coverage")})
+	m = key(m, runeKey("add regression coverage"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	got, _ = s.GetTask(rejected.ID)
 	if got.Status != orchestrator.Queued || got.Prompt != "do work" || len(got.Context) != 1 || got.Context[0].Text != "add regression coverage" || got.ReviewStatus != "" {
@@ -186,11 +182,7 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 
 func TestReviewKeysRefuseStaleCommit(t *testing.T) {
 	repo := reviewRepo(t)
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	s.RegisterRunner("general", reviewChangeRunner{})
 	task := startIsolatedReviewTask(t, s, repo, "updated review")
 	for _, name := range []string{"v", "V"} {
@@ -198,7 +190,7 @@ func TestReviewKeysRefuseStaleCommit(t *testing.T) {
 		selectTask(t, &m, task.ID)
 		// The screen still shows the commit from an earlier attempt.
 		m.tasks[m.selected].ReviewCommit = "earlier-commit"
-		m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)})
+		m = key(m, runeKey(name))
 		if name == "V" {
 			// The task list refreshes while the rejection composer is open.
 			m.tasks = s.ListTasks()
@@ -206,18 +198,14 @@ func TestReviewKeysRefuseStaleCommit(t *testing.T) {
 			m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 		}
 		got, _ := s.GetTask(task.ID)
-		if !got.AwaitingReview() || got.ReviewCommit != task.ReviewCommit || !strings.Contains(m.notice, "does not match") {
-			t.Fatalf("key %s: review %s for %s, notice %q", name, got.ReviewStatus, got.ReviewCommit, m.notice)
+		if !got.AwaitingReview() || got.ReviewCommit != task.ReviewCommit || !strings.Contains(m.notice.text, "does not match") {
+			t.Fatalf("key %s: review %s for %s, notice %q", name, got.ReviewStatus, got.ReviewCommit, m.notice.text)
 		}
 	}
 }
 
 func TestReviewKeysRequirePreparedWork(t *testing.T) {
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	task, err := s.CreateTask("queued", "do work", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -225,9 +213,9 @@ func TestReviewKeysRequirePreparedWork(t *testing.T) {
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selectTask(t, &m, task.ID)
 	for _, name := range []string{"v", "V"} {
-		m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)})
-		if m.input.kind != "" || !strings.Contains(m.notice, "No worktree commit") {
-			t.Fatalf("%s: input=%v notice=%q", name, m.input, m.notice)
+		m = key(m, runeKey(name))
+		if m.input.kind != "" || !strings.Contains(m.notice.text, "No worktree commit") {
+			t.Fatalf("%s: input=%v notice=%q", name, m.input, m.notice.text)
 		}
 	}
 }

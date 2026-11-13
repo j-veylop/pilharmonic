@@ -1,11 +1,8 @@
 package orchestrator
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -234,18 +231,6 @@ func (s *Service) RegisterProfile(p Profile) error {
 // only what they need; a new name extends the catalog. Built-in profiles may be
 // redefined but not removed.
 func (s *Service) LoadProfiles(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	if info.Size() > 1024*1024 {
-		return errors.New("profiles config exceeds 1 MiB")
-	}
 	var config struct {
 		Profiles       []profileConfig `json:"profiles"`
 		DefaultProfile string          `json:"default_profile"`
@@ -255,13 +240,8 @@ func (s *Service) LoadProfiles(path string) error {
 			Tools []string `json:"tools,omitempty"`
 		} `json:"specialists"`
 	}
-	decoder := json.NewDecoder(io.LimitReader(f, 1024*1024+1))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&config); err != nil {
-		return fmt.Errorf("profiles config: %w", err)
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return errors.New("profiles config must contain exactly one JSON object")
+	if err := decodeConfigFile(path, "profiles", &config); err != nil {
+		return err
 	}
 	if len(config.Profiles) == 0 && len(config.Specialists) == 0 && config.DefaultProfile == "" {
 		return errors.New("profiles config defines no profiles")
@@ -429,19 +409,10 @@ func (s *Service) profileForTaskLocked(t Task) (Profile, error) {
 // SetTaskProfile selects a profile for a queued task without an outstanding
 // start request. It snapshots the profile so later catalog edits do not apply.
 func (s *Service) SetTaskProfile(id, name string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	resolved, spec, err := s.resolveProfileLocked(name)
-	if err != nil {
-		return err
-	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != id {
-			continue
+	return s.updateTask(id, func(t *Task) error {
+		resolved, spec, err := s.resolveProfileLocked(name)
+		if err != nil {
+			return err
 		}
 		if t.Status != Queued || t.ScheduleRequested {
 			return errors.New("profile can only be changed on an unscheduled queued task")
@@ -460,17 +431,11 @@ func (s *Service) SetTaskProfile(id, name string) error {
 		if t.ProfileName == resolved {
 			return nil
 		}
-		old := clone(*t)
 		t.ProfileName, t.ProfileSpec = resolved, spec
 		t.UpdatedAt = time.Now().UTC()
 		t.Events = append(t.Events, Event{t.UpdatedAt, "profile", "Profile selected: " + resolved})
-		if err := s.save(); err != nil {
-			*t = old
-			return err
-		}
 		return nil
-	}
-	return errors.New("task not found")
+	})
 }
 
 // noAutoIntegrate reports whether the recorded profile withholds automatic

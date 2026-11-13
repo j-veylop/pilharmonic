@@ -109,8 +109,8 @@ func TestMouseSelectionCopiesContentPaneOnly(t *testing.T) {
 	if got := decodeOSC52(t, out.String()); got != "alpha\nbeta\ngamma" {
 		t.Fatalf("copied %q", got)
 	}
-	if !strings.Contains(m.notice, "Copied 3 line(s)") {
-		t.Fatalf("missing copy notice: %q", m.notice)
+	if !strings.Contains(m.notice.text, "Copied 3 line(s)") {
+		t.Fatalf("missing copy notice: %q", m.notice.text)
 	}
 }
 

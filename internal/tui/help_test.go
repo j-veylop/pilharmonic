@@ -10,7 +10,7 @@ import (
 )
 
 func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
-	m := model{width: 80, height: 14, help: true}
+	m := model{width: 80, height: 14, help: helpState{open: true}}
 	view := m.View()
 	if !strings.Contains(view, "HELP") {
 		t.Fatal(view)
@@ -22,13 +22,13 @@ func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
 	}
 	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
 	m = next.(model)
-	if m.helpScroll == 0 {
+	if m.help.scroll == 0 {
 		t.Fatal("help wheel did not scroll")
 	}
-	m.helpScroll = 0
+	m.help.scroll = 0
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(model)
-	if m.helpScroll == 0 {
+	if m.help.scroll == 0 {
 		t.Fatal("help did not scroll from keyboard")
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
@@ -39,15 +39,15 @@ func TestHelpModalCapturesInputAndScrolls(t *testing.T) {
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(model)
-	if m.help {
+	if m.help.open {
 		t.Fatal("escape did not close help")
 	}
 }
 func TestHelpModalBounds(t *testing.T) {
 	for _, size := range [][2]int{{30, 10}, {50, 20}, {80, 24}, {120, 40}} {
-		m := model{width: size[0], height: size[1], help: true}
+		m := model{width: size[0], height: size[1], help: helpState{open: true}}
 		for _, offset := range []int{0, 1000} {
-			m.helpPage = offset
+			m.help.page = offset
 			view := m.View()
 			if lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
 				t.Fatalf("overflow at %v", size)
@@ -57,13 +57,13 @@ func TestHelpModalBounds(t *testing.T) {
 }
 
 func TestHelpPagination(t *testing.T) {
-	m := model{width: 80, height: 24, help: true}
+	m := model{width: 80, height: 24, help: helpState{open: true}}
 	if title := ansi.Strip(m.View()); !strings.Contains(title, "HELP · Concepts") || !strings.Contains(title, "1/7") {
 		t.Fatal("missing topic title and position")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = next.(model)
-	if m.helpPage != 1 {
+	if m.help.page != 1 {
 		t.Fatal("right did not advance exactly one page")
 	}
 	if title := ansi.Strip(m.View()); !strings.Contains(title, "HELP · Navigation") || !strings.Contains(title, "2/7") {
@@ -71,17 +71,17 @@ func TestHelpPagination(t *testing.T) {
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	m = next.(model)
-	if m.helpPage != 0 {
+	if m.help.page != 0 {
 		t.Fatal("page up")
 	}
 	m.scrollHelp(-1)
-	if m.helpPage != 0 {
+	if m.help.page != 0 {
 		t.Fatal("wrapped before first page")
 	}
 	m.scrollHelp(10000)
-	last := m.helpPage
+	last := m.help.page
 	m.scrollHelp(1)
-	if m.helpPage != last {
+	if m.help.page != last {
 		t.Fatal("wrapped past last page")
 	}
 	if !strings.Contains(m.View(), "Select in executor") {
@@ -89,13 +89,13 @@ func TestHelpPagination(t *testing.T) {
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
 	m = next.(model)
-	if m.helpPage != 0 {
+	if m.help.page != 0 {
 		t.Fatal("home")
 	}
 }
 
 func TestHelpTopicsAreLogicalAndIndependent(t *testing.T) {
-	m := model{width: 80, height: 24, help: true}
+	m := model{width: 80, height: 24, help: helpState{open: true}}
 	concepts := strings.Join(m.helpLines(70), "\n")
 	if !strings.Contains(concepts, "Accepted work") || !strings.Contains(concepts, "need you") || strings.Contains(concepts, "Focus tasks") {
 		t.Fatal("concepts missing or contains another topic")
@@ -116,7 +116,7 @@ func TestHelpTopicsAreLogicalAndIndependent(t *testing.T) {
 	}
 	m.scrollHelpBody(5)
 	m.scrollHelp(1)
-	if m.helpScroll != 0 {
+	if m.help.scroll != 0 {
 		t.Fatal("topic switch retained old scroll")
 	}
 	if !strings.Contains(m.helpTabs(70), "Navigation") || !strings.Contains(m.helpTabs(70), "General") {
@@ -131,7 +131,7 @@ func TestHelpEveryTopicFitsTheModal(t *testing.T) {
 	for _, size := range sizes {
 		for page, topic := range helpTopics {
 			for _, scroll := range []int{0, 1000} {
-				m := model{width: size[0], height: size[1], help: true, helpPage: page, helpScroll: scroll}
+				m := model{width: size[0], height: size[1], help: helpState{open: true, page: page, scroll: scroll}}
 				mw, mh, content := m.helpModal(size[0], size[1])
 				if mw > size[0] || mh > size[1] {
 					t.Fatalf("%s at %v: modal %dx%d leaves the screen", topic.title, size, mw, mh)
@@ -298,7 +298,7 @@ func TestHelpTopicStripMarksTheActiveTopic(t *testing.T) {
 	if activeTabStyle.GetForeground() == inactiveTabStyle.GetForeground() && activeTabStyle.GetUnderline() == inactiveTabStyle.GetUnderline() {
 		t.Fatal("the active topic is not styled apart from the inactive ones")
 	}
-	m := model{width: 80, height: 24, help: true}
+	m := model{width: 80, height: 24, help: helpState{open: true}}
 	strip := m.helpTabs(72)
 	if !strings.Contains(strip, helpActiveTabMarker+"Concepts") {
 		t.Fatalf("strip does not mark the active topic: %q", ansi.Strip(strip))
@@ -337,7 +337,7 @@ func TestHelpTopicStripMarksTheActiveTopic(t *testing.T) {
 // The hint row stays inside the frame and keeps its most useful hint at every
 // width.
 func TestHelpHintRowFitsTheFrame(t *testing.T) {
-	m := model{width: 80, height: 24, help: true}
+	m := model{width: 80, height: 24, help: helpState{open: true}}
 	for _, width := range []int{72, 44, 22, 12} {
 		row := m.helpHintRow(width)
 		if lipgloss.Width(row) > width {
@@ -352,7 +352,7 @@ func TestHelpHintRowFitsTheFrame(t *testing.T) {
 // A topic taller than the window shows a scrollbar column inside the frame, and
 // the body never grows past the rows the frame reserved for it.
 func TestHelpScrollsLongTopicsInsideTheFrame(t *testing.T) {
-	m := model{width: 30, height: 10, help: true}
+	m := model{width: 30, height: 10, help: helpState{open: true}}
 	_, _, top := m.helpModal(30, 10)
 	if !strings.Contains(strings.Join(top, "\n"), helpThumbStyle.Render("▐")) {
 		t.Fatalf("overflowing topic has no scroll affordance: %q", ansi.Strip(strings.Join(top, "\n")))
@@ -369,7 +369,7 @@ func TestHelpScrollsLongTopicsInsideTheFrame(t *testing.T) {
 		t.Fatal("scrolling did not move the body")
 	}
 	// A topic that fits needs no scrollbar.
-	short := model{width: 120, height: 40, help: true, helpPage: 3}
+	short := model{width: 120, height: 40, help: helpState{open: true, page: 3}}
 	_, _, fitted := short.helpModal(120, 40)
 	if joined := strings.Join(fitted, "\n"); strings.Contains(joined, "▐") || strings.Contains(joined, "│") {
 		t.Fatalf("a topic that fits still draws a scrollbar: %q", ansi.Strip(joined))
@@ -406,7 +406,7 @@ func TestHelpUsesNoBackgroundColour(t *testing.T) {
 	}
 	for page := range helpTopics {
 		for _, size := range [][2]int{{30, 10}, {40, 15}, {80, 24}, {120, 40}} {
-			m := model{width: size[0], height: size[1], help: true, helpPage: page}
+			m := model{width: size[0], height: size[1], help: helpState{open: true, page: page}}
 			if view := m.View(); strings.Contains(view, "\x1b[48;") {
 				t.Fatalf("%s at %v: help renders a background colour", helpTopics[page].title, size)
 			}
@@ -421,7 +421,7 @@ func TestHelpUsesNoBackgroundColour(t *testing.T) {
 func TestHelpScrollReachesTheLastDrawnLine(t *testing.T) {
 	for _, size := range [][2]int{{30, 10}, {40, 12}, {40, 15}, {50, 20}, {60, 20}, {80, 24}, {120, 40}} {
 		for page, topic := range helpTopics {
-			m := model{width: size[0], height: size[1], help: true, helpPage: page}
+			m := model{width: size[0], height: size[1], help: helpState{open: true, page: page}}
 			m.scrollHelpBody(1000)
 			_, _, _, lines := m.helpBody(size[0], size[1])
 			last := ""
@@ -458,7 +458,7 @@ func helpOriginForTest(m model) (row, col int) {
 // when they change topic.
 func TestHelpGeometryIsStableAcrossTopics(t *testing.T) {
 	for _, size := range [][2]int{{30, 12}, {40, 16}, {60, 20}, {80, 24}, {120, 40}} {
-		first := model{width: size[0], height: size[1], help: true}
+		first := model{width: size[0], height: size[1], help: helpState{open: true}}
 		wantMW, wantMH, wantRows := helpFrame(size[0], size[1])
 		_, wantBodyRows, wantWidth, _ := first.helpBody(size[0], size[1])
 		wantStrip := lipgloss.Width(first.helpTabs(helpContentWidth(wantMW)))
@@ -468,7 +468,7 @@ func TestHelpGeometryIsStableAcrossTopics(t *testing.T) {
 			t.Fatalf("%v: the overlay drew no title row", size)
 		}
 		for page, topic := range helpTopics {
-			m := model{width: size[0], height: size[1], help: true, helpPage: page}
+			m := model{width: size[0], height: size[1], help: helpState{open: true, page: page}}
 			mw, mh, rows := helpFrame(size[0], size[1])
 			if mw != wantMW || mh != wantMH || rows != wantRows {
 				t.Fatalf("%v %s: frame became %dx%d/%d rows, was %dx%d/%d",
@@ -514,7 +514,7 @@ func TestHelpGeometryIsStableAcrossTopics(t *testing.T) {
 func TestHelpBodyReservesTheScrollbarColumn(t *testing.T) {
 	for _, size := range [][2]int{{30, 10}, {40, 15}, {60, 20}, {80, 24}, {120, 40}} {
 		for page, topic := range helpTopics {
-			m := model{width: size[0], height: size[1], help: true, helpPage: page}
+			m := model{width: size[0], height: size[1], help: helpState{open: true, page: page}}
 			mw, bodyRows, bodyWidth, lines := m.helpBody(size[0], size[1])
 			inner := helpContentWidth(mw)
 			if want := inner - helpBodyIndent - helpScrollGutter; bodyWidth != want {
@@ -554,7 +554,7 @@ func TestHelpDescriptionsShareOneColumn(t *testing.T) {
 			t.Fatal("no topic lists a shortcut")
 		}
 		for page, topic := range helpTopics {
-			m := model{width: size[0], height: size[1], help: true, helpPage: page}
+			m := model{width: size[0], height: size[1], help: helpState{open: true, page: page}}
 			_, _, bodyWidth, _ := m.helpBody(size[0], size[1])
 			if got := layoutHelpTopic(topic, bodyWidth).keyWidth; got != want {
 				t.Fatalf("%v %s: descriptions start in column %d, not the shared column %d",

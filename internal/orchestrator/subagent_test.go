@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -593,5 +594,31 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	}
 	if strings.Contains(string(contents), "ORCHESTRATOR_SUBAGENT_TOKEN") || strings.Contains(string(contents), running.controlToken) {
 		t.Fatal("control credential was persisted")
+	}
+}
+
+func TestNoteSubagentStartFailureRecordsEvent(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+	task, err := s.CreateTask("child", "do work", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.noteSubagentStartFailure(task.ID, errors.New("no capacity"))
+	updated, ok := s.GetTask(task.ID)
+	if !ok {
+		t.Fatal("task disappeared")
+	}
+	found := false
+	for _, event := range updated.Events {
+		if event.Kind == "start_failed" && event.Message == "no capacity" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("start failure not recorded: %+v", updated.Events)
 	}
 }

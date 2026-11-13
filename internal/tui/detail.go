@@ -23,7 +23,7 @@ func (m model) detailContent(width int) []string {
 		return nil
 	}
 	t := m.tasks[m.selected]
-	if m.activity {
+	if m.activity.open {
 		return m.activityContent(width)
 	}
 	var lines []string
@@ -221,8 +221,8 @@ func transcriptTab(label string, active bool) string {
 }
 
 func (m model) detailTabRow(t orchestrator.Task, width int) string {
-	row := transcriptTab("OUTPUT", !m.history && !m.activity) + faintStyle.Render("│") +
-		transcriptTab("HISTORY", m.history && !m.activity) + faintStyle.Render("  ·  ") +
+	row := transcriptTab("OUTPUT", !m.history && !m.activity.open) + faintStyle.Render("│") +
+		transcriptTab("HISTORY", m.history && !m.activity.open) + faintStyle.Render("  ·  ") +
 		mutedStyle.Render(terminalText(executorLabel(t)))
 	return fit(row, width, 1)
 }
@@ -239,7 +239,7 @@ func (m model) detailPanel(width, height int) string {
 		return panel(titleStyle.Render("TASK DETAILS")+"\n\n"+mutedStyle.Render("Select a task to view details."), width, height)
 	}
 	t := m.tasks[m.selected]
-	titleLine := titleStyle.Render(strings.ReplaceAll(terminalText(t.Title), "\n", " ")) + "  " + m.taskLabel(t)
+	titleLine := titleStyle.Render(singleLine(t.Title)) + "  " + m.taskLabel(t)
 	if action := m.currentAction(t); action != "" {
 		titleLine = lipgloss.NewStyle().Foreground(cyan).Render(action)
 	}
@@ -256,7 +256,7 @@ func (m model) detailPanel(width, height int) string {
 		lines = append(lines, m.highlightSelection(content, start, end, inner)...)
 	}
 	label := "OUTPUT"
-	if m.activity {
+	if m.activity.open {
 		label = "ACTIVITY"
 	} else if m.history {
 		label = "HISTORY"
@@ -266,11 +266,11 @@ func (m model) detailPanel(width, height int) string {
 	if focused {
 		focus = "j/k scroll · h tasks"
 	}
-	if m.activity {
+	if m.activity.open {
 		switch {
-		case m.activityExpanded && focused:
+		case m.activity.expanded && focused:
 			focus = "j/k scroll · esc collapse"
-		case m.activityExpanded:
+		case m.activity.expanded:
 			focus = "l to focus · esc collapse"
 		case focused:
 			focus = "j/k select · enter expand"

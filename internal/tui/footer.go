@@ -4,20 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
-
-func hintsWidth(hints []string) int {
-	width := 0
-	for i, hint := range hints {
-		if i > 0 {
-			width += 5 // rendered separator "  ·  "
-		}
-		width += lipgloss.Width(hint)
-	}
-	return width
-}
 
 // boardFooter keeps selected-task actions first, then the operator essentials.
 // Optional hints are dropped before the footer grows past two lines.
@@ -25,7 +13,7 @@ func (m model) boardFooter(w int) string {
 	var hints []string
 	add := func(hint string, optional bool) {
 		candidate := append(append([]string{}, hints...), hint)
-		if optional && hintsWidth(candidate) > 2*w {
+		if optional && hintRows(strings.Join(candidate, " · "), w) > 2 {
 			return
 		}
 		hints = candidate
@@ -70,8 +58,8 @@ func withHelpHint(text string, w int) string {
 func (m model) footer(w int) string {
 	footerText := m.boardFooter(w)
 	switch {
-	case m.router:
-		if m.routerFocus != routerFocusComposer {
+	case m.router.open:
+		if m.router.focus != routerFocusComposer {
 			footerText = withHelpHint("j/k move · enter open · tab next · esc tasks", w)
 		} else if _, ok := m.routerMentionQuery(); ok {
 			footerText = withHelpHint("tab complete · enter submit · esc tasks · ctrl+c quit", w)
@@ -80,8 +68,8 @@ func (m model) footer(w int) string {
 		}
 	case m.input.kind != "":
 		footerText = withHelpHint("enter submit · ctrl+j/alt+enter newline · esc cancel", w)
-	case m.activity:
-		if m.activityExpanded {
+	case m.activity.open:
+		if m.activity.expanded {
 			footerText = "esc collapse · t output · f filter · ? help · q quit"
 		} else {
 			footerText = "enter expand · t output · f filter · ? help · q quit"
@@ -99,17 +87,17 @@ func (m model) footer(w int) string {
 		hints = append(hints, strings.Join(parts, faintStyle.Render("  ·  ")))
 	}
 	footer := strings.Join(hints, "\n")
-	if m.notice != "" {
-		footer = accentStyle.Render("› "+strings.ReplaceAll(terminalText(m.notice), "\n", " ")) + "\n" + footer
+	if m.notice.text != "" {
+		footer = accentStyle.Render("› "+singleLine(m.notice.text)) + "\n" + footer
 	}
 	if m.cleanup.kind == deleteTask {
-		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+strings.ReplaceAll(terminalText(m.cleanup.title), "\n", " ")) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Removes its worktree; source workspace is untouched.")
+		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+singleLine(m.cleanup.title)) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Removes its worktree; source workspace is untouched.")
 	}
 	if m.cleanup.kind == deleteCompleted {
 		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept; worktrees are removed.")
 	}
 	if m.cleanup.kind == discardTask {
-		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+strings.ReplaceAll(terminalText(m.cleanup.title), "\n", " ")) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Refuses uncommitted or unmerged work; task history is kept.")
+		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+singleLine(m.cleanup.title)) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Refuses uncommitted or unmerged work; task history is kept.")
 	}
 	if m.cleanup.kind == discardMerged {
 		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Skips uncommitted or unmerged work; task history is kept.")

@@ -110,27 +110,27 @@ func (s *Service) recordReview(id, decision, commit, note string) error {
 		if t.DiscardPending {
 			return errors.New("worktree discard is pending; wait before reviewing the commit")
 		}
-		old := clone(*t)
-		if err := t.settleReview(decision, commit, LocalActor, note); err != nil {
-			return err
-		}
-		t.UpdatedAt = t.ReviewedAt
-		message := "Review " + decision + " by " + LocalActor
-		if t.ReviewNote != "" {
-			message += ": " + t.ReviewNote
-		}
-		t.Events = append(t.Events, Event{t.UpdatedAt, "review_" + decision, message})
 		mergeScheduled := false
-		if decision == ReviewApproved && t.Isolated {
-			if s.hasInheritedWorkspaceLocked(*t, true) {
-				t.recordMerge(mergeOutcome{Status: MergeWaiting})
-			} else {
-				t.integrating = true
-				mergeScheduled = true
+		if err := s.mutateTaskLocked(t, func(t *Task) error {
+			if err := t.settleReview(decision, commit, LocalActor, note); err != nil {
+				return err
 			}
-		}
-		if err := s.save(); err != nil {
-			*t = old
+			t.UpdatedAt = t.ReviewedAt
+			message := "Review " + decision + " by " + LocalActor
+			if t.ReviewNote != "" {
+				message += ": " + t.ReviewNote
+			}
+			t.Events = append(t.Events, Event{t.UpdatedAt, "review_" + decision, message})
+			if decision == ReviewApproved && t.Isolated {
+				if s.hasInheritedWorkspaceLocked(*t, true) {
+					t.recordMerge(mergeOutcome{Status: MergeWaiting})
+				} else {
+					t.integrating = true
+					mergeScheduled = true
+				}
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
 		if mergeScheduled {
@@ -151,4 +151,12 @@ func (t *Task) resetReview() {
 	t.ReviewedBy = ""
 	t.ReviewedAt = time.Time{}
 	t.ReviewNote = ""
+}
+
+// clearIntegration drops a previous attempt's integration outcome. A new attempt
+// must not inherit a merge result or commit from an attempt whose work it
+// replaces.
+func (t *Task) clearIntegration() {
+	t.MergeStatus, t.MergeError, t.MergeWarning, t.MergeCommit, t.WorktreeCommit = "", "", "", "", ""
+	t.MergedAt = time.Time{}
 }

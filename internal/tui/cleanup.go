@@ -27,7 +27,7 @@ type cleanupResultMsg string
 
 func (m *model) prepareCleanup(key string) {
 	if m.cleanupBusy {
-		m.notice = "Workspace cleanup is in progress."
+		m.notice.text = "Workspace cleanup is in progress."
 		return
 	}
 	request := cleanupRequest{kind: cleanupKind(key)}
@@ -35,13 +35,13 @@ func (m *model) prepareCleanup(key string) {
 	case deleteCompleted:
 		request.ids = m.service.CompletedDeletionCandidates()
 		if len(request.ids) == 0 {
-			m.notice = "No completed tasks to delete."
+			m.notice.text = "No completed tasks to delete."
 			return
 		}
 	case discardMerged:
 		request.ids = m.service.WorktreeDiscardCandidates()
 		if len(request.ids) == 0 {
-			m.notice = "No merged worktrees to discard."
+			m.notice.text = "No merged worktrees to discard."
 			return
 		}
 	case deleteTask, discardTask:
@@ -50,18 +50,18 @@ func (m *model) prepareCleanup(key string) {
 		}
 		task := m.tasks[m.selected]
 		if request.kind == discardTask && (!task.Isolated || task.ExecutionWorkspace == "") {
-			m.notice = "Selected task has no retained worktree."
+			m.notice.text = "Selected task has no retained worktree."
 			return
 		}
 		if task.Status == orchestrator.Running {
-			m.notice = "Cancel and stop the running task before cleanup."
+			m.notice.text = "Cancel and stop the running task before cleanup."
 			return
 		}
 		request.ids = []string{task.ID}
 		request.title = task.Title
 	}
 	m.cleanup = request
-	m.notice = ""
+	m.notice.text = ""
 }
 
 func (m model) cleanupKey(key string) (model, tea.Cmd) {
@@ -70,12 +70,12 @@ func (m model) cleanupKey(key string) (model, tea.Cmd) {
 	case "y":
 		m.cleanup = cleanupRequest{}
 		m.cleanupBusy = true
-		m.notice = "Workspace cleanup is in progress."
+		m.notice.text = "Workspace cleanup is in progress."
 		service := m.service
 		return m, func() tea.Msg { return cleanupResultMsg(request.run(service)) }
 	case "n", "esc":
 		m.cleanup = cleanupRequest{}
-		m.notice = "Cleanup canceled."
+		m.notice.text = "Cleanup canceled."
 	case "ctrl+c":
 		return m.requestQuit(), nil
 	}

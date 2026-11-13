@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
@@ -125,9 +123,7 @@ func TestBoardFooterIsContextualAndDimensionsStayBounded(t *testing.T) {
 			t.Fatalf("%v: footer advertises an invalid action: %q", size, footer)
 		}
 		view := m.View()
-		if lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
-			t.Fatalf("%v: rendered %dx%d", size, lipgloss.Width(view), lipgloss.Height(view))
-		}
+		assertFits(t, view, size[0], size[1])
 	}
 }
 
@@ -141,11 +137,11 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 	}
 
 	activity := base
-	activity.activity = true
+	activity.activity.open = true
 	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "enter expand") || !strings.Contains(footer, "f filter") || strings.Contains(footer, "esc collapse") || strings.Contains(footer, "c cancel") {
 		t.Fatalf("activity list footer changed: %q", footer)
 	}
-	activity.activityExpanded = true
+	activity.activity.expanded = true
 	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "esc collapse") || strings.Contains(footer, "enter expand") {
 		t.Fatalf("expanded activity footer changed: %q", footer)
 	}
@@ -184,7 +180,7 @@ func TestAttentionJumpFollowsGroupedOrderAndWraps(t *testing.T) {
 		{ID: "normal", Title: "normal", Status: orchestrator.Completed},
 		{ID: "parent", Title: "parent", Status: orchestrator.Failed},
 	}
-	m := model{tasks: tasks, selected: 2, historyOffset: 4, activityID: "call", activityExpanded: true}
+	m := model{tasks: tasks, selected: 2, historyOffset: 4, activity: activityState{id: "call", expanded: true}}
 	if !m.jumpAttention() {
 		t.Fatal("attention jump found nothing")
 	}
@@ -216,11 +212,7 @@ func TestAttentionJumpWithoutAttentionKeepsSelection(t *testing.T) {
 }
 
 func TestAttentionShortcutResetsDetailState(t *testing.T) {
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	first, err := s.CreateTask("first", "work", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -232,50 +224,46 @@ func TestAttentionShortcutResetsDetailState(t *testing.T) {
 	if err := s.RecordReport(second.ID, "blocked", "need input"); err != nil {
 		t.Fatal(err)
 	}
-	m := model{service: s, tasks: s.ListTasks(), selected: 1, width: 120, height: 35, historyOffset: 5, activityID: "call", activityExpanded: true}
+	m := model{service: s, tasks: s.ListTasks(), selected: 1, width: 120, height: 35, historyOffset: 5, activity: activityState{id: "call", expanded: true}}
 	if m.selectedID() != first.ID {
 		t.Fatalf("test setup selected %q, want %q", m.selectedID(), first.ID)
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	m = key(m, runeKey("!"))
 	if m.selectedID() != second.ID {
 		t.Fatalf("! selected %q, want %q", m.selectedID(), second.ID)
 	}
-	if m.historyOffset != 0 || m.activityID != "" || m.activityExpanded {
-		t.Fatalf("! did not reset detail state: offset=%d activity=%q expanded=%v", m.historyOffset, m.activityID, m.activityExpanded)
+	if m.historyOffset != 0 || m.activity.id != "" || m.activity.expanded {
+		t.Fatalf("! did not reset detail state: offset=%d activity=%q expanded=%v", m.historyOffset, m.activity.id, m.activity.expanded)
 	}
 }
 
 func TestAttentionShortcutNoAttentionShowsNotice(t *testing.T) {
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	if _, err := s.CreateTask("first", "work", t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selected := m.selectedID()
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	m = key(m, runeKey("!"))
 	if m.selectedID() != selected {
 		t.Fatalf("! changed selection without attention: %q -> %q", selected, m.selectedID())
 	}
-	if !strings.Contains(m.notice, "No tasks need action") {
-		t.Fatalf("missing no-action notice: %q", m.notice)
+	if !strings.Contains(m.notice.text, "No tasks need action") {
+		t.Fatalf("missing no-action notice: %q", m.notice.text)
 	}
 }
 
 func TestAttentionShortcutStaysTextInComposers(t *testing.T) {
 	m := model{input: composer{kind: newTaskInput}}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	m = key(m, runeKey("!"))
 	if m.input.text != "!" {
 		t.Fatalf("task composer consumed ! as a command: %q", m.input.text)
 	}
 
-	m = model{router: true}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
-	if m.routerDraft != "!" || !m.router {
-		t.Fatalf("router composer consumed ! as a command: %q", m.routerDraft)
+	m = model{router: routerState{open: true}}
+	m = key(m, runeKey("!"))
+	if m.router.draft != "!" || !m.router.open {
+		t.Fatalf("router composer consumed ! as a command: %q", m.router.draft)
 	}
 }
 
@@ -307,7 +295,7 @@ func TestNarrowLayoutShowsSelectedTaskPosition(t *testing.T) {
 }
 
 func TestHelpDocumentsAttentionJump(t *testing.T) {
-	m := model{width: 120, height: 40, help: true}
+	m := model{width: 120, height: 40, help: helpState{open: true}}
 	m.scrollHelp(1)
 	plain := ansi.Strip(m.View())
 	if !strings.Contains(plain, "Next task needing action") {
@@ -343,22 +331,22 @@ func TestTickKeepsSelectionByIDWhenANewerTaskArrives(t *testing.T) {
 }
 
 func TestNoticeExpiresAfterRepeatedTicks(t *testing.T) {
-	m := model{notice: "saved"}
+	m := model{notice: noticeState{text: "saved"}}
 	for i := 0; i < 4; i++ {
 		next, _ := m.Update(tickMsg(time.Now()))
 		m = next.(model)
 	}
-	if m.notice == "" {
+	if m.notice.text == "" {
 		t.Fatal("notice expired too early")
 	}
 	next, _ := m.Update(tickMsg(time.Now()))
 	m = next.(model)
-	if m.notice != "" {
-		t.Fatalf("stale notice survived five ticks: %q", m.notice)
+	if m.notice.text != "" {
+		t.Fatalf("stale notice survived five ticks: %q", m.notice.text)
 	}
-	m.notice = "fresh"
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
-	if m.notice != "fresh" {
-		t.Fatalf("unrelated key cleared the notice: %q", m.notice)
+	m.notice.text = "fresh"
+	m = key(m, runeKey("?"))
+	if m.notice.text != "fresh" {
+		t.Fatalf("unrelated key cleared the notice: %q", m.notice.text)
 	}
 }

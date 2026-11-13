@@ -59,19 +59,19 @@ func clampRouterSelection(index, count int) int {
 }
 
 func (m *model) clampRouter() {
-	if m.routerFocus < routerFocusComposer || m.routerFocus > routerFocusRecent {
-		m.routerFocus = routerFocusComposer
+	if m.router.focus < routerFocusComposer || m.router.focus > routerFocusRecent {
+		m.router.focus = routerFocusComposer
 	}
-	m.routerSelected = clampRouterSelection(m.routerSelected, len(m.attentionTasks()))
-	m.recentSelected = clampRouterSelection(m.recentSelected, len(m.tasks))
-	if !m.routerFocusHasRows(m.routerFocus) {
+	m.router.selected = clampRouterSelection(m.router.selected, len(m.attentionTasks()))
+	m.router.recentSelected = clampRouterSelection(m.router.recentSelected, len(m.tasks))
+	if !m.routerFocusHasRows(m.router.focus) {
 		// Do not let the composer take keys silently after a list empties:
 		// the next Enter would submit the draft where the operator expected
 		// a no-op on the list.
-		if m.routerFocus != routerFocusComposer {
-			m.notice = "That list is empty; the request draft has focus."
+		if m.router.focus != routerFocusComposer {
+			m.notice.text = "That list is empty; the request draft has focus."
 		}
-		m.routerFocus = routerFocusComposer
+		m.router.focus = routerFocusComposer
 	}
 }
 
@@ -90,7 +90,7 @@ func (m model) routerFocusHasRows(focus int) bool {
 // nextRouterFocus cycles through the focus modes, skipping empty lists so Tab
 // always lands somewhere useful.
 func (m model) nextRouterFocus(delta int) int {
-	focus := m.routerFocus
+	focus := m.router.focus
 	for step := 0; step < 3; step++ {
 		focus = (focus + delta + 3) % 3
 		if m.routerFocusHasRows(focus) {
@@ -102,7 +102,7 @@ func (m model) nextRouterFocus(delta int) int {
 
 // routerFocusRows is the number of selectable rows in the focused list.
 func (m model) routerFocusRows() int {
-	switch m.routerFocus {
+	switch m.router.focus {
 	case routerFocusAttention:
 		return min(len(m.attentionTasks()), routerListLimit)
 	case routerFocusRecent:
@@ -117,27 +117,27 @@ func (m *model) moveRouterSelection(delta int) {
 	if rows == 0 {
 		return
 	}
-	if m.routerFocus == routerFocusRecent {
-		m.recentSelected = max(0, min(rows-1, m.recentSelected+delta))
+	if m.router.focus == routerFocusRecent {
+		m.router.recentSelected = max(0, min(rows-1, m.router.recentSelected+delta))
 		return
 	}
-	m.routerSelected = max(0, min(rows-1, m.routerSelected+delta))
+	m.router.selected = max(0, min(rows-1, m.router.selected+delta))
 }
 
 // routerFocusedTask returns the task under the selection in the focused list.
 func (m model) routerFocusedTask() (orchestrator.Task, bool) {
-	switch m.routerFocus {
+	switch m.router.focus {
 	case routerFocusAttention:
 		attention := m.attentionTasks()
 		if len(attention) == 0 {
 			return orchestrator.Task{}, false
 		}
-		return attention[min(m.routerSelected, len(attention)-1)], true
+		return attention[min(m.router.selected, len(attention)-1)], true
 	case routerFocusRecent:
 		if len(m.tasks) == 0 {
 			return orchestrator.Task{}, false
 		}
-		return m.tasks[min(m.recentSelected, len(m.tasks)-1)], true
+		return m.tasks[min(m.router.recentSelected, len(m.tasks)-1)], true
 	}
 	return orchestrator.Task{}, false
 }
@@ -146,14 +146,13 @@ func (m model) routerFocusedTask() (orchestrator.Task, bool) {
 // selected, whether it was chosen from the action list or the recent list.
 func (m *model) openRouterTask(target orchestrator.Task) {
 	m.refreshTasks()
-	m.router = false
-	m.routerFocus = routerFocusComposer
+	m.router.open = false
+	m.router.focus = routerFocusComposer
 	m.historyOffset = 0
 	m.detailFocus = false
 	// The previous task's activity selection does not apply to the task being
 	// opened; the tick only clears it when it observes the selection change.
-	m.activityID = ""
-	m.activityExpanded = false
+	m.resetActivitySelection()
 	for i, task := range m.tasks {
 		if task.ID == target.ID {
 			m.selected = i
@@ -161,7 +160,7 @@ func (m *model) openRouterTask(target orchestrator.Task) {
 		}
 	}
 	m.clamp()
-	m.notice = "Inspecting " + terminalText(target.Title)
+	m.notice.text = "Inspecting " + terminalText(target.Title)
 }
 
 func routeWorkspace(task orchestrator.Task) string {
@@ -181,10 +180,10 @@ func routeNotice(task orchestrator.Task) string {
 // recentSelectedID is the task under the recent-list selection, so a refresh
 // that inserts a newer task can keep the rail on the same task.
 func (m model) recentSelectedID() string {
-	if m.recentSelected < 0 || m.recentSelected >= len(m.tasks) {
+	if m.router.recentSelected < 0 || m.router.recentSelected >= len(m.tasks) {
 		return ""
 	}
-	return m.tasks[m.recentSelected].ID
+	return m.tasks[m.router.recentSelected].ID
 }
 
 // anchorRecentSelection restores the recent-list rail after the task snapshot
@@ -195,12 +194,17 @@ func (m *model) anchorRecentSelection(id string) {
 	if id != "" {
 		for i, task := range m.tasks {
 			if task.ID == id {
-				m.recentSelected = i
+				m.router.recentSelected = i
 				break
 			}
 		}
 	}
-	m.recentSelected = clampRouterSelection(m.recentSelected, len(m.tasks))
+	m.router.recentSelected = clampRouterSelection(m.router.recentSelected, len(m.tasks))
+}
+
+// clearRouterDraft empties the request form's draft and cursor.
+func (m *model) clearRouterDraft() {
+	m.router.draft, m.router.cursor, m.router.scroll = "", 0, 0
 }
 
 // routerKey handles the unified entry point. Typing goes to the composer; Tab
@@ -212,12 +216,12 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case "ctrl+c":
 		return m.requestQuit(), nil
 	case "esc":
-		m.router = false
-		m.routerFocus = routerFocusComposer
+		m.router.open = false
+		m.router.focus = routerFocusComposer
 		m.clampScroll()
 		return m, nil
 	case "tab", "shift+tab":
-		if msg.String() == "tab" && m.routerFocus == routerFocusComposer {
+		if msg.String() == "tab" && m.router.focus == routerFocusComposer {
 			if query, ok := m.routerMentionQuery(); ok {
 				m.completeRouterMention(query)
 				return m, nil
@@ -227,11 +231,11 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		if msg.String() == "shift+tab" {
 			delta = -1
 		}
-		m.routerFocus = m.nextRouterFocus(delta)
+		m.router.focus = m.nextRouterFocus(delta)
 		m.clampRouter()
 		return m, nil
 	}
-	if m.routerFocus != routerFocusComposer {
+	if m.router.focus != routerFocusComposer {
 		switch msg.String() {
 		case "j", "down":
 			m.moveRouterSelection(1)
@@ -247,26 +251,26 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "enter":
-		text := strings.TrimSpace(m.routerDraft)
+		text := strings.TrimSpace(m.router.draft)
 		if strings.HasPrefix(text, "/") {
 			m = m.slashCommand(text)
-			m.routerDraft, m.routerCursor, m.routerScroll = "", 0, 0
+			m.clearRouterDraft()
 			return m, nil
 		}
 		if text == "" {
-			m.notice = "Enter a request first."
+			m.notice.text = "Enter a request first."
 			return m, nil
 		}
 		if m.service == nil {
-			m.notice = "Request form is not connected to a service."
+			m.notice.text = "Request form is not connected to a service."
 			return m, nil
 		}
 		// Nothing can be routed without a usable provider, so route the
 		// operator to the login menu instead of accepting the draft.
 		if !m.service.AnyProviderConfigured() {
-			m.loginMenu = true
-			m.loginIndex = 0
-			m.notice = forcedLoginNotice
+			m.login.menu = true
+			m.login.index = 0
+			m.notice.text = forcedLoginNotice
 			return m, nil
 		}
 		service, workspace := m.service, m.workspace
@@ -291,8 +295,8 @@ type mentionQuery struct {
 }
 
 func (m model) routerMentionQuery() (mentionQuery, bool) {
-	text := m.routerDraft
-	cursor := min(max(0, m.routerCursor), len(text))
+	text := m.router.draft
+	cursor := min(max(0, m.router.cursor), len(text))
 	if cursor == 0 {
 		return mentionQuery{}, false
 	}
@@ -352,27 +356,27 @@ func (m model) routerMatchingAgents(prefix string) []orchestrator.AgentInfo {
 func (m *model) completeRouterMention(query mentionQuery) {
 	agents := m.routerMatchingAgents(query.prefix)
 	if len(agents) == 0 {
-		m.notice = "No registered executor matches @" + query.prefix
+		m.notice.text = "No registered executor matches @" + query.prefix
 		return
 	}
 	replacement := "@" + agents[0].Name
-	m.routerDraft = m.routerDraft[:query.start] + replacement + m.routerDraft[query.end:]
+	m.router.draft = m.router.draft[:query.start] + replacement + m.router.draft[query.end:]
 	cursor := query.start + len(replacement)
-	if cursor == len(m.routerDraft) {
-		m.routerDraft += " "
+	if cursor == len(m.router.draft) {
+		m.router.draft += " "
 		cursor++
-	} else if r, _ := utf8.DecodeRuneInString(m.routerDraft[cursor:]); !unicode.IsSpace(r) {
-		m.routerDraft = m.routerDraft[:cursor] + " " + m.routerDraft[cursor:]
+	} else if r, _ := utf8.DecodeRuneInString(m.router.draft[cursor:]); !unicode.IsSpace(r) {
+		m.router.draft = m.router.draft[:cursor] + " " + m.router.draft[cursor:]
 		cursor++
 	}
-	m.routerCursor = cursor
-	m.routerScroll = 0
+	m.router.cursor = cursor
+	m.router.scroll = 0
 }
 
 // routerMentionHintLines shows available executors while the leading mention is
 // being edited. The composer keeps the first matching name for Tab completion.
 func (m model) routerMentionHintLines(width int) []string {
-	if m.loginProvider != "" || m.routerFocus != routerFocusComposer {
+	if m.login.provider != "" || m.router.focus != routerFocusComposer {
 		return nil
 	}
 	query, ok := m.routerMentionQuery()
@@ -392,13 +396,13 @@ func (m model) routerMentionHintLines(width int) []string {
 }
 
 func (m model) routerEditor() editor {
-	return editor{text: m.routerDraft, cursor: m.routerCursor, scroll: m.routerScroll}
+	return editor{text: m.router.draft, cursor: m.router.cursor, scroll: m.router.scroll}
 }
 
 func (m *model) setRouterEditor(e editor) {
-	m.routerDraft = e.text
-	m.routerCursor = e.cursor
-	m.routerScroll = e.scroll
+	m.router.draft = e.text
+	m.router.cursor = e.cursor
+	m.router.scroll = e.scroll
 }
 
 func (m model) routerComposerWidth() int {
@@ -425,7 +429,7 @@ func (m model) routerPanel(width, height int) string {
 	} else {
 		limit := min(len(action), routerListLimit)
 		for i := 0; i < limit; i++ {
-			if m.routerFocus == routerFocusAttention && i == m.routerSelected {
+			if m.router.focus == routerFocusAttention && i == m.router.selected {
 				selectedLine = len(lines)
 			}
 			lines = append(lines, m.routerAttentionRow(action[i], i, inner))
@@ -441,7 +445,7 @@ func (m model) routerPanel(width, height int) string {
 	} else {
 		limit := min(len(m.tasks), routerListLimit)
 		for i := 0; i < limit; i++ {
-			if m.routerFocus == routerFocusRecent && i == m.recentSelected {
+			if m.router.focus == routerFocusRecent && i == m.router.recentSelected {
 				selectedLine = len(lines)
 			}
 			lines = append(lines, m.routerRecentRow(m.tasks[i], i, inner))
@@ -460,9 +464,9 @@ func (m model) routerPanel(width, height int) string {
 }
 
 func (m model) routerAttentionRow(task orchestrator.Task, index, width int) string {
-	title := strings.ReplaceAll(terminalText(task.Title), "\n", " ")
+	title := singleLine(task.Title)
 	plain := "● " + strings.ToUpper(task.Stage()) + "  " + title
-	if m.routerFocus == routerFocusAttention && index == m.routerSelected {
+	if m.router.focus == routerFocusAttention && index == m.router.selected {
 		return selectionRow(plain, width)
 	}
 	return fit(m.taskLabel(task)+"  "+workspaceBadgeFor(task).glyphOnly()+"  "+titleStyle.Render(title), width, 1)
@@ -470,9 +474,9 @@ func (m model) routerAttentionRow(task orchestrator.Task, index, width int) stri
 
 func (m model) routerRecentRow(task orchestrator.Task, index, width int) string {
 	stamp := task.CreatedAt.Local().Format("15:04")
-	title := strings.ReplaceAll(terminalText(task.Title), "\n", " ")
+	title := singleLine(task.Title)
 	executor := terminalText(executorLabel(task))
-	if m.routerFocus == routerFocusRecent && index == m.recentSelected {
+	if m.router.focus == routerFocusRecent && index == m.router.recentSelected {
 		_, label, _ := m.taskState(task)
 		plain := stamp + "  ● " + label + "  " + executor + "  " + title
 		return selectionRow(plain, width)

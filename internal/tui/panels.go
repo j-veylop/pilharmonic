@@ -9,18 +9,32 @@ import (
 )
 
 func panel(content string, width, height int) string {
-	if width < 4 || height < 2 {
-		return fit(content, width, height)
-	}
-	return panelStyle.Width(width - 2).Height(height - 2).MaxWidth(width).MaxHeight(height).Render(fit(content, width-4, height-2))
+	return panelWith(content, width, height, false)
 }
 
 func focusedPanel(content string, width, height int, focused bool) string {
-	rendered := panel(content, width, height)
-	if !focused || width < 4 || height < 2 {
-		return rendered
+	return panelWith(content, width, height, focused)
+}
+
+func panelWith(content string, width, height int, focused bool) string {
+	if width < 4 || height < 2 {
+		return fit(content, width, height)
 	}
-	return panelStyle.BorderForeground(accent).Width(width - 2).Height(height - 2).MaxWidth(width).MaxHeight(height).Render(fit(content, width-4, height-2))
+	style := panelStyle
+	if focused {
+		style = panelStyle.BorderForeground(accent)
+	}
+	return style.Width(width - 2).Height(height - 2).MaxWidth(width).MaxHeight(height).Render(fit(content, width-4, height-2))
+}
+
+// windowRows returns the visible slice bounds [start, end) for a list of n rows
+// scrolled so the selected row stays inside slots visible rows.
+func windowRows(selected, n, slots int) (start, end int) {
+	slots = max(1, slots)
+	if selected >= slots {
+		start = min(selected-slots+1, max(0, n-slots))
+	}
+	return start, min(n, start+slots)
 }
 
 func modeBadge(label string, color lipgloss.Color) string {
@@ -54,10 +68,6 @@ func (m model) taskPanel(width, height int) string {
 			mutedStyle.Render("No tasks yet."),
 			mutedStyle.Render("n creates one."))
 	} else {
-		slots := (height - 4) / 2
-		if slots < 1 {
-			slots = 1
-		}
 		rows := taskListRows(m.tasks)
 		selected := 0
 		for i, row := range rows {
@@ -66,11 +76,8 @@ func (m model) taskPanel(width, height int) string {
 				break
 			}
 		}
-		start := 0
-		if selected >= slots {
-			start = selected - slots + 1
-		}
-		for i := start; i < len(rows) && i < start+slots; i++ {
+		start, end := windowRows(selected, len(rows), (height-4)/2)
+		for i := start; i < end; i++ {
 			row := rows[i]
 			lines = append(lines,
 				m.taskTitleRow(row.task, inner, row.index == m.selected),
@@ -119,9 +126,8 @@ func profileLabel(p orchestrator.Profile) string {
 
 func (m model) profilePanel(width, height int) string {
 	lines := []string{titleStyle.Render("SELECT PROFILE"), mutedStyle.Render("Queued task only"), ""}
-	slots := max(1, (height-7)/2)
-	start := max(0, m.profilePicker.index-slots+1)
-	for i := start; i < len(m.profilePicker.choices) && i < start+slots; i++ {
+	start, end := windowRows(m.profilePicker.index, len(m.profilePicker.choices), (height-7)/2)
+	for i := start; i < end; i++ {
 		profile := m.profilePicker.choices[i]
 		prefix := "  "
 		style := titleStyle
@@ -156,9 +162,8 @@ func (m model) profilePanel(width, height int) string {
 
 func (m model) agentPanel(width, height int) string {
 	lines := []string{titleStyle.Render("SELECT AGENT"), mutedStyle.Render("Queued task only"), ""}
-	slots := max(1, (height-7)/2)
-	start := max(0, m.agentPicker.index-slots+1)
-	for i := start; i < len(m.agentPicker.choices) && i < start+slots; i++ {
+	start, end := windowRows(m.agentPicker.index, len(m.agentPicker.choices), (height-7)/2)
+	for i := start; i < end; i++ {
 		agent := m.agentPicker.choices[i]
 		prefix := "  "
 		style := titleStyle

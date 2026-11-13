@@ -427,7 +427,7 @@ func (m model) helpKey(key string) (model, tea.Cmd) {
 	case "ctrl+c":
 		return m.requestQuit(), nil
 	case "?", "f1", "esc", "q":
-		m.help = false
+		m.help.open = false
 	case "l", "right", " ", "tab":
 		m.scrollHelp(1)
 	case "h", "left", "shift+tab":
@@ -441,26 +441,26 @@ func (m model) helpKey(key string) (model, tea.Cmd) {
 	case "pgup", "ctrl+b", "ctrl+u":
 		m.scrollHelpBody(-8)
 	case "home", "g":
-		m.helpPage, m.helpScroll = 0, 0
+		m.help.page, m.help.scroll = 0, 0
 	case "end", "G":
-		m.helpPage, m.helpScroll = len(helpTopics)-1, 0
+		m.help.page, m.help.scroll = len(helpTopics)-1, 0
 	}
 	return m, nil
 }
 
 func (m model) helpLines(width int) []string {
-	page := max(0, min(len(helpTopics)-1, m.helpPage))
+	page := max(0, min(len(helpTopics)-1, m.help.page))
 	return layoutHelpTopic(helpTopics[page], max(1, width)).plain()
 }
 
 func (m *model) scrollHelp(delta int) {
-	page := max(0, min(len(helpTopics)-1, m.helpPage+delta))
-	if page == m.helpPage {
+	page := max(0, min(len(helpTopics)-1, m.help.page+delta))
+	if page == m.help.page {
 		// Already at that end of the strip: keep the line the operator is on
 		// rather than jumping them back to the top of the topic.
 		return
 	}
-	m.helpPage, m.helpScroll = page, 0
+	m.help.page, m.help.scroll = page, 0
 }
 
 func (m *model) scrollHelpBody(delta int) {
@@ -473,15 +473,15 @@ func (m *model) scrollHelpBody(delta int) {
 	}
 	_, bodyRows, _, lines := m.helpBody(w, h)
 	if bodyRows < 1 {
-		m.helpScroll = 0
+		m.help.scroll = 0
 		return
 	}
-	m.helpScroll = max(0, min(max(0, len(lines)-bodyRows), m.helpScroll+delta))
+	m.help.scroll = max(0, min(max(0, len(lines)-bodyRows), m.help.scroll+delta))
 }
 
 // helpPageIndex is the clamped topic the overlay shows.
 func (m model) helpPageIndex() int {
-	return max(0, min(len(helpTopics)-1, m.helpPage))
+	return max(0, min(len(helpTopics)-1, m.help.page))
 }
 
 // helpContentWidth is the frame width minus its borders.
@@ -657,7 +657,7 @@ func (m model) helpModal(w, h int) (mw, mh int, content []string) {
 	bodyWidth := helpBodyWidth(mw)
 	lines := m.helpBodyStyled(mw)
 	total := len(lines)
-	start := min(max(0, m.helpScroll), max(0, total-bodyRows))
+	start := min(max(0, m.help.scroll), max(0, total-bodyRows))
 	content = append(content, m.helpTitleRow(inner))
 	if strip := m.helpTabs(inner); strip != "" {
 		content = append(content, strip)
@@ -681,21 +681,56 @@ func (m model) helpView(background string, w, h int) string {
 		return fit(background, w, h)
 	}
 	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
-	bg := strings.Split(background, "\n")
-	box := strings.Split(modal, "\n")
-	x, y := (w-mw)/2, (h-mh)/2
-	result := make([]string, max(0, h))
-	for row := range result {
-		line := ""
-		if row < len(bg) {
-			line = ansi.Strip(bg[row])
-		}
-		line = lipgloss.PlaceHorizontal(w, lipgloss.Left, line)
-		if row >= y && row < y+len(box) {
-			result[row] = mutedStyle.Faint(true).Render(ansi.Cut(line, 0, x)) + box[row-y] + mutedStyle.Faint(true).Render(ansi.Cut(line, x+mw, w))
-		} else {
-			result[row] = mutedStyle.Faint(true).Render(line)
-		}
+	return overlay(background, modal, w, h, mw, mh)
+}
+
+// Help is the one surface an operator can reach from every screen. F1 opens it
+// wherever they are, including inside a text field; ? opens it on every surface
+// where the character is not part of the draft being typed.
+//
+// The overlay never clears the state underneath it, so closing help returns to
+// the board, request form, composer, picker or menu exactly as it was left.
+
+// textEntryFocused reports whether the active surface is a text field that
+// owns printable characters. Help must not steal ? from a draft, from an API
+// key prompt or from a custom model ID.
+func (m model) textEntryFocused() bool {
+	if m.login.provider != "" {
+		return true
 	}
-	return fit(strings.Join(result, "\n"), w, h)
+	if m.input.kind != "" {
+		return true
+	}
+	if m.router.open && m.router.focus == routerFocusComposer {
+		return true
+	}
+	if m.models.menu && m.models.step == modelStepCustom {
+		return true
+	}
+	return false
+}
+
+// helpShortcut reports whether msg opens the help overlay on the current
+// surface. Pasted text is never a shortcut, even when it is exactly "?".
+func (m model) helpShortcut(msg tea.KeyMsg) bool {
+	if msg.Paste {
+		return false
+	}
+	switch msg.String() {
+	case "f1":
+		return true
+	case "?":
+		return !m.textEntryFocused()
+	}
+	return false
+}
+
+// openHelp shows the overlay above whatever is on screen. Navigation starts
+// over so the shortcut always lands on the first topic.
+func (m model) openHelp() model {
+	m.help.open = true
+	m.help.page, m.help.scroll = 0, 0
+	m.quitConfirm = false
+	m.vimG, m.vimCount = false, 0
+	return m
 }

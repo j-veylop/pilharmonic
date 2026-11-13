@@ -1,21 +1,15 @@
 package tui
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"pilharmonic/internal/orchestrator"
 )
 
 func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	dir := reviewRepo(t)
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	task, err := s.CreateTask("work", "mandate", dir)
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +18,7 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if !strings.Contains(m.View(), "shared workspace") {
 		t.Fatal("initial workspace state not shown")
 	}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("w")})
+	next, cmd := m.Update(runeKey("w"))
 	m = next.(model)
 	if cmd == nil {
 		t.Fatal("isolation toggle produced no command")
@@ -35,11 +29,11 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if !got.Isolated {
 		t.Fatal("isolation was not enabled")
 	}
-	if !strings.Contains(m.notice, "Isolation enabled") || !strings.Contains(m.View(), "isolated worktree requested") {
-		t.Fatalf("isolation state not surfaced: notice=%q view=%s", m.notice, m.View())
+	if !strings.Contains(m.notice.text, "Isolation enabled") || !strings.Contains(m.View(), "isolated worktree requested") {
+		t.Fatalf("isolation state not surfaced: notice=%q view=%s", m.notice.text, m.View())
 	}
 
-	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("w")})
+	next, cmd = m.Update(runeKey("w"))
 	m = next.(model)
 	if cmd == nil {
 		t.Fatal("isolation toggle off produced no command")
@@ -50,8 +44,8 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if got.Isolated {
 		t.Fatal("isolation was not disabled")
 	}
-	if !strings.Contains(m.notice, "Isolation off") || !strings.Contains(m.View(), "shared workspace") {
-		t.Fatalf("disabled state not surfaced: notice=%q view=%s", m.notice, m.View())
+	if !strings.Contains(m.notice.text, "Isolation off") || !strings.Contains(m.View(), "shared workspace") {
+		t.Fatalf("disabled state not surfaced: notice=%q view=%s", m.notice.text, m.View())
 	}
 }
 

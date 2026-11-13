@@ -51,28 +51,28 @@ func (c *composer) setEditorState(e editor) {
 // composerOpen reports whether View docks an input box at the bottom of the
 // screen: the request form and every composer type share it.
 func (m model) composerOpen() bool {
-	return m.router || m.input.kind != ""
+	return m.router.open || m.input.kind != ""
 }
 
 // composerFocused reports whether keys reach the draft. The request form hands
 // focus to its action or recent list with Tab, which dims the box.
 func (m model) composerFocused() bool {
-	if m.router {
-		return m.routerFocus == routerFocusComposer
+	if m.router.open {
+		return m.router.focus == routerFocusComposer
 	}
 	return true
 }
 
 // composerEditor returns the draft the open box edits.
 func (m model) composerEditor() editor {
-	if m.router {
+	if m.router.open {
 		return m.routerEditor()
 	}
 	return m.input.editorState()
 }
 
 func (m *model) setComposerEditor(e editor) {
-	if m.router {
+	if m.router.open {
 		m.setRouterEditor(e)
 		return
 	}
@@ -122,7 +122,7 @@ func (m model) composerDraftRows(reserved int) int {
 
 // composerNeededRows is how many rows the draft occupies once wrapped.
 func (m model) composerNeededRows() int {
-	if m.router && m.loginProvider != "" {
+	if m.router.open && m.login.provider != "" {
 		return 1
 	}
 	e := m.composerEditor()
@@ -134,7 +134,7 @@ func (m model) composerNeededRows() int {
 
 // composerExtraRows counts the hint rows rendered under the box.
 func (m model) composerExtraRows() int {
-	if !m.router {
+	if !m.router.open {
 		return 0
 	}
 	return len(m.routerMentionHintLines(m.composerBoxWidth()))
@@ -143,9 +143,9 @@ func (m model) composerExtraRows() int {
 // composerTitle names the box on its top border and, when it fits, shows the
 // compiled-in authorization step whose decision is recorded on the right.
 func (m model) composerTitle() (title, note string) {
-	if m.router {
-		if m.loginProvider != "" {
-			return "API KEY", terminalText(m.loginProvider)
+	if m.router.open {
+		if m.login.provider != "" {
+			return "API KEY", terminalText(m.login.provider)
 		}
 		return "NEW REQUEST", "authorization " + orchestrator.LocalPolicyVersion
 	}
@@ -157,7 +157,7 @@ func (m model) composerTitle() (title, note string) {
 
 // composerPlaceholder describes the expected draft while the box is empty.
 func (m model) composerPlaceholder() string {
-	if m.router {
+	if m.router.open {
 		return "Describe the work… type @ to choose an executor"
 	}
 	switch m.input.kind {
@@ -189,7 +189,7 @@ func (m model) composerBoxLines(width, rows int) []string {
 		prefix = mutedStyle.Render(composerPrompt)
 	}
 	pad := strings.Repeat(" ", lipgloss.Width(composerPrompt))
-	if m.router && m.loginProvider != "" {
+	if m.router.open && m.login.provider != "" {
 		return m.loginComposerLines(inner)
 	}
 	e := m.composerEditor()
@@ -273,7 +273,7 @@ func composerTopBorder(title, note string, width int, color lipgloss.Color, focu
 // executor hints.
 func (m model) composerBlock(width, rows int) []string {
 	lines := m.composerBox(width, rows)
-	if m.router {
+	if m.router.open {
 		lines = append(lines, m.routerMentionHintLines(width)...)
 	}
 	return lines
@@ -288,7 +288,7 @@ func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case "enter":
 		prompt := strings.TrimSpace(m.input.text)
 		if prompt == "" {
-			m.notice = "Enter text first."
+			m.notice.text = "Enter text first."
 			return m, nil
 		}
 		return m, m.submitInputCmd(prompt)

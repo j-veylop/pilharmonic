@@ -182,15 +182,10 @@ func trimRequestPoliteness(text string) string {
 // a mutation signal: read-only and ambiguous mandates share the source
 // workspace. This is a lexical heuristic, not proof of what an agent will do,
 // so a misleading mandate can still write to the shared workspace. Operators
-// can explicitly enable isolation for any queued task.
-func taskMakesChanges(prompt string) bool {
-	return mandateRequestsChanges(prompt)
-}
-
-// mandateRequestsChanges reports whether the mandate contains an imperative
-// edit action. It checks the first request verb and verbs after punctuation or
-// connectors. Nouns such as "fix" in "review the fix" are not requests.
-func mandateRequestsChanges(text string) bool {
+// can explicitly enable isolation for any queued task. It checks the first
+// request verb and verbs after punctuation or connectors, so nouns such as
+// "fix" in "review the fix" are not requests.
+func taskMakesChanges(text string) bool {
 	text = trimRequestPoliteness(strings.ToLower(text))
 	text = strings.ReplaceAll(text, "\n", " ; ")
 	tokens := mandateTokenPattern.FindAllString(text, -1)

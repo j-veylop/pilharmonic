@@ -36,6 +36,12 @@ func terminalText(s string) string {
 	return b.String()
 }
 
+// singleLine flattens untrusted text for a one-row surface: terminal control
+// characters are stripped and embedded newlines become spaces.
+func singleLine(s string) string {
+	return strings.ReplaceAll(terminalText(s), "\n", " ")
+}
+
 // layout is the single source of the terminal's responsive geometry: the body
 // height left between header and footer, whether the task sidebar shows, and
 // the width each panel receives. Panels derive their inner rows and columns
@@ -111,7 +117,7 @@ func (m model) View() string {
 	if m.input.kind != "" {
 		mode, modeColor = " INSERT ", amber
 	}
-	if m.router {
+	if m.router.open {
 		mode, modeColor = " REQUEST ", accent
 	}
 	mode = modeBadge(mode, modeColor)
@@ -121,7 +127,7 @@ func (m model) View() string {
 	footer := m.footer(w)
 	bodyHeight := l.bodyHeight
 	var body string
-	if m.router {
+	if m.router.open {
 		body = m.routerPanel(w, bodyHeight)
 	} else if l.sidebar {
 		left := l.taskWidth
@@ -142,16 +148,16 @@ func (m model) View() string {
 	screen := fit(strings.Join(rows, "\n"), w, h)
 	// Menus compose over the board and help composes over everything, so the
 	// overlay an operator opened is always the one on top.
-	if m.loginMenu {
+	if m.login.menu {
 		screen = m.loginMenuView(screen, w, h)
 	}
-	if m.modelMenu {
+	if m.models.menu {
 		screen = m.modelMenuView(screen, w, h)
 	}
-	if m.agentClassMenu {
+	if m.agentClass.menu {
 		screen = m.agentClassMenuView(screen, w, h)
 	}
-	if m.help {
+	if m.help.open {
 		screen = m.helpView(screen, w, h)
 	}
 	// The quit confirmation answers an exit request from any of those surfaces,

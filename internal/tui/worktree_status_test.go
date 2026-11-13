@@ -67,7 +67,7 @@ func TestTaskBoardShowsWorkspaceAndMergeBadge(t *testing.T) {
 }
 
 func TestRouterRecentRoutesShowWorkspaceBadge(t *testing.T) {
-	m := model{router: true, width: 120, height: 35, tasks: []orchestrator.Task{{
+	m := model{router: routerState{open: true}, width: 120, height: 35, tasks: []orchestrator.Task{{
 		ID: "task", Title: "merged work", Status: orchestrator.Completed, Agent: "general",
 		CreatedAt: time.Now(), Isolated: true, MergeStatus: orchestrator.MergeMerged, MergeCommit: "def456",
 	}}}

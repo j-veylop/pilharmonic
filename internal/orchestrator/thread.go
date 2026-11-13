@@ -301,21 +301,21 @@ func (s *Service) FollowUp(taskID, text string) (bool, error) {
 		now := time.Now().UTC()
 		trigger := Trigger{ID: id, Source: "manual", Text: text, CreatedAt: now, Delivery: DeliveryAtStart}
 		decision := Decision{TriggerID: id, Outcome: "context", Reason: "manual follow-up; requeues the task without changing its mandate", CreatedAt: now}
-		old := clone(*t)
-		t.Context = append(t.Context, trigger)
-		t.Status = Queued
-		t.ScheduleRequested = false
-		t.ScheduledAt = time.Time{}
-		t.UpdatedAt = now
-		t.Error = ""
-		t.MergeStatus, t.MergeError, t.MergeWarning, t.MergeCommit, t.WorktreeCommit = "", "", "", "", ""
-		t.MergedAt = time.Time{}
-		t.resetReview()
-		t.Events = append(t.Events, Event{now, "followup", "Follow-up context recorded"}, Event{now, "requeued", "Task requeued for follow-up"})
-		thread.Triggers = append(thread.Triggers, trigger)
-		thread.Decisions = append(thread.Decisions, decision)
-		if err := s.save(); err != nil {
-			*t = old
+		err := s.mutateTaskLocked(t, func(t *Task) error {
+			t.Context = append(t.Context, trigger)
+			t.Status = Queued
+			t.ScheduleRequested = false
+			t.ScheduledAt = time.Time{}
+			t.UpdatedAt = now
+			t.Error = ""
+			t.clearIntegration()
+			t.resetReview()
+			t.Events = append(t.Events, Event{now, "followup", "Follow-up context recorded"}, Event{now, "requeued", "Task requeued for follow-up"})
+			thread.Triggers = append(thread.Triggers, trigger)
+			thread.Decisions = append(thread.Decisions, decision)
+			return nil
+		})
+		if err != nil {
 			thread.Triggers = thread.Triggers[:len(thread.Triggers)-1]
 			thread.Decisions = thread.Decisions[:len(thread.Decisions)-1]
 			return false, err
@@ -341,19 +341,16 @@ func (s *Service) SetContextSubscription(taskID string, enabled bool) error {
 		if t.ContextPaused == !enabled {
 			return nil
 		}
-		old := clone(*t)
-		t.ContextPaused = !enabled
-		t.UpdatedAt = time.Now().UTC()
-		message := "Thread context paused"
-		if enabled {
-			message = "Thread context resumed; earlier inputs are not replayed"
-		}
-		t.Events = append(t.Events, Event{t.UpdatedAt, "subscription", message})
-		if err := s.save(); err != nil {
-			*t = old
-			return err
-		}
-		return nil
+		return s.mutateTaskLocked(t, func(t *Task) error {
+			t.ContextPaused = !enabled
+			t.UpdatedAt = time.Now().UTC()
+			message := "Thread context paused"
+			if enabled {
+				message = "Thread context resumed; earlier inputs are not replayed"
+			}
+			t.Events = append(t.Events, Event{t.UpdatedAt, "subscription", message})
+			return nil
+		})
 	}
 	return errors.New("task not found")
 }

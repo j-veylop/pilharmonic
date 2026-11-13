@@ -74,66 +74,65 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	}
 	id := newID()
 	runCtx, cancel := context.WithCancel(ctx)
-	old := clone(*t)
-	t.Status = Running
-	t.ScheduleRequested = false
-	t.ScheduledAt = time.Time{}
-	t.UpdatedAt = time.Now().UTC()
-	// Reconcile an automatic choice with the immutable mandate before any
-	// workspace is prepared. This also applies to state written by the previous
-	// role-based heuristic. Explicit operator choices are preserved.
-	if t.IsolationAuto && t.ExecutionWorkspace == "" {
-		isolated := taskMakesChanges(t.Prompt)
-		if isolated != t.Isolated {
-			t.Isolated = isolated
-			message := "Shared source workspace selected; no requested change detected"
-			if isolated {
-				message = "Isolated worktree selected for requested change"
+	if err := s.mutateTaskLocked(t, func(t *Task) error {
+		t.Status = Running
+		t.ScheduleRequested = false
+		t.ScheduledAt = time.Time{}
+		t.UpdatedAt = time.Now().UTC()
+		// Reconcile an automatic choice with the immutable mandate before any
+		// workspace is prepared. This also applies to state written by the previous
+		// role-based heuristic. Explicit operator choices are preserved.
+		if t.IsolationAuto && t.ExecutionWorkspace == "" {
+			isolated := taskMakesChanges(t.Prompt)
+			if isolated != t.Isolated {
+				t.Isolated = isolated
+				message := "Shared source workspace selected; no requested change detected"
+				if isolated {
+					message = "Isolated worktree selected for requested change"
+				}
+				t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
 			}
-			t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
 		}
-	}
-	t.Output = ""
-	t.Error = ""
-	t.MergeStatus, t.MergeError, t.MergeWarning, t.MergeCommit, t.WorktreeCommit = "", "", "", "", ""
-	t.MergedAt = time.Time{}
-	t.resetReview()
-	// A task accepted before profiles existed has no snapshot yet; record the one
-	// it actually runs with.
-	if t.ProfileSpec == nil {
-		t.ProfileName = profile.Name
-		t.ProfileSpec = &profile
-		t.Events = append(t.Events, Event{t.UpdatedAt, "profile", "Profile resolved: " + t.ProfileName})
-	}
-	remainingDepth := s.subagentMaxDepth - t.Depth
-	remainingChildren := 0
-	if remainingDepth > 0 && s.subagentMaxChildren > 0 && !profile.NoSubagents {
-		remainingChildren = s.remainingSubagentChildrenLocked(t.ID)
-	}
-	if s.controlPath != "" && remainingDepth > 0 && remainingChildren > 0 {
-		t.controlSocket = s.controlPath
-		t.controlToken = newID()
-		t.controlGuidance = s.subagentGuidanceLocked(remainingDepth, remainingChildren)
-		if t.ParentID == "" && t.Agent == DefaultRouteAgent &&
-			(len(profile.Tools) == 0 || slices.Contains(profile.Tools, "bash")) {
-			t.controlGuidance += coordinatorGuidance(profile)
+		t.Output = ""
+		t.Error = ""
+		t.clearIntegration()
+		t.resetReview()
+		// A task accepted before profiles existed has no snapshot yet; record the one
+		// it actually runs with.
+		if t.ProfileSpec == nil {
+			t.ProfileName = profile.Name
+			t.ProfileSpec = &profile
+			t.Events = append(t.Events, Event{t.UpdatedAt, "profile", "Profile resolved: " + t.ProfileName})
 		}
-	} else {
-		t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
-	}
-	t.SpecialistTools = ceiling
-	attempt := Attempt{ID: id, Agent: t.Agent, Tools: profile.Tools, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt}
-	if selector, ok := runner.(interface{ RequestedModel(*Profile) string }); ok {
-		attempt.RequestedModel = selector.RequestedModel(&profile)
-	}
-	t.Attempts = append(t.Attempts, attempt)
-	if dropped := retainAttemptOutputs(t, s.attemptRetention); dropped > 0 {
-		t.Events = append(t.Events, retentionEvent(t, dropped, s.attemptRetention))
-	}
-	t.recordStartDeliveries(id, t.UpdatedAt)
-	t.Events = append(t.Events, Event{t.UpdatedAt, "started", "Agent started (attempt " + id + ")"})
-	if err := s.save(); err != nil {
-		*t = old
+		remainingDepth := s.subagentMaxDepth - t.Depth
+		remainingChildren := 0
+		if remainingDepth > 0 && s.subagentMaxChildren > 0 && !profile.NoSubagents {
+			remainingChildren = s.remainingSubagentChildrenLocked(t.ID)
+		}
+		if s.controlPath != "" && remainingDepth > 0 && remainingChildren > 0 {
+			t.controlSocket = s.controlPath
+			t.controlToken = newID()
+			t.controlGuidance = s.subagentGuidanceLocked(remainingDepth, remainingChildren)
+			if t.ParentID == "" && t.Agent == DefaultRouteAgent &&
+				(len(profile.Tools) == 0 || slices.Contains(profile.Tools, "bash")) {
+				t.controlGuidance += coordinatorGuidance(profile)
+			}
+		} else {
+			t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
+		}
+		t.SpecialistTools = ceiling
+		attempt := Attempt{ID: id, Agent: t.Agent, Tools: profile.Tools, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt}
+		if selector, ok := runner.(interface{ RequestedModel(*Profile) string }); ok {
+			attempt.RequestedModel = selector.RequestedModel(&profile)
+		}
+		t.Attempts = append(t.Attempts, attempt)
+		if dropped := retainAttemptOutputs(t, s.attemptRetention); dropped > 0 {
+			t.Events = append(t.Events, retentionEvent(t, dropped, s.attemptRetention))
+		}
+		t.recordStartDeliveries(id, t.UpdatedAt)
+		t.Events = append(t.Events, Event{t.UpdatedAt, "started", "Agent started (attempt " + id + ")"})
+		return nil
+	}); err != nil {
 		cancel()
 		return err
 	}
@@ -249,15 +248,15 @@ func isProfileError(err error) bool {
 
 // failIneligibleLocked records a durable failure for a task that cannot start.
 func (s *Service) failIneligibleLocked(t *Task, cause error) error {
-	old := clone(*t)
-	t.Status = Failed
-	t.ScheduleRequested = false
-	t.ScheduledAt = time.Time{}
-	t.UpdatedAt = time.Now().UTC()
-	t.Error = cause.Error()
-	t.Events = append(t.Events, Event{t.UpdatedAt, "failed", "Execution parameters rejected: " + cause.Error()})
-	if err := s.save(); err != nil {
-		*t = old
+	if err := s.mutateTaskLocked(t, func(t *Task) error {
+		t.Status = Failed
+		t.ScheduleRequested = false
+		t.ScheduledAt = time.Time{}
+		t.UpdatedAt = time.Now().UTC()
+		t.Error = cause.Error()
+		t.Events = append(t.Events, Event{t.UpdatedAt, "failed", "Execution parameters rejected: " + cause.Error()})
+		return nil
+	}); err != nil {
 		return err
 	}
 	s.removePendingLocked(t.ID)
@@ -265,19 +264,19 @@ func (s *Service) failIneligibleLocked(t *Task, cause error) error {
 }
 
 func (s *Service) cancelQueuedLocked(t *Task, cause error) error {
-	old := clone(*t)
-	t.Status = Canceled
-	t.ScheduleRequested = false
-	t.ScheduledAt = time.Time{}
-	t.UpdatedAt = time.Now().UTC()
-	message := "Canceled before start"
-	if cause != nil {
-		t.Error = cause.Error()
-		message = "Scheduled request canceled: " + t.Error
-	}
-	t.Events = append(t.Events, Event{t.UpdatedAt, "canceled", message})
-	if err := s.save(); err != nil {
-		*t = old
+	if err := s.mutateTaskLocked(t, func(t *Task) error {
+		t.Status = Canceled
+		t.ScheduleRequested = false
+		t.ScheduledAt = time.Time{}
+		t.UpdatedAt = time.Now().UTC()
+		message := "Canceled before start"
+		if cause != nil {
+			t.Error = cause.Error()
+			message = "Scheduled request canceled: " + t.Error
+		}
+		t.Events = append(t.Events, Event{t.UpdatedAt, "canceled", message})
+		return nil
+	}); err != nil {
 		return err
 	}
 	s.removePendingLocked(t.ID)
@@ -305,5 +304,57 @@ func (s *Service) watchPending(id string, request *pendingRequest) {
 			}
 			return
 		}
+	}
+}
+
+// DefaultAttemptRetention is how many attempts per task keep their full output.
+// A task that is retried many times would otherwise grow the state file by up
+// to maxOutput for every attempt. Earlier attempt records, statuses, errors and
+// timings remain; only their copied transcript is dropped, and the task records
+// one event when that happens. Zero keeps every attempt output and is the
+// explicit opt-out.
+const DefaultAttemptRetention = 8
+
+// SetAttemptRetention changes how many attempts per task keep their full
+// output. It applies as each new attempt starts. Zero disables truncation.
+func (s *Service) SetAttemptRetention(keep int) error {
+	if keep < 0 {
+		return errors.New("attempt retention must not be negative")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return errors.New("service is shutting down")
+	}
+	s.attemptRetention = keep
+	return nil
+}
+
+// retainAttemptOutputs drops the copied transcript of attempts older than the
+// newest keep attempts. It returns how many outputs it dropped so the caller
+// can record one event, and it never touches attempt identity or outcome.
+func retainAttemptOutputs(task *Task, keep int) int {
+	if keep <= 0 || len(task.Attempts) <= keep {
+		return 0
+	}
+	limit := len(task.Attempts) - keep
+	dropped := 0
+	for i := 0; i < limit; i++ {
+		attempt := &task.Attempts[i]
+		if attempt.Output == "" || attempt.OutputTruncated {
+			continue
+		}
+		attempt.Output = ""
+		attempt.OutputTruncated = true
+		dropped++
+	}
+	return dropped
+}
+
+func retentionEvent(task *Task, dropped, keep int) Event {
+	return Event{
+		Time:    task.UpdatedAt,
+		Kind:    "retention",
+		Message: fmt.Sprintf("Dropped output for %d earlier attempt(s); %d newest kept in full", dropped, keep),
 	}
 }

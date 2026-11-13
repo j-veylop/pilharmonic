@@ -193,7 +193,7 @@ func (v detailViewport) clamp(x, y int) textPosition {
 // detailViewport maps mouse coordinates onto the visible detail content. It
 // deliberately excludes the sidebar, title tabs, footer and modal overlays.
 func (m model) detailViewport() (detailViewport, bool) {
-	if m.router || m.help || m.input.kind != "" || m.cleanup.kind != "" ||
+	if m.router.open || m.help.open || m.input.kind != "" || m.cleanup.kind != "" ||
 		m.quitConfirm || m.agentPicker.target != "" || m.profilePicker.target != "" ||
 		len(m.tasks) == 0 || m.selected < 0 || m.selected >= len(m.tasks) {
 		return detailViewport{}, false
@@ -233,7 +233,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if tea.MouseEvent(msg).IsWheel() {
-		if m.help {
+		if m.help.open {
 			if msg.Button == tea.MouseButtonWheelUp {
 				m.scrollHelpBody(-3)
 			}
@@ -242,7 +242,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.router || m.input.kind != "" || m.cleanup.kind != "" ||
+		if m.router.open || m.input.kind != "" || m.cleanup.kind != "" ||
 			m.agentPicker.target != "" || m.profilePicker.target != "" {
 			return m, nil
 		}
@@ -272,7 +272,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		text := selectedText(m.selection.lines, m.selection)
 		if strings.TrimSpace(text) == "" {
-			m.notice = "Copy selection: nothing to copy."
+			m.notice.text = "Copy selection: nothing to copy."
 			return m, nil
 		}
 		return m, copySelectionCmd(text, m.clipboard)
@@ -284,7 +284,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	// Help covers the text underneath it; a click must not start a selection
 	// in a pane the operator cannot see.
-	if m.help {
+	if m.help.open {
 		return m, nil
 	}
 

@@ -43,15 +43,11 @@ func (s *Service) SetSubagentLimits(maxDepth, maxChildren int) error {
 // SpawnSubagent records and starts a child task for work delegated by a running
 // parent. The child gets a separate thread, immutable mandate, decision and
 // attempt. It does not inherit the parent's context or authority beyond the
-// delegated mandate, and its lifecycle is independent after creation.
+// delegated mandate, and its lifecycle is independent after creation. This is
+// the trusted in-process entry point used by the CLI and terminal UI;
+// control-socket callers must present the parent attempt's credential through
+// spawnSubagent instead.
 func (s *Service) SpawnSubagent(parentID, title, prompt, agent string) (Task, error) {
-	return s.SpawnSubagentAsOperator(parentID, title, prompt, agent)
-}
-
-// SpawnSubagentAsOperator is the trusted in-process entry point used by the CLI
-// and terminal UI. Control-socket callers must present the parent attempt's
-// credential through spawnSubagent instead.
-func (s *Service) SpawnSubagentAsOperator(parentID, title, prompt, agent string) (Task, error) {
 	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, "", "", true)
 }
 
@@ -260,12 +256,12 @@ func (s *Service) noteSubagentStartFailure(id string, cause error) {
 		if t.ID != id {
 			continue
 		}
-		old := clone(*t)
-		now := time.Now().UTC()
-		t.UpdatedAt = now
-		t.Events = append(t.Events, Event{now, "start_failed", cause.Error()})
-		if err := s.save(); err != nil {
-			*t = old
+		if err := s.mutateTaskLocked(t, func(t *Task) error {
+			now := time.Now().UTC()
+			t.UpdatedAt = now
+			t.Events = append(t.Events, Event{now, "start_failed", cause.Error()})
+			return nil
+		}); err != nil {
 			s.persistErr = err
 		}
 		return

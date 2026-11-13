@@ -6,26 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
-const maxSpecialistToolsConfigSize = 1 << 20
+const maxSpecialistToolsConfigSize = maxConfigSize
 
 // LoadSpecialistTools replaces the specialist tool overrides with the contents
-// of a JSON object mapping bundled specialist names to Pi tool lists.
+// of a JSON object mapping bundled specialist names to Pi tool lists. It walks
+// the tokens rather than decoding into a map so a duplicated name is an error
+// instead of a silent overwrite.
 func (s *Service) LoadSpecialistTools(path string) error {
-	f, err := os.Open(path)
+	body, err := readConfigFile(path, "specialist tools")
 	if err != nil {
 		return err
-	}
-	defer func() { _ = f.Close() }()
-	body, err := io.ReadAll(io.LimitReader(f, maxSpecialistToolsConfigSize+1))
-	if err != nil {
-		return err
-	}
-	if len(body) > maxSpecialistToolsConfigSize {
-		return errors.New("specialist tools config exceeds 1 MiB")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	loaded := make(map[string][]string)

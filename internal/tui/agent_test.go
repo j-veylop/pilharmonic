@@ -26,7 +26,7 @@ func TestAgentPickerSelectAndCancel(t *testing.T) {
 	}
 	s.RegisterRunner("alternate", noopAgent{})
 	m := model{service: s, tasks: s.ListTasks(), width: 80, height: 24}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+	m = key(m, runeKey("A"))
 	if m.agentPicker.target != task.ID || !strings.Contains(m.View(), "SELECT AGENT") {
 		t.Fatal("picker not opened")
 	}
@@ -40,7 +40,7 @@ func TestAgentPickerSelectAndCancel(t *testing.T) {
 	if got.Agent != "alternate" || m.agentPicker.target != "" {
 		t.Fatalf("selection failed: %+v", got)
 	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+	m = key(m, runeKey("A"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
 	got, _ = s.GetTask(task.ID)
 	if m.agentPicker.target != "" || got.Agent != "alternate" {
@@ -49,17 +49,13 @@ func TestAgentPickerSelectAndCancel(t *testing.T) {
 }
 
 func TestAgentPickerReportsCapturedTargetThatDisappeared(t *testing.T) {
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	task, err := s.CreateTask("work", "mandate", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := model{service: s, tasks: s.ListTasks(), width: 80, height: 24}
-	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+	m = key(m, runeKey("A"))
 	if err := s.DeleteTask(task.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +64,8 @@ func TestAgentPickerReportsCapturedTargetThatDisappeared(t *testing.T) {
 	}
 	next, _ := m.Update(tickMsg{})
 	m = key(next.(model), tea.KeyMsg{Type: tea.KeyEnter})
-	if m.notice != "task not found" || m.agentPicker.target != "" {
-		t.Fatalf("missing captured task was not reported/closed: notice=%q picker=%+v", m.notice, m.agentPicker)
+	if m.notice.text != "task not found" || m.agentPicker.target != "" {
+		t.Fatalf("missing captured task was not reported/closed: notice=%q picker=%+v", m.notice.text, m.agentPicker)
 	}
 }
 
@@ -96,6 +92,68 @@ func TestAgentPickerShowsCapabilities(t *testing.T) {
 	for _, want := range []string{"Live follow-up context", "tool activity", "structured reports"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in agent picker: %s", want, view)
+		}
+	}
+}
+
+func TestProfilePickerSelectAndCancel(t *testing.T) {
+	s := newTestService(t)
+	task, err := s.CreateTask("work", "mandate", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RegisterProfile(orchestrator.Profile{Name: "reviewer", Description: "Review only", NoIntegrate: true}); err != nil {
+		t.Fatal(err)
+	}
+	m := model{service: s, tasks: s.ListTasks(), width: 80, height: 24}
+	m = key(m, runeKey("P"))
+	if m.profilePicker.target != task.ID || !strings.Contains(m.View(), "SELECT PROFILE") {
+		t.Fatal("picker not opened")
+	}
+	for i, profile := range m.profilePicker.choices {
+		if profile.Name == "reviewer" {
+			m.profilePicker.index = i
+		}
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	got, _ := s.GetTask(task.ID)
+	if got.ProfileName != "reviewer" || m.profilePicker.target != "" {
+		t.Fatalf("selection failed: %+v", got)
+	}
+	if view := m.View(); !strings.Contains(view, "reviewer") {
+		t.Fatalf("selected profile not displayed: %s", view)
+	}
+	m = key(m, runeKey("P"))
+	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	got, _ = s.GetTask(task.ID)
+	if m.profilePicker.target != "" || got.ProfileName != "reviewer" {
+		t.Fatal("cancel changed selection")
+	}
+}
+
+func TestImplementerSummaryDistinguishesExecutorFromProfile(t *testing.T) {
+	p := orchestrator.Profile{Name: orchestrator.DefaultProfileName}
+	task := orchestrator.Task{Agent: "implementer", ProfileName: p.Name, ProfileSpec: &p}
+	if got := executorLabel(task); got != "implementer" || profileLabel(p) != "Executor defaults" {
+		t.Fatalf("built-in profile: summary %q, picker %q", got, profileLabel(p))
+	}
+	p.NoSubagents = true
+	if got := executorLabel(task); got != "implementer · profile implementer" || profileLabel(p) != p.Name {
+		t.Fatalf("configured profile: summary %q, picker %q", got, profileLabel(p))
+	}
+}
+
+func TestChildSummaryAndAttemptModel(t *testing.T) {
+	task := orchestrator.Task{ParentID: "parent", Agent: "explorer", ProfileName: "coordinator",
+		Attempts: []orchestrator.Attempt{{RequestedModel: "deepseek/deepseek-flash"}}}
+	if got := executorLabel(task); got != "explorer · subagent" {
+		t.Fatalf("child summary: %s", got)
+	}
+	m := model{tasks: []orchestrator.Task{task}}
+	detail := strings.Join(m.detailContent(100), "\n")
+	for _, want := range []string{"Profile: coordinator", "Last attempt model: deepseek/deepseek-flash"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("missing %q in %s", want, detail)
 		}
 	}
 }

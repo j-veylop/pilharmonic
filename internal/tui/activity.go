@@ -10,6 +10,23 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
+// activityFilter selects which tool calls the activity panel lists.
+type activityFilter int
+
+const (
+	activityFilterAll activityFilter = iota
+	activityFilterLatest
+	activityFilterErrors
+)
+
+// resetActivitySelection clears the activity cursor so a task change does not
+// carry one task's selected tool call to another.
+func (m *model) resetActivitySelection() {
+	m.activity.id = ""
+	m.activity.attempt = ""
+	m.activity.expanded = false
+}
+
 func (m model) selectedActivity() (orchestrator.ToolActivity, int, bool) {
 	if len(m.tasks) == 0 || m.selected < 0 || m.selected >= len(m.tasks) {
 		return orchestrator.ToolActivity{}, 0, false
@@ -19,43 +36,41 @@ func (m model) selectedActivity() (orchestrator.ToolActivity, int, bool) {
 		return orchestrator.ToolActivity{}, 0, false
 	}
 	for i, a := range activities {
-		if a.ID == m.activityID && (m.activityAttempt == "" || a.AttemptID == m.activityAttempt) {
+		if a.ID == m.activity.id && (m.activity.attempt == "" || a.AttemptID == m.activity.attempt) {
 			return a, i, true
 		}
 	}
-	if m.activityID != "" {
+	if m.activity.id != "" {
 		return orchestrator.ToolActivity{}, 0, false
 	}
 	return activities[0], 0, true
 }
 func (m *model) activityKey(key string) bool {
-	if !m.activity {
+	if !m.activity.open {
 		return false
 	}
 	if key == "f" {
-		m.activityFilter = (m.activityFilter + 1) % 3
-		m.activityID = ""
-		m.activityAttempt = ""
-		m.activityExpanded = false
+		m.activity.filter = (m.activity.filter + 1) % 3
+		m.resetActivitySelection()
 		m.historyOffset = 0
 		return true
 	}
-	if key == "esc" && m.activityExpanded {
-		m.activityExpanded = false
+	if key == "esc" && m.activity.expanded {
+		m.activity.expanded = false
 		m.historyOffset = 0
 		return true
 	}
 	if key == "enter" {
 		a, _, ok := m.selectedActivity()
 		if ok {
-			m.activityID = a.ID
-			m.activityAttempt = a.AttemptID
-			m.activityExpanded = !m.activityExpanded
+			m.activity.id = a.ID
+			m.activity.attempt = a.AttemptID
+			m.activity.expanded = !m.activity.expanded
 			m.historyOffset = m.maxScroll()
 		}
 		return true
 	}
-	if m.activityExpanded || (!m.detailFocus && !m.fullscreen) {
+	if m.activity.expanded || (!m.detailFocus && !m.fullscreen) {
 		return false
 	}
 	if key != "j" && key != "k" && key != "up" && key != "down" {
@@ -71,8 +86,8 @@ func (m *model) activityKey(key string) bool {
 	}
 	activities := m.visibleActivities()
 	i = max(0, min(len(activities)-1, i+delta))
-	m.activityID = activities[i].ID
-	m.activityAttempt = activities[i].AttemptID
+	m.activity.id = activities[i].ID
+	m.activity.attempt = activities[i].AttemptID
 	// Keep the cursor visible while retaining the existing line-scroll controls.
 	m.historyOffset = max(0, len(activities)-i-1-m.detailPage()/2)
 	return true
@@ -94,7 +109,7 @@ func (m model) activityContent(width int) []string {
 		return nil
 	}
 	activities := m.visibleActivities()
-	if m.activityExpanded {
+	if m.activity.expanded {
 		a, _, ok := m.selectedActivity()
 		if !ok {
 			add("This call is no longer retained. Esc returns to the list.")
@@ -114,10 +129,10 @@ func (m model) activityContent(width int) []string {
 		add(readableResult(a.Result))
 		return lines
 	}
-	scope := []string{"all attempts", "latest attempt", "errors only"}[m.activityFilter]
+	scope := []string{"all attempts", "latest attempt", "errors only"}[int(m.activity.filter)]
 	add(mutedStyle.Render("Filter: " + scope + " (f)"))
 	if len(activities) == 0 {
-		if m.activityFilter == 0 {
+		if m.activity.filter == activityFilterAll {
 			add("No tool calls yet.")
 		} else {
 			add("No calls match this filter.")
@@ -192,7 +207,7 @@ func (m model) visibleActivities() []orchestrator.ToolActivity {
 		return nil
 	}
 	t := m.tasks[m.selected]
-	if m.activityFilter == 0 {
+	if m.activity.filter == activityFilterAll {
 		return t.Activities
 	}
 	latest := ""
@@ -201,10 +216,10 @@ func (m model) visibleActivities() []orchestrator.ToolActivity {
 	}
 	var result []orchestrator.ToolActivity
 	for _, a := range t.Activities {
-		if m.activityFilter == 1 && a.AttemptID != latest {
+		if m.activity.filter == activityFilterLatest && a.AttemptID != latest {
 			continue
 		}
-		if m.activityFilter == 2 && a.Status != "failed" && a.Status != "interrupted" {
+		if m.activity.filter == activityFilterErrors && a.Status != "failed" && a.Status != "interrupted" {
 			continue
 		}
 		result = append(result, a)

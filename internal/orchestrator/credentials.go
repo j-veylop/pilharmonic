@@ -58,28 +58,7 @@ func saveCredentials(path string, providers map[string]string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".credentials-*")
-	if err != nil {
-		return err
-	}
-	name := f.Name()
-	defer func() { _ = os.Remove(name) }()
-	if err := f.Chmod(0600); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return syncStateFile(path, name)
+	return writeFileAtomic(path, ".credentials-*", b)
 }
 
 // SetProviderCredential stores an API key for a provider prefix, replacing any

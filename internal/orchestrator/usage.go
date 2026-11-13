@@ -17,16 +17,8 @@ type TokenUsage struct {
 	OutputTokens int64 `json:"output_tokens"`
 }
 
-// Total is the token count a provider would report as the sum of both halves.
-func (u TokenUsage) Total() int64 { return u.InputTokens + u.OutputTokens }
-
 // IsZero reports whether the provider reported no tokens at all.
 func (u TokenUsage) IsZero() bool { return u.InputTokens == 0 && u.OutputTokens == 0 }
-
-// addTokenUsage returns the sum of two counts.
-func addTokenUsage(a, b TokenUsage) TokenUsage {
-	return TokenUsage{InputTokens: a.InputTokens + b.InputTokens, OutputTokens: a.OutputTokens + b.OutputTokens}
-}
 
 // AttemptUsage is the token usage recorded for one attempt, together with the
 // cost estimated when the provider reported it. The cost is fixed at recording

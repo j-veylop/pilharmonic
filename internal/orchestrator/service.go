@@ -229,7 +229,7 @@ func Open(path string) (*Service, error) {
 		routeProfile:        DefaultProfileName,
 		cancel:              make(map[string]context.CancelFunc),
 		discarding:          make(map[string]bool),
-		limit:               defaultConcurrency,
+		limit:               DefaultConcurrency,
 		live:                make(map[string]chan Trigger),
 		pending:             make(map[string]*pendingRequest),
 		activity:            make(map[string]chan struct{}),

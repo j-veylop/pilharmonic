@@ -13,8 +13,6 @@ import (
 // library and the launcher agree.
 const DefaultConcurrency = 4
 
-const defaultConcurrency = DefaultConcurrency
-
 type pendingRequest struct {
 	ctx  context.Context
 	stop chan struct{}
@@ -239,7 +237,6 @@ func (s *Service) failUnavailableAgentsLocked() error {
 type profileError struct{ err error }
 
 func (e profileError) Error() string { return e.err.Error() }
-func (e profileError) Unwrap() error { return e.err }
 
 func isProfileError(err error) bool {
 	var target profileError

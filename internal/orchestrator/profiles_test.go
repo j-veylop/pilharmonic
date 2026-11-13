@@ -482,12 +482,9 @@ func TestSpecialistAndProfileCompose(t *testing.T) {
 	}
 }
 
-func TestProfileErrorUnwrapsCause(t *testing.T) {
+func TestProfileErrorReportsCauseAndIsRecognized(t *testing.T) {
 	cause := errors.New("executor cannot honor profile")
 	wrapped := profileError{err: cause}
-	if !errors.Is(wrapped, cause) {
-		t.Fatal("profile error did not unwrap to its cause")
-	}
 	if wrapped.Error() != cause.Error() {
 		t.Fatalf("profile error text %q", wrapped.Error())
 	}

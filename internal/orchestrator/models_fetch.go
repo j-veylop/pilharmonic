@@ -33,12 +33,17 @@ type modelListCache struct {
 // FetchModels returns the models a provider currently offers, fetched from its
 // OpenAI-compatible /models endpoint. Results are cached for modelListTTL; the
 // curated catalog in providerModels is the fallback the UI uses on error, so a
-// failed or unsupported endpoint never blocks model selection.
+// failed or unsupported endpoint never blocks model selection. Bedrock has no
+// such endpoint, so it reports an unsupported-listing error and the menu uses
+// its curated catalog.
 func (s *Service) FetchModels(ctx context.Context, provider string) ([]string, error) {
 	provider = strings.TrimSpace(provider)
 	endpoint, known := fantasyEndpoints[provider]
 	if !known {
 		return nil, fmt.Errorf("unknown provider %q", provider)
+	}
+	if endpoint.baseURL == "" {
+		return nil, fmt.Errorf("provider %q does not list models over HTTP; use the curated catalog or type an ID", provider)
 	}
 
 	s.modelCache.mu.Lock()

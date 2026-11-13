@@ -62,6 +62,9 @@ func TestProviderCredentialRoundTrip(t *testing.T) {
 }
 
 func TestProviderCredentialCountsEnvironment(t *testing.T) {
+	// Pin the environment so ambient credentials (including AWS ones that
+	// configure Bedrock) cannot make this test pass or fail by accident.
+	isolateProviderEnvironment(t)
 	dir := t.TempDir()
 	s, err := Open(filepath.Join(dir, "state.json"))
 	if err != nil {
@@ -69,9 +72,6 @@ func TestProviderCredentialCountsEnvironment(t *testing.T) {
 	}
 	defer func() { _ = s.Shutdown() }()
 
-	for _, name := range []string{"OPENAI_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "HYPER_API_KEY"} {
-		t.Setenv(name, "")
-	}
 	if s.AnyProviderConfigured() {
 		t.Fatal("empty environment reported a configured provider")
 	}

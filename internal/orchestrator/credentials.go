@@ -70,6 +70,9 @@ func (s *Service) SetProviderCredential(provider, key string) error {
 		return fmt.Errorf("unknown provider %q (supported: %s)", provider, supportedFantasyProviders())
 	}
 	if key == "" {
+		if provider == bedrockProvider {
+			return errors.New("bearer token is required (Bedrock without a stored key uses the AWS credential chain)")
+		}
 		return errors.New("API key is required")
 	}
 	s.mu.Lock()
@@ -95,8 +98,10 @@ func (s *Service) RemoveProviderCredential(provider string) error {
 
 // ProviderCredentials lists every known provider in a stable order, marking
 // which are configured by a stored key or by the provider's environment
-// variable. Keys are never returned.
+// variable. Keys are never returned. The AWS probe runs before the lock is
+// taken so no file read happens while the service mutex is held.
 func (s *Service) ProviderCredentials() []ProviderCredential {
+	bedrockConfigured := bedrockAWSConfigured()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	names := make([]string, 0, len(fantasyEndpoints))
@@ -106,7 +111,7 @@ func (s *Service) ProviderCredentials() []ProviderCredential {
 	sort.Strings(names)
 	result := make([]ProviderCredential, 0, len(names))
 	for _, name := range names {
-		result = append(result, ProviderCredential{Provider: name, Configured: s.providerConfiguredLocked(name)})
+		result = append(result, ProviderCredential{Provider: name, Configured: s.providerConfiguredLocked(name, bedrockConfigured)})
 	}
 	return result
 }
@@ -115,10 +120,11 @@ func (s *Service) ProviderCredentials() []ProviderCredential {
 // now, either through a stored key or an environment variable. The terminal
 // forces the login menu while this is false.
 func (s *Service) AnyProviderConfigured() bool {
+	bedrockConfigured := bedrockAWSConfigured()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for name := range fantasyEndpoints {
-		if s.providerConfiguredLocked(name) {
+		if s.providerConfiguredLocked(name, bedrockConfigured) {
 			return true
 		}
 	}
@@ -127,10 +133,16 @@ func (s *Service) AnyProviderConfigured() bool {
 
 // providerConfiguredLocked applies the one definition of "configured" used by
 // both listing and the forced-login check: a stored key, or a non-empty
-// environment variable for that provider. The caller holds s.mu.
-func (s *Service) providerConfiguredLocked(name string) bool {
+// environment variable for that provider. Bedrock also counts the AWS
+// credential chain, because it needs no stored key on a machine that is already
+// authenticated to AWS; bedrockConfigured carries that result so this function
+// does no I/O. The caller holds s.mu.
+func (s *Service) providerConfiguredLocked(name string, bedrockConfigured bool) bool {
 	if s.creds[name] != "" {
 		return true
 	}
-	return os.Getenv(fantasyEndpoints[name].envVar) != ""
+	if strings.TrimSpace(os.Getenv(fantasyEndpoints[name].envVar)) != "" {
+		return true
+	}
+	return name == bedrockProvider && bedrockConfigured
 }

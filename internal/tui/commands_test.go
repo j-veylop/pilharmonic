@@ -500,14 +500,17 @@ func TestProviderMenuEscapeClosesWithoutQuitting(t *testing.T) {
 	}
 }
 
-func TestProviderMenuQuitsOnCtrlC(t *testing.T) {
+func TestProviderMenuCtrlCAsksBeforeQuitting(t *testing.T) {
 	m := model{service: &fakeLoginService{}, width: 120, height: 35, loginMenu: true}
-	_, cmd := m.providerMenuKey("ctrl+c")
-	if cmd == nil {
-		t.Fatal("ctrl+c did not quit")
+	next, cmd := m.providerMenuKey("ctrl+c")
+	if cmd != nil {
+		t.Fatal("ctrl+c quit the menu without confirmation")
 	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Fatal("ctrl+c did not return a quit command")
+	if !next.quitConfirm {
+		t.Fatal("ctrl+c did not ask for confirmation")
+	}
+	if !strings.Contains(ansi.Strip(next.View()), "Leave pilharmonic?") {
+		t.Fatal("confirmation dialog is not on screen")
 	}
 }
 
@@ -720,14 +723,17 @@ func TestModelMenuEscapeStepsBackAndCloses(t *testing.T) {
 	}
 }
 
-func TestModelMenuQuitsOnCtrlC(t *testing.T) {
+func TestModelMenuCtrlCAsksBeforeQuitting(t *testing.T) {
 	m := model{service: modelMenuService(), width: 120, height: 35, modelMenu: true}
-	_, cmd := m.modelMenuKey("ctrl+c")
-	if cmd == nil {
-		t.Fatal("ctrl+c did not quit")
+	next, cmd := m.modelMenuKey("ctrl+c")
+	if cmd != nil {
+		t.Fatal("ctrl+c quit the menu without confirmation")
 	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Fatal("ctrl+c did not return a quit command")
+	if !next.quitConfirm {
+		t.Fatal("ctrl+c did not ask for confirmation")
+	}
+	if !strings.Contains(ansi.Strip(next.View()), "Leave pilharmonic?") {
+		t.Fatal("confirmation dialog is not on screen")
 	}
 }
 

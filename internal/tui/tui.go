@@ -333,6 +333,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		m.selection = textSelection{}
+		// The quit confirmation floats above every surface: it is the answer to
+		// an exit request, so it owns the keyboard until it is answered.
+		if m.quitConfirm {
+			return m.quitKey(msg)
+		}
 		// Help floats above every surface, so it takes the key first: esc then
 		// closes help instead of the screen underneath it.
 		if m.help {
@@ -382,19 +387,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if msg.String() != "q" {
-			m.quitConfirm = false
-		}
 		switch msg.String() {
-		case "q":
-			if running, _ := m.headerCounts(); running > 0 && !m.quitConfirm {
-				m.quitConfirm = true
-				m.notice = fmt.Sprintf("%d tasks running; press q again to quit", running)
-				return m, nil
-			}
-			return m, tea.Quit
-		case "ctrl+c":
-			return m, tea.Quit
+		case "q", "ctrl+c":
+			return m.requestQuit(), nil
 		case "enter":
 			if m.fullscreen {
 				m.fullscreen = false

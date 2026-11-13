@@ -194,7 +194,7 @@ func (v detailViewport) clamp(x, y int) textPosition {
 // deliberately excludes the sidebar, title tabs, footer and modal overlays.
 func (m model) detailViewport() (detailViewport, bool) {
 	if m.router || m.help || m.input.kind != "" || m.cleanup.kind != "" ||
-		m.agentPicker.target != "" || m.profilePicker.target != "" ||
+		m.quitConfirm || m.agentPicker.target != "" || m.profilePicker.target != "" ||
 		len(m.tasks) == 0 || m.selected < 0 || m.selected >= len(m.tasks) {
 		return detailViewport{}, false
 	}
@@ -227,6 +227,11 @@ func (m model) detailViewport() (detailViewport, bool) {
 }
 
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// The quit confirmation owns the mouse as well as the keyboard: no press,
+	// release or wheel may reach a surface it covers.
+	if m.quitConfirm {
+		return m, nil
+	}
 	if tea.MouseEvent(msg).IsWheel() {
 		if m.help {
 			if msg.Button == tea.MouseButtonWheelUp {

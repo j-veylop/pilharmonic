@@ -210,7 +210,7 @@ func (m *model) anchorRecentSelection(id string) {
 func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "esc":
 		m.router = false
 		m.routerFocus = routerFocusComposer

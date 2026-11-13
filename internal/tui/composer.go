@@ -282,7 +282,7 @@ func (m model) composerBlock(width, rows int) []string {
 func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	case "esc":
 		m.input = composer{}
 	case "enter":

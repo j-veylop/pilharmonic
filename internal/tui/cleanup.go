@@ -77,7 +77,7 @@ func (m model) cleanupKey(key string) (model, tea.Cmd) {
 		m.cleanup = cleanupRequest{}
 		m.notice = "Cleanup canceled."
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.requestQuit(), nil
 	}
 	return m, nil
 }

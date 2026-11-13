@@ -95,7 +95,13 @@ func (m model) View() string {
 	l := m.layout()
 	w, h := l.width, l.height
 	if w < 30 || h < 10 {
-		return fit("PILHARMONIC\nResize terminal to at least 30 × 10\nq quit", w, h)
+		prompt := "q quit"
+		if m.quitConfirm {
+			// The frame cannot hold the dialog, but the answer keys still work,
+			// so the resize prompt explains them.
+			prompt = "y quit · n/esc stay"
+		}
+		return fit("PILHARMONIC\nResize terminal to at least 30 × 10\n"+prompt, w, h)
 	}
 	header := gradientText("◈ PILHARMONIC")
 	mode, modeColor := " TASKS ", accent
@@ -147,6 +153,11 @@ func (m model) View() string {
 	}
 	if m.help {
 		screen = m.helpView(screen, w, h)
+	}
+	// The quit confirmation answers an exit request from any of those surfaces,
+	// so it is always the last frame drawn.
+	if m.quitConfirm {
+		screen = m.quitView(screen, w, h)
 	}
 	return screen
 }

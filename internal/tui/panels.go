@@ -105,7 +105,6 @@ func (m model) selectedPosition() (position, total int, ok bool) {
 	return 0, 0, false
 }
 
-// detailGeometry matches the responsive layout used by View.
 // executorLabel shows the executor and, when chosen, its profile.
 func executorLabel(t orchestrator.Task) string {
 	if t.ParentID != "" {
@@ -129,15 +128,10 @@ func (m model) profilePanel(width, height int) string {
 	start, end := windowRows(m.profilePicker.index, len(m.profilePicker.choices), (height-7)/2)
 	for i := start; i < end; i++ {
 		profile := m.profilePicker.choices[i]
-		prefix := "  "
-		style := titleStyle
+		label := terminalText(profileLabel(profile))
+		row := titleStyle.Render("  " + label)
 		if i == m.profilePicker.index {
-			prefix = ""
-			style = accentStyle
-		}
-		row := style.Render(prefix + terminalText(profileLabel(profile)))
-		if i == m.profilePicker.index {
-			row = selectionRow(terminalText(profileLabel(profile)), width-4)
+			row = selectionRow(label, width-4)
 		}
 		details := profile.Description
 		if profile.Model != "" {
@@ -165,12 +159,6 @@ func (m model) agentPanel(width, height int) string {
 	start, end := windowRows(m.agentPicker.index, len(m.agentPicker.choices), (height-7)/2)
 	for i := start; i < end; i++ {
 		agent := m.agentPicker.choices[i]
-		prefix := "  "
-		style := titleStyle
-		if i == m.agentPicker.index {
-			prefix = ""
-			style = accentStyle
-		}
 		capability := "One-shot · no live context"
 		if agent.Capabilities.LiveContext {
 			capability = "Live follow-up context"
@@ -185,7 +173,7 @@ func (m model) agentPanel(width, height int) string {
 		if agent.Description != "" {
 			label += " · " + terminalText(agent.Description)
 		}
-		row := style.Render(prefix + label)
+		row := titleStyle.Render("  " + label)
 		if i == m.agentPicker.index {
 			row = selectionRow(label, width-4)
 		}

@@ -270,7 +270,7 @@ func TestSlashHelpOpensTheOverlay(t *testing.T) {
 		}
 		m.help.page = i
 	}
-	plain := ansi.Strip(strings.Join(m.helpLines(70), "\n"))
+	plain := ansi.Strip(strings.Join(plainHelp(m, 70), "\n"))
 	// The commands sit in the key column and their argument forms are documented
 	// once, in the topic intro, so the table stays aligned.
 	for _, want := range []string{"/login", "/logout", "/providers", "/model", "/agents", "/help", "/login <provider>", "/model [big|small]"} {

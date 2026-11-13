@@ -82,24 +82,6 @@ func appendThinking(out []string, block string, width int, showThinking bool) []
 	return append(out, "")
 }
 
-func renderedOutput(text string, width int) []string {
-	return renderedOutputWithGlyph(text, width, defaultRunningGlyph)
-}
-
-// renderedOutputWithGlyph reuses the Markdown render cache and substitutes the
-// current spinner frame for running tool rows. Thinking blocks stay hidden.
-func renderedOutputWithGlyph(text string, width int, glyph string) []string {
-	return renderedOutputWithThinking(text, width, glyph, false)
-}
-
-// renderedOutputWithThinking renders a transcript and chooses whether thinking
-// blocks are visible. The cached lines keep a placeholder so animation does not
-// force a full Glamour re-render per frame.
-func renderedOutputWithThinking(text string, width int, glyph string, showThinking bool) []string {
-	cache := &markdownCache{}
-	return cache.render(text, width, glyph, showThinking)
-}
-
 // renderedOutputFor renders through the model's cache so a view pass reuses the
 // last transcript instead of re-running Glamour for every geometry query.
 func (m model) renderedOutputFor(text string, width int, glyph string, showThinking bool) []string {

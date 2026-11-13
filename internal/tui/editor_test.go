@@ -19,14 +19,14 @@ func TestEditorScrollingKeepsLongDraftVisible(t *testing.T) {
 	e := editor{text: strings.Join(lines, "\n"), cursor: len(strings.Join(lines, "\n"))}
 	e.ensureVisible(20, 4)
 
-	visible := ansi.Strip(strings.Join(e.viewLines(20, 4), "\n"))
+	visible := ansi.Strip(strings.Join(e.viewLinesCursor(20, 4, true), "\n"))
 	if !strings.Contains(visible, "line-30") || strings.Contains(visible, "line-01") {
 		t.Fatalf("long draft did not follow the cursor: %q", visible)
 	}
 
 	e.moveStart()
 	e.ensureVisible(20, 4)
-	visible = ansi.Strip(strings.Join(e.viewLines(20, 4), "\n"))
+	visible = ansi.Strip(strings.Join(e.viewLinesCursor(20, 4, true), "\n"))
 	if !strings.Contains(visible, "line-01") || strings.Contains(visible, "line-30") {
 		t.Fatalf("cursor did not scroll back through the draft: %q", visible)
 	}
@@ -36,7 +36,7 @@ func TestEditorWrapsInsteadOfTruncating(t *testing.T) {
 	e := editor{}
 	e.insert(strings.Repeat("wrap-this ", 12) + "final-marker")
 	e.ensureVisible(18, 6)
-	lines := e.viewLines(18, 6)
+	lines := e.viewLinesCursor(18, 6, true)
 	if len(lines) < 4 {
 		t.Fatalf("long paragraph did not wrap into multiple lines: %#v", lines)
 	}
@@ -60,7 +60,7 @@ func TestEditorUpFromFullWrappedLineAdvancesOneLine(t *testing.T) {
 		if got := editorCursorLine(lines, e.cursor); got != want {
 			t.Fatalf("up from end of a full wrapped line: line=%d want %d cursor=%d", got, want, e.cursor)
 		}
-		visible := ansi.Strip(strings.Join(e.viewLines(width, 2), "\n"))
+		visible := ansi.Strip(strings.Join(e.viewLinesCursor(width, 2, true), "\n"))
 		if !strings.Contains(visible, "▏") {
 			t.Fatalf("cursor row not visible after up: %q", visible)
 		}

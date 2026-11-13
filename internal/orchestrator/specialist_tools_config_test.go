@@ -62,7 +62,7 @@ func TestLoadSpecialistToolsRejectsInvalidConfigsWithoutMutation(t *testing.T) {
 func TestLoadSpecialistToolsRejectsOversize(t *testing.T) {
 	s := specialistToolService(t)
 	path := writeSpecialistToolsConfig(t, `{"reviewer":["read"]}`)
-	if err := os.WriteFile(path, make([]byte, maxSpecialistToolsConfigSize+1), 0600); err != nil {
+	if err := os.WriteFile(path, make([]byte, maxConfigSize+1), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.LoadSpecialistTools(path); err == nil {

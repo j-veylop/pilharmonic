@@ -219,7 +219,7 @@ func TestEditorMovesWrappedLinesWithCtrlNP(t *testing.T) {
 
 func TestEditorCursorColumnCountsWideRunes(t *testing.T) {
 	e := editor{text: "日本 ab 語", cursor: len("日本 ")}
-	line := ansi.Strip(e.viewLines(20, 2)[0])
+	line := ansi.Strip(e.viewLinesCursor(20, 2, true)[0])
 	at := strings.Index(line, "▏")
 	if at < 0 {
 		t.Fatalf("no cursor in %q", line)

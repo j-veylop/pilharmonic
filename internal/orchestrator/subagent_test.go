@@ -384,8 +384,8 @@ func TestSubagentBudgetGuidanceCountsExistingChildrenOnRetry(t *testing.T) {
 		if resumed.controlToken != "" || resumed.controlSocket != "" || resumed.controlGuidance != "" {
 			t.Fatalf("exhausted budget received delegation credentials or guidance: %+v", resumed)
 		}
-		if strings.Contains(piPrompt(resumed), "Subagent delegation") || strings.Contains(piPrompt(resumed), "Coordinator delegation guidance") {
-			t.Fatalf("exhausted budget prompted impossible delegation: %q", piPrompt(resumed))
+		if strings.Contains(composeInput(resumed), "Subagent delegation") || strings.Contains(composeInput(resumed), "Coordinator delegation guidance") {
+			t.Fatalf("exhausted budget prompted impossible delegation: %q", composeInput(resumed))
 		}
 		if _, err := s.SpawnSubagent(parent.ID, "", "over budget", ""); err == nil || !strings.Contains(err.Error(), "subagent limit") {
 			t.Fatalf("exhausted child limit not enforced after retry: %v", err)
@@ -475,7 +475,7 @@ func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T
 		t.Fatal(err)
 	}
 	running := <-started
-	prompt := piPrompt(running)
+	prompt := composeInput(running)
 	for _, want := range []string{
 		"Answer simple questions directly",
 		"delegate multiple focused subtasks",
@@ -498,7 +498,7 @@ func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T
 		t.Fatal(err)
 	}
 	childRunning := <-started
-	if strings.Contains(piPrompt(childRunning), "Coordinator delegation guidance") {
+	if strings.Contains(composeInput(childRunning), "Coordinator delegation guidance") {
 		t.Fatal("delegated child received coordinator guidance")
 	}
 	if got := s.ListTasks(); len(got) != 2 {
@@ -567,7 +567,7 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	}
 	running := <-seen
 	for _, want := range []string{instruction, "Coordinator delegation guidance:", "delegate multiple focused subtasks"} {
-		if !strings.Contains(piPrompt(running), want) {
+		if !strings.Contains(composeInput(running), want) {
 			t.Fatalf("missing %q in Pi prompt", want)
 		}
 	}

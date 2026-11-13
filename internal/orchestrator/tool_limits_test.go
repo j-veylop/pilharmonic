@@ -43,7 +43,7 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 		t.Helper()
 		select {
 		case run := <-started:
-			if strings.Contains(piPrompt(run), lead) {
+			if strings.Contains(composeInput(run), lead) {
 				t.Fatal("specialist received parent coordinator instructions")
 			}
 			got := strings.Join((FantasyRunner{}).toolPalette(run.ProfileSpec), ",")

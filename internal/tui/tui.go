@@ -95,6 +95,12 @@ type Service interface {
 	FetchModels(ctx context.Context, provider string) ([]string, error)
 	SetAgentClass(agent, class string) error
 	AgentClasses() []orchestrator.AgentClass
+	// PersistenceError reports the most recent failed background save, and
+	// StartupWarning a non-fatal problem opening the state file. The board
+	// reads both on its existing refresh tick and shows them on the notice
+	// line, so neither needs a second polling loop.
+	PersistenceError() error
+	StartupWarning() string
 }
 
 var _ Service = (*orchestrator.Service)(nil)
@@ -159,6 +165,10 @@ type noticeState struct {
 	text  string
 	ticks int
 	shown string
+	// service is a standing condition reported by the service, such as a
+	// failed state save or a startup warning. refreshTasks replaces it on
+	// every tick, and it never expires or hides a transient notice.
+	service string
 }
 
 // helpState is the help overlay's open flag and scroll position.
@@ -217,6 +227,7 @@ func newModel(service Service, workspace string) model {
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		markdown:  &markdownCache{},
 	}
+	m.notice.service = serviceNotice(service)
 	if !service.AnyProviderConfigured() {
 		m.login = loginState{menu: true}
 		m.router.open = false
@@ -226,6 +237,20 @@ func newModel(service Service, workspace string) model {
 }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
+
+// serviceNotice reports a standing condition the operator should see. A failed
+// background save is more urgent than a startup warning, which already records
+// a problem the service handled (for example a corrupt state file it preserved
+// and skipped). The board refresh calls this once a second.
+func serviceNotice(service Service) string {
+	if service == nil {
+		return ""
+	}
+	if err := service.PersistenceError(); err != nil {
+		return "State save failed: " + err.Error()
+	}
+	return service.StartupWarning()
+}
 
 func (m model) Init() tea.Cmd {
 	if m.hasLiveWork() {
@@ -452,6 +477,7 @@ func (m *model) refreshTasks() {
 	// header and the task list can never describe different moments, and the
 	// update loop still does nothing that can block.
 	m.usage = m.service.SessionUsage()
+	m.notice.service = serviceNotice(m.service)
 	if selected != "" {
 		for i, task := range m.tasks {
 			if task.ID == selected {

@@ -90,6 +90,9 @@ func (m model) footer(w int) string {
 	if m.notice.text != "" {
 		footer = accentStyle.Render("› "+singleLine(m.notice.text)) + "\n" + footer
 	}
+	if m.notice.service != "" {
+		footer = warningStyle.Render("› "+singleLine(m.notice.service)) + "\n" + footer
+	}
 	if m.cleanup.kind == deleteTask {
 		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+singleLine(m.cleanup.title)) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Removes its worktree; source workspace is untouched.")
 	}

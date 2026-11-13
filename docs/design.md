@@ -134,7 +134,11 @@ timing and error while their copied output is dropped, so retries cannot grow
 the file without bound. The service protects
 in-memory state with a mutex and replaces the file on save, fsyncing the file
 and its parent directory so a replacement survives power loss. Lifecycle
-changes persist before they are acknowledged. Streamed output batches and
+changes persist before they are acknowledged. A background save failure is kept as
+the service's most recent persistence error, and a non-fatal problem opening the
+state file is kept as a startup warning; the terminal shows both on its notice
+line and re-reads them on the existing refresh tick instead of polling
+separately. Streamed output batches and
 persists once 8 KiB accumulates, which bounds output loss to 8 KiB while
 keeping every decision, event and attempt durable. UI snapshots and
 worker inputs must be independent copies wherever callers can mutate them.

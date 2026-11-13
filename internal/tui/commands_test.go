@@ -96,6 +96,10 @@ func (f *fakeLoginService) DeleteCompletedTasksDetailed([]string) (int, []orches
 
 func (f *fakeLoginService) DiscardMergedWorktrees([]string) (int, error) { return 0, nil }
 
+// The fake never fails a save and has no startup warning to report.
+func (f *fakeLoginService) PersistenceError() error { return nil }
+func (f *fakeLoginService) StartupWarning() string  { return "" }
+
 func (f *fakeLoginService) SetProviderCredential(provider, key string) error {
 	f.setCalls = append(f.setCalls, credentialCall{provider: provider, key: key})
 	if f.setErr != nil {

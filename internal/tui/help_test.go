@@ -58,13 +58,16 @@ func TestHelpModalBounds(t *testing.T) {
 
 func TestHelpPagination(t *testing.T) {
 	m := model{width: 80, height: 24, help: true}
-	if !strings.Contains(m.View(), "Page 1 /") {
-		t.Fatal("missing page indicator")
+	if title := ansi.Strip(m.View()); !strings.Contains(title, "HELP · Concepts") || !strings.Contains(title, "1/7") {
+		t.Fatal("missing topic title and position")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = next.(model)
-	if m.helpPage != 1 || !strings.Contains(m.View(), "Page 2 /") {
+	if m.helpPage != 1 {
 		t.Fatal("right did not advance exactly one page")
+	}
+	if title := ansi.Strip(m.View()); !strings.Contains(title, "HELP · Navigation") || !strings.Contains(title, "2/7") {
+		t.Fatalf("right did not page the title row: %q", title)
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	m = next.(model)
@@ -124,7 +127,7 @@ func TestHelpTopicsAreLogicalAndIndependent(t *testing.T) {
 // No topic may draw outside the modal it opened in, at any size the interface
 // supports and at either end of the scroll range.
 func TestHelpEveryTopicFitsTheModal(t *testing.T) {
-	sizes := [][2]int{{30, 10}, {50, 20}, {80, 24}, {120, 40}}
+	sizes := [][2]int{{30, 10}, {40, 15}, {50, 20}, {60, 20}, {80, 24}, {120, 40}}
 	for _, size := range sizes {
 		for page, topic := range helpTopics {
 			for _, scroll := range []int{0, 1000} {
@@ -257,8 +260,15 @@ func TestHelpSectionHeadingsAreDistinctFromShortcutRows(t *testing.T) {
 		for i, line := range layout.lines {
 			switch line.kind {
 			case helpHeadingLine:
-				if want := helpHeadingStyle.Render(line.text); styled[i] != want {
+				want := helpHeadingStyle.Render(line.text) + strings.Repeat(" ", helpHeadingRule)
+				if !strings.HasPrefix(styled[i], want) {
 					t.Fatalf("%s: heading %q is not drawn with the heading style: %q", topic.title, line.text, ansi.Strip(styled[i]))
+				}
+				if !strings.HasPrefix(styled[i], want+helpTrackStyle.Render("─")) {
+					t.Fatalf("%s: heading %q lost its rule: %q", topic.title, line.text, ansi.Strip(styled[i]))
+				}
+				if got := lipgloss.Width(styled[i]); got != 72 {
+					t.Fatalf("%s: heading rule ends at %d cells, not at the body width: %q", topic.title, got, ansi.Strip(styled[i]))
 				}
 				if strings.HasPrefix(ansi.Strip(styled[i]), " ") {
 					t.Fatalf("%s: heading %q is indented like a description", topic.title, line.text)
@@ -279,10 +289,12 @@ func TestHelpSectionHeadingsAreDistinctFromShortcutRows(t *testing.T) {
 	}
 }
 
-// The strip marks the active topic, mutes the others and falls back to a
-// position chip that still fits the frame.
+// The strip marks the active topic, mutes the others and falls back to topic
+// positions, then to nothing, as the frame narrows.
 func TestHelpTopicStripMarksTheActiveTopic(t *testing.T) {
-	inactive := func(title string) string { return inactiveTabStyle.Padding(0, 1).Render(title) }
+	inactive := func(title string) string {
+		return inactiveTabStyle.Render(helpInactiveTabLead+title) + helpTabGap
+	}
 	if activeTabStyle.GetForeground() == inactiveTabStyle.GetForeground() && activeTabStyle.GetUnderline() == inactiveTabStyle.GetUnderline() {
 		t.Fatal("the active topic is not styled apart from the inactive ones")
 	}
@@ -312,8 +324,13 @@ func TestHelpTopicStripMarksTheActiveTopic(t *testing.T) {
 			t.Fatalf("strip is %d cells in a %d cell frame: %q", lipgloss.Width(narrow), width, ansi.Strip(narrow))
 		}
 	}
-	if got := ansi.Strip(m.helpTabs(20)); !strings.Contains(got, "‹ Navigation › 2/7") {
-		t.Fatalf("narrow strip lost its position chip: %q", got)
+	// A frame too narrow for the titles falls back to the topic positions, then
+	// to nothing at all: the title row already names the topic it is showing.
+	if got := ansi.Strip(m.helpTabs(40)); !strings.Contains(got, helpActiveTabMarker+"2") || strings.Contains(got, "Navigation") {
+		t.Fatalf("narrow strip lost its positions: %q", got)
+	}
+	if got := m.helpTabs(12); got != "" {
+		t.Fatalf("a frame with no room for a strip still drew one: %q", ansi.Strip(got))
 	}
 }
 
@@ -360,10 +377,35 @@ func TestHelpScrollsLongTopicsInsideTheFrame(t *testing.T) {
 }
 
 // The overlay is text on the existing background: no cell may set a background
-// colour of its own.
+// colour of its own. The test binary runs without a colour profile, which drops
+// every SGR code from a projection, so the styles are also checked directly.
 func TestHelpUsesNoBackgroundColour(t *testing.T) {
+	styles := []struct {
+		name  string
+		style lipgloss.Style
+	}{
+		{"shortcut keys", keyStyle},
+		{"descriptions", helpDescStyle},
+		{"headings", helpHeadingStyle},
+		{"scroll track", helpTrackStyle},
+		{"scroll thumb", helpThumbStyle},
+		{"active tab", activeTabStyle},
+		{"inactive tab", inactiveTabStyle},
+		{"title and marker", accentStyle},
+		{"muted prose", mutedStyle},
+		{"faint rules", faintStyle},
+		{"hint key", helpHints.Styles.ShortKey},
+		{"hint description", helpHints.Styles.ShortDesc},
+		{"hint separator", helpHints.Styles.ShortSeparator},
+		{"hint ellipsis", helpHints.Styles.Ellipsis},
+	}
+	for _, entry := range styles {
+		if _, unset := entry.style.GetBackground().(lipgloss.NoColor); !unset {
+			t.Fatalf("the %s style sets a background colour", entry.name)
+		}
+	}
 	for page := range helpTopics {
-		for _, size := range [][2]int{{30, 10}, {80, 24}, {120, 40}} {
+		for _, size := range [][2]int{{30, 10}, {40, 15}, {80, 24}, {120, 40}} {
 			m := model{width: size[0], height: size[1], help: true, helpPage: page}
 			if view := m.View(); strings.Contains(view, "\x1b[48;") {
 				t.Fatalf("%s at %v: help renders a background colour", helpTopics[page].title, size)
@@ -377,7 +419,7 @@ func TestHelpUsesNoBackgroundColour(t *testing.T) {
 // never be stranded behind the frame, including when the scrollbar column
 // narrows the body.
 func TestHelpScrollReachesTheLastDrawnLine(t *testing.T) {
-	for _, size := range [][2]int{{30, 10}, {40, 12}, {50, 20}, {80, 24}, {120, 40}} {
+	for _, size := range [][2]int{{30, 10}, {40, 12}, {40, 15}, {50, 20}, {60, 20}, {80, 24}, {120, 40}} {
 		for page, topic := range helpTopics {
 			m := model{width: size[0], height: size[1], help: true, helpPage: page}
 			m.scrollHelpBody(1000)
@@ -394,6 +436,218 @@ func TestHelpScrollReachesTheLastDrawnLine(t *testing.T) {
 			}
 			if view := ansi.Strip(m.View()); !strings.Contains(view, last) {
 				t.Fatalf("%v %s: last line %q is unreachable\n%s", size, topic.title, last, view)
+			}
+		}
+	}
+}
+
+// helpOriginForTest is the screen row and column the overlay's title lands on,
+// which pins where the modal itself sits.
+func helpOriginForTest(m model) (row, col int) {
+	for i, line := range strings.Split(ansi.Strip(m.View()), "\n") {
+		if at := strings.Index(line, "HELP"+helpHintSeparator); at >= 0 {
+			return i, at
+		}
+	}
+	return -1, -1
+}
+
+// Paging must not move the overlay. The frame keeps its size and position, the
+// strip keeps its cells, the body keeps its wrap width and one key column serves
+// every topic, so nothing the operator is reading slides sideways or rewraps
+// when they change topic.
+func TestHelpGeometryIsStableAcrossTopics(t *testing.T) {
+	for _, size := range [][2]int{{30, 12}, {40, 16}, {60, 20}, {80, 24}, {120, 40}} {
+		first := model{width: size[0], height: size[1], help: true}
+		wantMW, wantMH, wantRows := helpFrame(size[0], size[1])
+		_, wantBodyRows, wantWidth, _ := first.helpBody(size[0], size[1])
+		wantStrip := lipgloss.Width(first.helpTabs(helpContentWidth(wantMW)))
+		wantColumn := layoutHelpTopic(helpTopics[0], wantWidth).keyWidth
+		wantRow, wantCol := helpOriginForTest(first)
+		if wantRow < 0 {
+			t.Fatalf("%v: the overlay drew no title row", size)
+		}
+		for page, topic := range helpTopics {
+			m := model{width: size[0], height: size[1], help: true, helpPage: page}
+			mw, mh, rows := helpFrame(size[0], size[1])
+			if mw != wantMW || mh != wantMH || rows != wantRows {
+				t.Fatalf("%v %s: frame became %dx%d/%d rows, was %dx%d/%d",
+					size, topic.title, mw, mh, rows, wantMW, wantMH, wantRows)
+			}
+			_, bodyRows, bodyWidth, _ := m.helpBody(size[0], size[1])
+			if bodyRows != wantBodyRows || bodyWidth != wantWidth {
+				t.Fatalf("%v %s: body became %d rows of %d cells, was %d of %d",
+					size, topic.title, bodyRows, bodyWidth, wantBodyRows, wantWidth)
+			}
+			if got := lipgloss.Width(m.helpTabs(helpContentWidth(mw))); got != wantStrip {
+				t.Fatalf("%v %s: topic strip is %d cells, not the %d cells of %s",
+					size, topic.title, got, wantStrip, helpTopics[0].title)
+			}
+			if got := layoutHelpTopic(topic, bodyWidth).keyWidth; got != wantColumn {
+				t.Fatalf("%v %s: descriptions start in column %d, not the shared column %d",
+					size, topic.title, got, wantColumn)
+			}
+			if row, col := helpOriginForTest(m); row != wantRow || col != wantCol {
+				t.Fatalf("%v %s: the overlay moved from row %d, column %d to row %d, column %d",
+					size, topic.title, wantRow, wantCol, row, col)
+			}
+			// Every body row spans the same cells whether or not the topic
+			// scrolls, so the scrollbar column never re-wraps the text.
+			_, _, content := m.helpModal(size[0], size[1])
+			if content == nil {
+				t.Fatalf("%v %s: the overlay drew no frame", size, topic.title)
+			}
+			inner := helpContentWidth(mw)
+			for row := len(content) - 2 - bodyRows; row < len(content)-2; row++ {
+				if got := lipgloss.Width(content[row]); got != inner {
+					t.Fatalf("%v %s: body row %d is %d cells in a %d cell frame: %q",
+						size, topic.title, row, got, inner, ansi.Strip(content[row]))
+				}
+			}
+		}
+	}
+}
+
+// The scrollbar column is reserved on every topic, not just the ones that
+// scroll, so a short topic never uses the cells the scrollbar needs and the text
+// does not jump sideways when the next topic overflows.
+func TestHelpBodyReservesTheScrollbarColumn(t *testing.T) {
+	for _, size := range [][2]int{{30, 10}, {40, 15}, {60, 20}, {80, 24}, {120, 40}} {
+		for page, topic := range helpTopics {
+			m := model{width: size[0], height: size[1], help: true, helpPage: page}
+			mw, bodyRows, bodyWidth, lines := m.helpBody(size[0], size[1])
+			inner := helpContentWidth(mw)
+			if want := inner - helpBodyIndent - helpScrollGutter; bodyWidth != want {
+				t.Fatalf("%v %s: body wraps at %d cells, the reserve leaves %d", size, topic.title, bodyWidth, want)
+			}
+			if len(lines) <= bodyRows {
+				// A topic that fits still keeps the gutter: every drawn row spans
+				// the whole content area, and its last cells stay empty.
+				_, _, content := m.helpModal(size[0], size[1])
+				if content == nil {
+					t.Fatalf("%v %s: the overlay drew no frame", size, topic.title)
+				}
+				body := content[len(content)-2-bodyRows : len(content)-2]
+				for row, line := range body {
+					if got := lipgloss.Width(line); got != inner {
+						t.Fatalf("%v %s: body row %d is %d cells in a %d cell frame: %q",
+							size, topic.title, row, got, inner, ansi.Strip(line))
+					}
+					if tail := ansi.Cut(line, inner-helpScrollGutter+1, inner); strings.TrimSpace(tail) != "" {
+						t.Fatalf("%v %s: body row %d uses the scrollbar column: %q",
+							size, topic.title, row, ansi.Strip(line))
+					}
+				}
+			}
+		}
+	}
+}
+
+// Every topic aligns its descriptions to one column, and that column is the one
+// the overlay measured across all topics: paging never slides a description
+// sideways.
+func TestHelpDescriptionsShareOneColumn(t *testing.T) {
+	for _, size := range [][2]int{{60, 20}, {80, 24}, {120, 40}} {
+		mw, _, _ := helpFrame(size[0], size[1])
+		want := helpKeyColumn()
+		if want == 0 {
+			t.Fatal("no topic lists a shortcut")
+		}
+		for page, topic := range helpTopics {
+			m := model{width: size[0], height: size[1], help: true, helpPage: page}
+			_, _, bodyWidth, _ := m.helpBody(size[0], size[1])
+			if got := layoutHelpTopic(topic, bodyWidth).keyWidth; got != want {
+				t.Fatalf("%v %s: descriptions start in column %d, not the shared column %d",
+					size, topic.title, got, want)
+			}
+		}
+		// The narrowest frame the interface supports must still hold that
+		// column without breaking a shortcut in two.
+		if size[0] == 60 && helpBodyWidth(mw) < want {
+			t.Fatalf("a %d cell frame wraps the body to %d cells, narrower than its %d cell key column",
+				size[0], helpBodyWidth(mw), want)
+		}
+	}
+	if bodyWidth := helpBodyWidth(min(helpMaxWidth, 30-4)); bodyWidth < helpKeyColumn() {
+		t.Fatalf("the narrowest frame wraps the body to %d cells, under the %d cell key column",
+			bodyWidth, helpKeyColumn())
+	}
+}
+
+// On a frame too narrow for two columns each key takes its own line and its
+// description hangs one hang-indent in, and the projection still fits the width.
+func TestHelpStacksWhenTheFrameIsNarrow(t *testing.T) {
+	for _, width := range []int{18, 22, 26} {
+		for _, topic := range helpTopics {
+			layout := layoutHelpTopic(topic, width)
+			if layout.keyWidth != helpHangIndent {
+				t.Fatalf("width %d %s: key column is %d, not the hang indent %d",
+					width, topic.title, layout.keyWidth, helpHangIndent)
+			}
+			for i, line := range layout.lines {
+				if line.kind != helpRowLine {
+					continue
+				}
+				if line.keys == "" {
+					if pad := ansi.Cut(layout.plain()[i], 0, helpHangIndent); pad != strings.Repeat(" ", helpHangIndent) {
+						t.Fatalf("width %d %s: description does not hang under the key: %q",
+							width, topic.title, layout.plain()[i])
+					}
+					continue
+				}
+				if line.text != "" {
+					t.Fatalf("width %d %s: key %q shares its line with a description", width, topic.title, line.keys)
+				}
+			}
+			for i, line := range layout.plain() {
+				if lipgloss.Width(line) > width {
+					t.Fatalf("width %d %s: line %d is %d cells: %q", width, topic.title, i, lipgloss.Width(line), line)
+				}
+			}
+		}
+	}
+}
+
+// The scrollbar maps the window onto the rail: the thumb starts at the top, ends
+// at the bottom and never leaves the column.
+func TestHelpScrollBarTracksTheWindow(t *testing.T) {
+	const bodyRows, total = 10, 30
+	if got := helpScrollBar(0, bodyRows, 0, total); got != helpThumbStyle.Render("▐") {
+		t.Fatalf("top of the topic has no thumb: %q", ansi.Strip(got))
+	}
+	if got := helpScrollBar(bodyRows-1, bodyRows, total-bodyRows, total); got != helpThumbStyle.Render("▐") {
+		t.Fatalf("end of the topic has no thumb at the bottom: %q", ansi.Strip(got))
+	}
+	if got := helpScrollBar(0, bodyRows, total-bodyRows, total); strings.Contains(got, "▐") {
+		t.Fatal("the thumb stayed at the top at the end of the topic")
+	}
+	for row := 0; row < bodyRows; row++ {
+		if got := lipgloss.Width(helpScrollBar(row, bodyRows, 0, total)); got != 1 {
+			t.Fatalf("row %d of the rail is %d cells wide", row, got)
+		}
+	}
+	if got := helpScrollBar(0, bodyRows, 0, bodyRows); strings.TrimSpace(got) != "" {
+		t.Fatalf("a topic that fits drew a rail: %q", ansi.Strip(got))
+	}
+}
+
+// Nothing the overlay draws may need more cells than the narrowest frame the
+// interface allows: View refuses terminals under 30 columns, so the body is
+// never narrower than this, and neither a heading nor a shortcut is broken.
+func TestHelpNarrowestFrameFitsItsLabels(t *testing.T) {
+	bodyWidth := helpBodyWidth(min(helpMaxWidth, 30-4))
+	if bodyWidth < helpKeyColumn() {
+		t.Fatalf("the narrowest body is %d cells, under the %d cell key column", bodyWidth, helpKeyColumn())
+	}
+	for _, topic := range helpTopics {
+		for _, section := range topic.sections {
+			for _, row := range section.rows {
+				if w := lipgloss.Width(row.keys); w > bodyWidth {
+					t.Fatalf("%s: shortcut %q needs %d of %d cells", topic.title, row.keys, w, bodyWidth)
+				}
+			}
+			if w := lipgloss.Width(section.heading); w > bodyWidth {
+				t.Fatalf("%s: heading %q needs %d of %d cells", topic.title, section.heading, w, bodyWidth)
 			}
 		}
 	}

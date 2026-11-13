@@ -34,6 +34,16 @@ var providerModels = map[string][]string{
 		"qwen3.8-27b", "qwen3.8-2.4t-a95b", "gpt-oss-120b",
 		"gemma-4-26b-a4b-it", "muse-spark-open",
 	},
+	// Bedrock selects a model by foundation-model or inference-profile ID, and
+	// nothing else: the identifiers below are cross-region inference profiles,
+	// so the menu offers IDs that work across regions rather than bare model
+	// names. Any other ID, including an inference-profile ARN, can be typed.
+	"bedrock": {
+		"us.anthropic.claude-sonnet-4-6-v1:0",
+		"us.anthropic.claude-haiku-4-5-v1:0",
+		"us.anthropic.claude-opus-4-8-v1:0",
+		"global.anthropic.claude-sonnet-4-6-v1:0",
+	},
 }
 
 // modelsForProvider returns the curated model IDs for a provider prefix, in a

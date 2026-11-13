@@ -145,9 +145,26 @@ an attempt with no model at all fails with an explanatory error.
 A model is a `provider/model` selector such as `openai/gpt-6.1-sol` or
 `deepseek/deepseek-flash`; the provider prefix selects the endpoint and where
 its API key is read from. Built-in prefixes: `openai`, `deepseek`, `openrouter`,
-`groq`, and `hyper` (Charm's model router, e.g. `hyper/prism`). Keys are stored
+`groq`, `hyper` (Charm's model router, e.g. `hyper/prism`), and `bedrock` (AWS
+Bedrock, e.g. `bedrock/us.anthropic.claude-sonnet-4-6-v1:0`). Keys are stored
 with `/login <provider>` (or the matching environment variable) and are kept in
 a owner-only `credentials.json` beside the state file, never in task state.
+
+Bedrock differs from the other prefixes in two ways. Its `model` part is a
+foundation-model or inference-profile ID, which may itself contain slashes, so
+the selector splits at the first `/` only; an inference-profile ARN therefore
+works as-is. And it authenticates through AWS rather than a single key: with no
+stored token it uses the AWS credential chain (environment variables, a shared
+profile or SSO login, or a container role), and the region comes from
+`AWS_REGION`, `AWS_DEFAULT_REGION`, or the shared AWS config, defaulting to
+`us-east-1`. `/login bedrock` stores an AWS bearer token as an alternative.
+`/providers` shows Bedrock as configured when a bearer token, a static key pair,
+a web-identity or container credential source, or a shared AWS file with
+credential material is present; a profile that only names a region does not
+count, and instance metadata is not probed, so a machine that relies on it alone
+counts as unconfigured until a token is stored. The model menu offers a curated list of inference-profile IDs
+because Bedrock has no OpenAI-compatible model list to fetch, and the free-text
+step accepts any other model or profile ID.
 
 Agents run on one of two model classes, `big` (planning and heavy changes) or
 `small` (fast, focused work). Open the menu with **m** or `/model [big|small]`

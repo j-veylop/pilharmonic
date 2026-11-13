@@ -290,7 +290,14 @@ the state file. The Fantasy adapter resolves the model for each attempt as the
 class model, else the runner's configured model (a specialist model from
 `profiles.json`, or the `-model` fallback when the specialist has none), else
 the task profile model, and fixes that selector on the attempt independently of
-the inherited profile name.
+the inherited profile name. The provider prefix of that selector picks a
+registry entry; every entry but `bedrock` is an OpenAI-compatible endpoint with
+an API-key environment variable, while `bedrock` is built by Fantasy's AWS
+provider so the AWS credential chain can supply credentials instead of a stored
+key. Bedrock resolves its region through the AWS SDK, which is why that provider
+is the one entry with a dependency beyond the OpenAI-compatible client. A
+provider that has no HTTP model list (Bedrock) reports that instead of failing,
+and the model menu falls back to its curated catalog.
 
 A profile may add coordinator instructions for the top-level general task. The
 canonical delegation workflow is compiled in, so the shipped profiles file does

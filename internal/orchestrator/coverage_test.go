@@ -6,12 +6,27 @@ import (
 	"testing"
 )
 
-func TestPolicyIdentities(t *testing.T) {
-	if (localPolicy{}).ID() != LocalPolicyID || (localPolicy{}).Version() != LocalPolicyVersion {
-		t.Fatal("local policy identity drifted from its recorded constants")
+// TestAuthorizationIdentifiersStayStable guards persisted state: every task
+// decision stores policy_id and policy_version, so the recorded values must not
+// drift even though the authorization step is no longer pluggable.
+func TestAuthorizationIdentifiersStayStable(t *testing.T) {
+	if LocalPolicyID != "local" || LocalPolicyVersion != "local-1" {
+		t.Fatalf("local authorization identifiers drifted: %q %q", LocalPolicyID, LocalPolicyVersion)
 	}
-	if (subagentPolicy{}).ID() != SubagentPolicyID || (subagentPolicy{}).Version() != SubagentPolicyVersion {
-		t.Fatal("subagent policy identity drifted from its recorded constants")
+	if SubagentPolicyID != "subagent" || SubagentPolicyVersion != "subagent-1" {
+		t.Fatalf("subagent authorization identifiers drifted: %q %q", SubagentPolicyID, SubagentPolicyVersion)
+	}
+	if LocalPolicySource != "manual" || SubagentPolicySource != "subagent" {
+		t.Fatalf("source names drifted: %q %q", LocalPolicySource, SubagentPolicySource)
+	}
+	if LocalActor != "local-user" {
+		t.Fatalf("local actor drifted: %q", LocalActor)
+	}
+	if PurposeRouter != "router" || PurposeManual != "manual" || PurposeRelated != "related" || PurposeSubagent != "subagent" {
+		t.Fatal("request purpose names drifted")
+	}
+	if OutcomeAccept != "accept" || OutcomeReject != "reject" || OutcomeNeedsReview != "needs_review" {
+		t.Fatal("authorization outcome names drifted")
 	}
 }
 

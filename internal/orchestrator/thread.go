@@ -56,7 +56,7 @@ func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (
 		}
 		now := time.Now().UTC()
 		trigger := Trigger{ID: triggerID, Source: LocalPolicySource, Text: request, CreatedAt: now}
-		decision, err := s.authorizeLocked(AuthorizationRequest{
+		decision, err := s.authorize(AuthorizationRequest{
 			Source:    LocalPolicySource,
 			Actor:     LocalActor,
 			Purpose:   PurposeRelated,

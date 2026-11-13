@@ -145,13 +145,13 @@ func TestComposerBoxKeepsTheCursorRowVisible(t *testing.T) {
 	}
 }
 
-func TestRequestFormBoxCarriesItsPolicyAndFocus(t *testing.T) {
+func TestRequestFormBoxCarriesItsAuthorizationAndFocus(t *testing.T) {
 	m := boardWithTask()
 	m.router = true
 	m.routerDraft = "inspect the parser"
 	box := ansi.Strip(strings.Join(m.composerBox(m.width, 2), "\n"))
-	if !strings.Contains(box, "NEW REQUEST") || !strings.Contains(box, "policy "+orchestrator.LocalPolicyVersion) {
-		t.Fatalf("request box lost its label or policy: %q", box)
+	if !strings.Contains(box, "NEW REQUEST") || !strings.Contains(box, "authorization "+orchestrator.LocalPolicyVersion) {
+		t.Fatalf("request box lost its label or authorization note: %q", box)
 	}
 	if !m.composerFocused() {
 		t.Fatal("request box reports no focus while the draft is active")
@@ -160,9 +160,9 @@ func TestRequestFormBoxCarriesItsPolicyAndFocus(t *testing.T) {
 	if m.composerFocused() {
 		t.Fatal("request box still reports focus while the attention list owns keys")
 	}
-	// The label must survive a narrow terminal without the policy note.
+	// The label must survive a narrow terminal without the authorization note.
 	narrow := ansi.Strip(strings.Join(m.composerBox(30, 2), "\n"))
-	if !strings.Contains(narrow, "NEW REQUEST") || strings.Contains(narrow, "policy") {
+	if !strings.Contains(narrow, "NEW REQUEST") || strings.Contains(narrow, "authorization") {
 		t.Fatalf("narrow request box label or note is wrong: %q", narrow)
 	}
 	for _, row := range strings.Split(narrow, "\n") {

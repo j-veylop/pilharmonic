@@ -166,13 +166,17 @@ profile or SSO login, or a container role), and the region comes from
 a web-identity or container credential source, or a shared AWS file with
 credential material is present; a profile that only names a region does not
 count, and instance metadata is not probed, so a machine that relies on it alone
-counts as unconfigured until a token is stored. The model menu offers a curated list of inference-profile IDs
-because Bedrock has no OpenAI-compatible model list to fetch, and the free-text
-step accepts any other model or profile ID.
+counts as unconfigured until a token is stored. The model menu lists the active system inference profiles and on-demand text
+models that Bedrock reports for the resolved region, using the stored bearer
+token or the AWS credential chain. If that call fails, the menu says so and shows
+a short built-in list of inference-profile IDs instead, and the free-text step
+accepts any other model or profile ID.
 
 Agents run on one of two model classes, `big` (planning and heavy changes) or
 `small` (fast, focused work). Open the menu with **m** or `/model [big|small]`
-to pick a `provider/model` selector for each class from a curated catalog, or
+to pick a `provider/model` selector for each class from the list the provider
+reports (fetched when you choose the provider; a short built-in list is shown, and
+labelled, only when the fetch fails), or
 type a free-form selector. **/agents** toggles each agent between the two
 classes. By default only `general` runs big; `debugger`, `explorer`,
 `implementer`, `gitter`, `reviewer`, and `tester` run small. The choices are

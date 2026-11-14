@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -340,24 +342,44 @@ func TestBedrockModelSelectorsAccepted(t *testing.T) {
 	}
 }
 
-// TestBedrockModelListingUnsupported checks that the model menu falls back to
-// the curated catalog instead of an OpenAI-compatible /models request.
-func TestBedrockModelListingUnsupported(t *testing.T) {
+// TestBedrockModelListingUsesAWS checks that Bedrock models are fetched from the
+// account rather than read from the built-in catalog, and that a failed listing
+// is reported so the menu can fall back honestly.
+func TestBedrockModelListingUsesAWS(t *testing.T) {
 	isolateProviderEnvironment(t)
+	original := bedrockModelLister
+	defer func() { bedrockModelLister = original }()
+	var gotToken string
+	bedrockModelLister = func(_ context.Context, token string) ([]string, error) {
+		gotToken = token
+		return []string{"us.anthropic.live-model-v1:0"}, nil
+	}
+
 	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Shutdown() }()
-
-	_, err = s.FetchModels(t.Context(), "bedrock")
-	if err == nil {
-		t.Fatal("bedrock model listing succeeded")
+	if err := s.SetProviderCredential("bedrock", "bearer-secret"); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "does not list models") {
-		t.Fatalf("unexpected listing error: %v", err)
+
+	models, err := s.FetchModels(t.Context(), "bedrock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0] != "us.anthropic.live-model-v1:0" || gotToken != "bearer-secret" {
+		t.Fatalf("unexpected listing: models=%v token=%q", models, gotToken)
+	}
+
+	delete(s.modelCache.lists, "bedrock")
+	bedrockModelLister = func(context.Context, string) ([]string, error) {
+		return nil, errors.New("access denied")
+	}
+	if _, err := s.FetchModels(t.Context(), "bedrock"); err == nil || !strings.Contains(err.Error(), "access denied") {
+		t.Fatalf("listing failure not reported: %v", err)
 	}
 	if len(s.ModelsForProvider("bedrock")) == 0 {
-		t.Fatal("curated bedrock catalog is empty")
+		t.Fatal("built-in bedrock fallback is empty")
 	}
 }

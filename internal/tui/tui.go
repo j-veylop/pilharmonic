@@ -197,6 +197,7 @@ type modelMenuState struct {
 	list         []string  // fetched models for provider
 	listProvider string    // provider list belongs to
 	loading      bool      // a model fetch is in flight for provider
+	fetchFailed  bool      // the fetch for provider failed; the built-in list is shown
 }
 
 // agentClassState is the per-agent big/small model menu.
@@ -334,9 +335,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil && len(msg.models) > 0 {
 			m.models.list = msg.models
 			m.models.listProvider = msg.provider
+			m.models.fetchFailed = false
 		} else {
 			m.models.list = nil
 			m.models.listProvider = ""
+			m.models.fetchFailed = true
+			if msg.err != nil {
+				m.notice.text = "Could not fetch " + msg.provider + " models: " + msg.err.Error()
+			} else {
+				m.notice.text = "Could not fetch " + msg.provider + " models: empty list"
+			}
 		}
 		return m, nil
 	case isolationResultMsg:

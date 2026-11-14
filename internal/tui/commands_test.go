@@ -1000,3 +1000,30 @@ func TestModelMenuRateLabelFitsNarrowTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestModelMenuUsesFetchedListInsteadOfBuiltIn(t *testing.T) {
+	fake := modelMenuService()
+	m := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}
+	updated, _ := m.Update(fetchModelsMsg{provider: "openai", models: []string{"live-model"}})
+	m = updated.(model)
+	choices := m.modelChoices()
+	if len(choices) != 2 || choices[0] != "live-model" || m.models.fetchFailed {
+		t.Fatalf("fetched list not shown: %v failed=%v", choices, m.models.fetchFailed)
+	}
+}
+
+func TestModelMenuSaysWhenFetchFailedAndBuiltInListIsShown(t *testing.T) {
+	fake := modelMenuService()
+	m := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}
+	updated, _ := m.Update(fetchModelsMsg{provider: "openai", err: errors.New("models endpoint returned 401")})
+	m = updated.(model)
+	if !m.models.fetchFailed || !strings.Contains(m.notice.text, "401") {
+		t.Fatalf("fetch failure not reported: failed=%v notice=%q", m.models.fetchFailed, m.notice.text)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "Live list unavailable") {
+		t.Fatal("menu does not say the built-in list is shown")
+	}
+	if len(m.modelChoices()) < 2 {
+		t.Fatal("built-in fallback list missing")
+	}
+}

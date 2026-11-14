@@ -32,18 +32,14 @@ type modelListCache struct {
 
 // FetchModels returns the models a provider currently offers, fetched from its
 // OpenAI-compatible /models endpoint. Results are cached for modelListTTL; the
-// curated catalog in providerModels is the fallback the UI uses on error, so a
-// failed or unsupported endpoint never blocks model selection. Bedrock has no
-// such endpoint, so it reports an unsupported-listing error and the menu uses
-// its curated catalog.
+// curated catalog in providerModels is only the fallback the UI uses, and says
+// so, when the fetch fails, so an unreachable endpoint never blocks model
+// selection. Bedrock is listed through the AWS control plane instead.
 func (s *Service) FetchModels(ctx context.Context, provider string) ([]string, error) {
 	provider = strings.TrimSpace(provider)
 	endpoint, known := fantasyEndpoints[provider]
 	if !known {
 		return nil, fmt.Errorf("unknown provider %q", provider)
-	}
-	if endpoint.baseURL == "" {
-		return nil, fmt.Errorf("provider %q does not list models over HTTP; use the curated catalog or type an ID", provider)
 	}
 
 	s.modelCache.mu.Lock()
@@ -54,11 +50,35 @@ func (s *Service) FetchModels(ctx context.Context, provider string) ([]string, e
 	}
 	s.modelCache.mu.Unlock()
 
-	key := s.credentialFor(provider)
+	var models []string
+	var err error
+	if provider == bedrockProvider {
+		models, err = bedrockModelLister(ctx, s.credentialFor(provider))
+	} else {
+		models, err = fetchOpenAICompatibleModels(ctx, provider, endpoint, s.credentialFor(provider))
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("provider %q returned no models", provider)
+	}
+
+	s.modelCache.mu.Lock()
+	if s.modelCache.lists == nil {
+		s.modelCache.lists = make(map[string]modelListEntry)
+	}
+	s.modelCache.lists[provider] = modelListEntry{models: models, fetchedAt: time.Now()}
+	s.modelCache.mu.Unlock()
+	return append([]string(nil), models...), nil
+}
+
+// fetchOpenAICompatibleModels reads a provider's /models endpoint and returns
+// the sorted, de-duplicated model IDs.
+func fetchOpenAICompatibleModels(ctx context.Context, provider string, endpoint fantasyEndpoint, key string) ([]string, error) {
 	if key == "" {
 		return nil, fmt.Errorf("provider %q requires an API key", provider)
 	}
-
 	url := strings.TrimRight(endpoint.baseURL, "/") + "/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -95,14 +115,7 @@ func (s *Service) FetchModels(ctx context.Context, provider string) ([]string, e
 		models = append(models, id)
 	}
 	sort.Strings(models)
-
-	s.modelCache.mu.Lock()
-	if s.modelCache.lists == nil {
-		s.modelCache.lists = make(map[string]modelListEntry)
-	}
-	s.modelCache.lists[provider] = modelListEntry{models: models, fetchedAt: time.Now()}
-	s.modelCache.mu.Unlock()
-	return append([]string(nil), models...), nil
+	return models, nil
 }
 
 // credentialFor returns the stored API key for a provider, falling back to the

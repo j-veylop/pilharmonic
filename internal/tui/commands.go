@@ -288,7 +288,7 @@ func (m model) configuredProviders() []orchestrator.ProviderCredential {
 	return providers
 }
 
-// modelsForProvider lists the curated model IDs for a provider prefix.
+// modelsForProvider lists the built-in fallback model IDs for a provider prefix.
 func (m model) modelsForProvider(provider string) []string {
 	if m.service == nil {
 		return nil
@@ -409,6 +409,7 @@ func (m model) selectModelChoice(choice string) (model, tea.Cmd) {
 		m.models.list = nil
 		m.models.listProvider = ""
 		m.models.loading = true
+		m.models.fetchFailed = false
 		return m, m.fetchModelsCmd(choice)
 	case modelStepModel:
 		if choice == customModelChoice {
@@ -447,9 +448,10 @@ func (m model) applyModelSelection(selector string) (model, tea.Cmd) {
 	return m, nil
 }
 
-// fetchModelsCmd fetches a provider's current model list from its API endpoint
-// and delivers it as a fetchModelsMsg. The curated catalog is the fallback on
-// error, so a failed fetch never blocks model selection.
+// fetchModelsCmd fetches a provider's current model list from its API and
+// delivers it as a fetchModelsMsg. The curated catalog is the fallback on error,
+// and the menu says so, so a failed fetch never blocks model selection or passes
+// the built-in list off as live.
 func (m model) fetchModelsCmd(provider string) tea.Cmd {
 	return func() tea.Msg {
 		if m.service == nil {
@@ -520,6 +522,9 @@ func (m model) modelMenuView(background string, w, h int) string {
 	}
 	if m.models.loading && m.models.step == modelStepModel {
 		body = append(body, mutedStyle.Render("Loading models…"))
+	}
+	if m.models.fetchFailed && m.models.step == modelStepModel {
+		body = append(body, mutedStyle.Render("Live list unavailable; showing built-in models"))
 	}
 	rows := make([]menuRow, len(choices))
 	for i, choice := range choices {

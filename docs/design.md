@@ -302,9 +302,13 @@ registry entry; every entry but `bedrock` is an OpenAI-compatible endpoint with
 an API-key environment variable, while `bedrock` is built by Fantasy's AWS
 provider so the AWS credential chain can supply credentials instead of a stored
 key. Bedrock resolves its region through the AWS SDK, which is why that provider
-is the one entry with a dependency beyond the OpenAI-compatible client. A
-provider that has no HTTP model list (Bedrock) reports that instead of failing,
-and the model menu falls back to its curated catalog. A row for a model with a
+is the one entry with a dependency beyond the OpenAI-compatible client. The
+model menu fetches each provider's current catalog when the provider is chosen:
+the `/models` endpoint for OpenAI-compatible entries and the Bedrock control
+plane (active system inference profiles plus on-demand text models) for
+`bedrock`. Lists are cached for ten minutes. The compiled-in catalog is only a
+fallback for a failed or empty fetch, and the menu names the failure and says
+the built-in list is shown rather than presenting it as live. A row for a model with a
 time-of-day price names the window in force, so choosing a DeepSeek model shows
 whether it is at list price or in the discounted window.
 

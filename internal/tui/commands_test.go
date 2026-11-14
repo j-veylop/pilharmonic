@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -865,5 +866,137 @@ func TestModelMenuWithoutServiceRendersAndReports(t *testing.T) {
 	}
 	if !strings.Contains(next.notice.text, "Nothing to choose") {
 		t.Fatalf("empty step notice missing: %q", next.notice.text)
+	}
+}
+
+// deepSeekMenuService configures only DeepSeek so the model step lists its
+// curated catalog.
+func deepSeekMenuService() *fakeLoginService {
+	return &fakeLoginService{
+		creds:  []orchestrator.ProviderCredential{{Provider: "deepseek", Configured: true}},
+		models: map[string][]string{"deepseek": {"deepseek-chat", "deepseek-reasoner"}},
+	}
+}
+
+// modelRateLabel names a window only for a model the price table says is
+// charged differently at different hours, and reads the window from the
+// orchestrator rather than deciding it here.
+func TestModelRateLabelOnlyNamesTimeOfDayModels(t *testing.T) {
+	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
+	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
+	if got := modelRateLabel("deepseek/deepseek-chat", peak); got != orchestrator.RatePeak {
+		t.Fatalf("peak label = %q, want %q", got, orchestrator.RatePeak)
+	}
+	if got := modelRateLabel("deepseek/deepseek-reasoner", offPeak); got != orchestrator.RateOffPeak {
+		t.Fatalf("off-peak label = %q, want %q", got, orchestrator.RateOffPeak)
+	}
+	for _, selector := range []string{"openai/gpt-5", "deepseek/deepseek-unlisted", "custom/model"} {
+		if got := modelRateLabel(selector, offPeak); got != "" {
+			t.Errorf("%s named the window %q without a time-of-day price", selector, got)
+		}
+	}
+}
+
+// Every DeepSeek row in the model step names the pricing window in force, so
+// the operator can see whether the choice is at list price or discounted.
+func TestModelMenuLabelsDeepSeekRateWindow(t *testing.T) {
+	fake := deepSeekMenuService()
+	m := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "deepseek"}}
+	now := time.Now()
+	label := modelRateLabel("deepseek/deepseek-chat", now)
+	if label == "" {
+		t.Fatalf("deepseek-chat has no pricing window")
+	}
+	if after := modelRateLabel("deepseek/deepseek-chat", time.Now()); after != label {
+		t.Skipf("pricing window closed while rendering: %s then %s", label, after)
+	}
+	plain := ansi.Strip(m.View())
+	if got := strings.Count(plain, label); got != 2 {
+		t.Fatalf("deepseek rows named the %q window %d times, want both rows: %s", label, got, plain)
+	}
+	for _, want := range []string{"deepseek-chat", "deepseek-reasoner", customModelChoice} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("model step missing %q: %s", want, plain)
+		}
+	}
+}
+
+// An all-day provider row carries no window label, so peak or off-peak is never
+// claimed for a model whose price does not vary by hour.
+func TestModelMenuOmitsWindowLabelForAllDayProvider(t *testing.T) {
+	fake := modelMenuService()
+	m := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}
+	plain := ansi.Strip(m.View())
+	for _, unwanted := range []string{orchestrator.RatePeak, orchestrator.RateOffPeak} {
+		if strings.Contains(plain, unwanted) {
+			t.Fatalf("openai model step named %q: %s", unwanted, plain)
+		}
+	}
+}
+
+// Pinning a time-of-day model confirms the rate in force, because that is what
+// the next attempt will be charged.
+func TestModelSelectionNoticeNamesDeepSeekWindow(t *testing.T) {
+	fake := deepSeekMenuService()
+	m := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "deepseek"}}
+	now := time.Now()
+	label := modelRateLabel("deepseek/deepseek-chat", now)
+	if after := modelRateLabel("deepseek/deepseek-chat", time.Now()); after != label {
+		t.Skipf("pricing window closed while selecting: %s then %s", label, after)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.setModelCalls) != 1 || fake.setModelCalls[0] != "big=deepseek/deepseek-chat" {
+		t.Fatalf("model step pinned %v, want big=deepseek/deepseek-chat", fake.setModelCalls)
+	}
+	if want := "Model for big: deepseek/deepseek-chat · " + label + " now"; !strings.Contains(m.notice.text, want) {
+		t.Fatalf("confirmation notice missing %q: %q", want, m.notice.text)
+	}
+
+	// A model with no window, or one the price table does not know, keeps the
+	// plain confirmation.
+	plain := model{service: modelMenuService(), width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}
+	plain = key(plain, tea.KeyMsg{Type: tea.KeyEnter})
+	if plain.notice.text != "Model for big: openai/gpt-5" {
+		t.Fatalf("all-day confirmation = %q, want no window", plain.notice.text)
+	}
+}
+
+// The class step names the window of the model already pinned, and leaves a
+// class that falls back to the profile untouched.
+func TestModelMenuClassStepLabelsPinnedDeepSeekWindow(t *testing.T) {
+	fake := deepSeekMenuService()
+	fake.overrides = orchestrator.ModelSelection{Big: "deepseek/deepseek-chat"}
+	m := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepClass}}
+	now := time.Now()
+	label := modelRateLabel("deepseek/deepseek-chat", now)
+	if after := modelRateLabel("deepseek/deepseek-chat", time.Now()); after != label {
+		t.Skipf("pricing window closed while rendering: %s then %s", label, after)
+	}
+	view := m.View()
+	plain := ansi.Strip(view)
+	if want := "deepseek/deepseek-chat · " + label + " now"; !strings.Contains(plain, want) {
+		t.Fatalf("class step missing %q: %s", want, plain)
+	}
+	if got := strings.Count(plain, label); got != 1 {
+		t.Fatalf("class step named the window %d times, want only the pinned class: %s", got, plain)
+	}
+	if width, height := lipgloss.Width(view), lipgloss.Height(view); width > 120 || height > 35 {
+		t.Fatalf("rendered %dx%d", width, height)
+	}
+}
+
+// The window label gives way rather than overflowing a narrow modal, and the
+// rows stay within the terminal.
+func TestModelMenuRateLabelFitsNarrowTerminal(t *testing.T) {
+	fake := deepSeekMenuService()
+	for _, size := range [][2]int{{120, 35}, {80, 24}, {40, 12}} {
+		m := model{service: fake, width: size[0], height: size[1], models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "deepseek"}}
+		view := m.View()
+		if width, height := lipgloss.Width(view), lipgloss.Height(view); width > size[0] || height > size[1] {
+			t.Fatalf("%v: rendered %dx%d", size, width, height)
+		}
+		if plain := ansi.Strip(view); !strings.Contains(plain, "deepseek-chat") {
+			t.Fatalf("%v: model row dropped: %s", size, plain)
+		}
 	}
 }

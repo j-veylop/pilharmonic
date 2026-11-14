@@ -304,7 +304,9 @@ provider so the AWS credential chain can supply credentials instead of a stored
 key. Bedrock resolves its region through the AWS SDK, which is why that provider
 is the one entry with a dependency beyond the OpenAI-compatible client. A
 provider that has no HTTP model list (Bedrock) reports that instead of failing,
-and the model menu falls back to its curated catalog.
+and the model menu falls back to its curated catalog. A row for a model with a
+time-of-day price names the window in force, so choosing a DeepSeek model shows
+whether it is at list price or in the discounted window.
 
 A profile may add coordinator instructions for the top-level general task. The
 canonical delegation workflow is compiled in, so the shipped profiles file does
@@ -352,8 +354,8 @@ delegated children because they are tasks of the same service; restarting starts
 a new total. Durable attempt records keep their own usage, so a task's history
 and its own total survive restarts even though the session total does not. The
 terminal only formats this data — the header's session segment, the detail
-panel's per-task line and per-1M price, and the history rows — and never derives
-a cost or a rate itself.
+panel's per-task line and per-1M price, the history rows, and the model menu's
+`peak`/`off-peak` row label — and never derives a cost or a rate itself.
 
 ## Open work
 

@@ -437,7 +437,13 @@ func (m model) applyModelSelection(selector string) (model, tea.Cmd) {
 		m.notice.text = err.Error()
 		return m, nil
 	}
-	m.notice.text = "Model for " + class + ": " + selector
+	notice := "Model for " + class + ": " + selector
+	// A provider with a daily discount window is labelled with the rate in
+	// force now, because that is the price the next attempt will be charged.
+	if label := modelRateLabel(selector, time.Now()); label != "" {
+		notice += " · " + label + " now"
+	}
+	m.notice.text = notice
 	return m, nil
 }
 
@@ -551,13 +557,50 @@ func (m model) modelChoiceTag(choice string) string {
 		if model == "" {
 			return mutedStyle.Render("default")
 		}
-		return accentStyle.Render(model)
+		return accentStyle.Render(model) + modelRateSuffix(model, time.Now())
 	case modelStepModel:
 		if choice == customModelChoice {
 			return mutedStyle.Render("type any ID")
 		}
+		return modelRateTag(m.models.provider+"/"+choice, time.Now())
 	}
 	return ""
+}
+
+// modelRateLabel names the price in force for a selector now: "off-peak" or
+// "peak" for a provider with a daily discount window, and empty for a model
+// priced the same all day or not priced at all. The window belongs to the
+// orchestrator's price table, so the terminal only reports the rate it names
+// instead of deciding when a discount applies.
+func modelRateLabel(selector string, now time.Time) string {
+	price, known := orchestrator.PriceFor(selector, now)
+	if !known || !price.TimeOfDay {
+		return ""
+	}
+	return price.Rate(now)
+}
+
+// modelRateTag styles a model row's pricing window. The discounted window is
+// the one worth noticing while choosing a model, so it takes the accent and the
+// list price stays muted.
+func modelRateTag(selector string, now time.Time) string {
+	switch modelRateLabel(selector, now) {
+	case orchestrator.RateOffPeak:
+		return accentStyle.Render(orchestrator.RateOffPeak)
+	case orchestrator.RatePeak:
+		return mutedStyle.Render(orchestrator.RatePeak)
+	}
+	return ""
+}
+
+// modelRateSuffix appends the current pricing window to an already-styled
+// selector, so a pinned model shows which rate it is charged at right now.
+func modelRateSuffix(selector string, now time.Time) string {
+	label := modelRateLabel(selector, now)
+	if label == "" {
+		return ""
+	}
+	return mutedStyle.Render(" · ") + modelRateTag(selector, now) + mutedStyle.Render(" now")
 }
 
 // modelEmptyHint explains an empty step so the operator knows what to fix.

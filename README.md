@@ -179,7 +179,11 @@ classes. By default only `general` runs big; `debugger`, `explorer`,
 kept in `models.json` beside the state file, with shape
 `{"big": "provider/model", "small": "provider/model", "agents": {"implementer": "big"}}`.
 A class model overrides the profile and `-model` fallbacks; a class left empty
-uses them.
+uses them. A model whose provider charges a daily discount, such as DeepSeek,
+carries `peak` or `off-peak` on its row, so the menu shows whether choosing it
+now means list price or the discounted window; the confirmation repeats the
+window in force, and the class step labels the class's pinned model the same
+way.
 
 Open the task board, create a draft with **n**, then press **A** to see their
 descriptions. A delegating parent can select one by name. They use the same

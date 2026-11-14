@@ -578,7 +578,6 @@ func (m model) boardKey(msg tea.KeyMsg, oldTaskID string) (model, tea.Cmd) {
 	case "esc":
 		m.fullscreen = false
 		m.detailFocus = false
-		m.help.open = false
 		m.clampScroll()
 	case "t":
 		m.activity.open = !m.activity.open

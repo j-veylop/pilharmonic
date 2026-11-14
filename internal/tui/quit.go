@@ -10,27 +10,15 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
-// Quitting ends the process, so every exit key on every surface asks first.
-// The dialog is a modal drawn over the current screen: the request is answered
-// only by an explicit yes, and backing out leaves the screen underneath, its
-// draft and its selection, exactly as it was.
-//
-// The keys are the same everywhere, so the confirmation needs no per-surface
-// variant: q and Ctrl-c open it, y, Enter or a second Ctrl-c quits, and n, Esc
-// or q returns.
+// Every exit key on every surface opens one confirmation modal, so a stray q
+// or Ctrl-c never ends a run with work in flight. Only an explicit yes quits;
+// backing out leaves the screen underneath exactly as it was.
 
 const (
-	// quitModalWidth bounds the frame on a generous terminal.
-	quitModalWidth = 52
-	// quitModalHeight bounds the frame. It leaves room for the title, the
-	// question, the count and the reassurance once those wrap on a narrow
-	// terminal, plus a gap and the answer row.
+	quitModalWidth  = 52
 	quitModalHeight = 12
 )
 
-// requestQuit arms the confirmation above whatever is on screen. Routing every
-// exit request through one modal keeps a stray q or Ctrl-c from ending a run
-// with work in flight; the operator sees what they are about to stop first.
 func (m model) requestQuit() model {
 	m.quitConfirm = true
 	m.notice.text = ""
@@ -38,8 +26,7 @@ func (m model) requestQuit() model {
 	return m
 }
 
-// quitKey answers the dialog. Only an explicit yes returns a quit command;
-// every other key, including a paste, leaves the app running.
+// quitKey answers the dialog; a paste never does.
 func (m model) quitKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	if msg.Paste {
 		return m, nil
@@ -54,102 +41,56 @@ func (m model) quitKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
-// quitAnswerRow names the two ways out of the dialog, y first, so the answer is
-// readable without the surrounding prose.
-func quitAnswerRow() string {
-	return keyStyle.Render("y") + mutedStyle.Render(" quit") +
-		faintStyle.Render("  ·  ") +
-		keyStyle.Render("n/esc") + mutedStyle.Render(" stay")
-}
-
-// liveTaskCount counts the attempts quitting will cancel. It reads process
-// status rather than the header's displayed stage: a running task that is
-// blocked, waiting or waiting for subagents is still a live process.
-func (m model) liveTaskCount() int {
-	count := 0
+// quitCountLine states how many attempts quitting cancels. It counts process
+// status, not the displayed stage: a task waiting for subagents is still live.
+func (m model) quitCountLine() string {
+	running := 0
 	for _, task := range m.tasks {
 		if task.Status == orchestrator.Running {
-			count++
+			running++
 		}
 	}
-	return count
-}
-
-// quitCountLine states how much work the confirmation is about to stop.
-func quitCountLine(running int) string {
-	if running == 0 {
+	switch running {
+	case 0:
 		return "Nothing is running."
+	case 1:
+		return "1 running task stops when you quit."
 	}
-	task, verb := "tasks", "stop"
-	if running == 1 {
-		task, verb = "task", "stops"
-	}
-	return fmt.Sprintf("%d running %s %s when you quit.", running, task, verb)
+	return fmt.Sprintf("%d running tasks stop when you quit.", running)
 }
 
-// quitWrap is one muted row group, word-wrapped to the modal's content width so
-// a narrow frame reads the whole line instead of an ellipsized tail.
-func quitWrap(text string, inner int) []string {
-	var rows []string
-	for _, line := range strings.Split(ansi.Wordwrap(text, inner, ""), "\n") {
-		rows = append(rows, mutedStyle.Render(line))
-	}
-	return rows
-}
-
-// quitRows joins row groups into one body, copying so the caller's groups stay
-// independent.
-func quitRows(groups ...[]string) []string {
-	var rows []string
-	for _, group := range groups {
-		rows = append(rows, group...)
-	}
-	return rows
-}
-
-// quitModal projects the dialog for a terminal of w by h cells. The frame keeps
-// the question, then the running count, then the reassurance that history
-// survives, dropping the least important line before the answer row when the
-// frame is short. It returns no content when the terminal cannot hold a usable
-// frame; the board then prints the same answer row on its resize prompt.
+// quitModal lays out the dialog for a w by h terminal, dropping the least
+// important line before the answer row when the frame is short. It returns no
+// content when no usable frame fits; the resize prompt then names the answers.
 func (m model) quitModal(w, h int) (mw, mh int, content []string) {
 	inner := min(quitModalWidth-4, w-8)
 	ceiling := min(quitModalHeight, h-2)
 	if inner < 12 || ceiling < 4 {
 		return 0, 0, nil
 	}
-	mw = inner + 4
-	title := accentStyle.Render("QUIT")
-	hint := fit(quitAnswerRow(), inner, 1)
-	question := quitWrap("Leave pilharmonic?", inner)
-	count := quitWrap(quitCountLine(m.liveTaskCount()), inner)
-	history := quitWrap("History and worktrees are kept.", inner)
-	// Richest body first; each step gives up the least useful line still there,
-	// and the empty body is the last resort that always keeps the question.
-	bodies := [][]string{
-		quitRows(question, count, history),
-		quitRows(question, count),
-		quitRows(question, history),
-		quitRows(count),
-		nil,
+	wrap := func(text string) []string {
+		rows := strings.Split(ansi.Wordwrap(text, inner, ""), "\n")
+		for i, row := range rows {
+			rows[i] = mutedStyle.Render(row)
+		}
+		return rows
 	}
-	for _, body := range bodies {
-		candidate := append(append([]string{title}, body...), "", hint)
+	question, count, history := wrap("Leave pilharmonic?"), wrap(m.quitCountLine()), wrap("History and worktrees are kept.")
+	bodies := [][][]string{{question, count, history}, {question, count}, {question, history}, {count}, nil}
+	for _, groups := range bodies {
+		candidate := []string{accentStyle.Render("QUIT")}
+		for _, group := range groups {
+			candidate = append(candidate, group...)
+		}
+		candidate = append(candidate, "", fitHints(inner, "y quit", "n/esc stay"))
 		if len(candidate) <= ceiling-2 {
-			return mw, len(candidate) + 2, candidate
+			return inner + 4, len(candidate) + 2, candidate
 		}
 	}
 	return 0, 0, nil
 }
 
-// quitView draws the confirmation as a centered modal, dimming the screen it
-// covers with the same overlay the menus and help use, so the family reads as
-// one surface.
 func (m model) quitView(background string, w, h int) string {
 	mw, mh, content := m.quitModal(w, h)
-	if content == nil {
-		return fit(background, w, h)
-	}
-	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
-	return overlay(background, modal, w, h, mw, mh)
+	return modalView(background, w, h, mw, mh, content)
 }

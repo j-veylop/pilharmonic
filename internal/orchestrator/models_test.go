@@ -8,16 +8,10 @@ import (
 func TestModelSelection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 	s.LoadBuiltinSpecialists()
 
-	if err := s.SetModel(ModelClassSmall, "deepseek/deepseek-flash"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetModel(ModelClassSmall, "deepseek/deepseek-flash"))
 	if err := s.SetModel(ModelClassSmall, "not-a-provider/model"); err == nil {
 		t.Fatal("unknown provider accepted")
 	}
@@ -41,10 +35,7 @@ func TestModelSelection(t *testing.T) {
 	}
 
 	// It persists across reopen.
-	reopened, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reopened := mustGet(Open(path))(t)
 	defer func() { _ = reopened.Shutdown() }()
 	reopened.LoadBuiltinSpecialists()
 	reopenedExplorer := reopened.runners["explorer"].(FantasyRunner)
@@ -53,9 +44,7 @@ func TestModelSelection(t *testing.T) {
 	}
 
 	// Clearing reverts to the profile/default model.
-	if err := reopened.SetModel(ModelClassSmall, ""); err != nil {
-		t.Fatal(err)
-	}
+	must(t, reopened.SetModel(ModelClassSmall, ""))
 	cleared := reopened.runners["explorer"].(FantasyRunner)
 	if cleared.RequestedModel(nil) != "" {
 		t.Fatalf("model not cleared: %q", cleared.RequestedModel(nil))
@@ -63,11 +52,7 @@ func TestModelSelection(t *testing.T) {
 }
 
 func TestAgentClassOverride(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
 
 	// Default: everything but general is small.
@@ -83,12 +68,8 @@ func TestAgentClassOverride(t *testing.T) {
 	}
 
 	// Pin implementer to the big model and set both class models.
-	if err := s.SetAgentClass("implementer", ModelClassBig); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetModel(ModelClassBig, "hyper/prism"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetAgentClass("implementer", ModelClassBig))
+	must(t, s.SetModel(ModelClassBig, "hyper/prism"))
 	implementer := s.runners["implementer"].(FantasyRunner)
 	if got := implementer.RequestedModel(&Profile{Model: "hyper/prism-flash"}); got != "hyper/prism" {
 		t.Fatalf("big model not applied to overridden implementer: %q", got)
@@ -101,9 +82,7 @@ func TestAgentClassOverride(t *testing.T) {
 	}
 
 	// Clearing reverts to the default (small).
-	if err := s.SetAgentClass("implementer", ""); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetAgentClass("implementer", ""))
 	cleared := s.runners["implementer"].(FantasyRunner)
 	if got := cleared.RequestedModel(nil); got != "" {
 		t.Fatalf("class override not cleared: %q", got)
@@ -111,15 +90,9 @@ func TestAgentClassOverride(t *testing.T) {
 }
 
 func TestModelSelectionReportsClasses(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
-	if err := s.SetModel(ModelClassBig, "hyper/prism"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetModel(ModelClassBig, "hyper/prism"))
 	sel := s.ModelSelection()
 	if sel.Big != "hyper/prism" || sel.Small != "" {
 		t.Fatalf("unexpected selection: %+v", sel)

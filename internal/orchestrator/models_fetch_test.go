@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,19 +26,10 @@ func TestFetchModelsFromEndpoint(t *testing.T) {
 	fantasyEndpoints["deepseek"] = fantasyEndpoint{baseURL: server.URL + "/v1", envVar: "DEEPSEEK_API_KEY"}
 	defer func() { fantasyEndpoints["deepseek"] = original }()
 
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	if err := s.SetProviderCredential("deepseek", "sk-test"); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetProviderCredential("deepseek", "sk-test"))
 
-	models, err := s.FetchModels(context.Background(), "deepseek")
-	if err != nil {
-		t.Fatal(err)
-	}
+	models := mustGet(s.FetchModels(context.Background(), "deepseek"))(t)
 	if len(models) != 2 || models[0] != "model-a" || models[1] != "model-b" {
 		t.Fatalf("unexpected models: %v", models)
 	}
@@ -47,11 +37,7 @@ func TestFetchModelsFromEndpoint(t *testing.T) {
 
 func TestFetchModelsRequiresKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	if _, err := s.FetchModels(context.Background(), "openai"); err == nil {
 		t.Fatal("fetch without a key succeeded")
 	} else if !strings.Contains(err.Error(), "requires an API key") {

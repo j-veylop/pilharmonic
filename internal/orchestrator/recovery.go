@@ -50,7 +50,7 @@ func recoverStartupState(s *Service) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("recover worktree discard for task %s: %w", t.ID, err)
 			}
-			t.finishDiscard(gone, "Interrupted discard; worktree retained")
+			t.finishDiscard(gone, "worktree_discard_interrupted", "Interrupted discard; worktree retained")
 			changed = true
 		}
 		if t.settleAllPendingDeliveries("orchestrator stopped before acknowledgement", time.Now().UTC()) {
@@ -60,17 +60,7 @@ func recoverStartupState(s *Service) (bool, error) {
 			changed = true
 		}
 		if t.Status == Running {
-			if len(t.Attempts) > 0 {
-				a := &t.Attempts[len(t.Attempts)-1]
-				a.Status = Interrupted
-				a.FinishedAt = time.Now().UTC()
-				a.Error = "orchestrator stopped while task was running"
-			}
-			interruptActivities(t)
-			t.Status = Interrupted
-			t.UpdatedAt = time.Now().UTC()
-			t.Error = "orchestrator stopped while task was running"
-			t.Events = append(t.Events, Event{t.UpdatedAt, "interrupted", t.Error})
+			t.endAttempt(Interrupted, "orchestrator stopped while task was running", time.Now().UTC())
 			changed = true
 		}
 	}

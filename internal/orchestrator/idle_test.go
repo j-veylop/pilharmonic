@@ -10,26 +10,16 @@ import (
 )
 
 func TestIdleTimeoutCancelsSilentAgent(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetIdleTimeout(40 * time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
+	must(t, s.SetIdleTimeout(40*time.Millisecond))
 	started := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	task, err := s.CreateTask("quiet", "run quietly", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "quiet", "run quietly", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	<-started
 	done := await(t, s, task.ID, Canceled)
 	if !strings.Contains(done.Error, "idle timeout") {
@@ -38,13 +28,8 @@ func TestIdleTimeoutCancelsSilentAgent(t *testing.T) {
 }
 
 func TestIdleTimeoutAllowsStreamingAgent(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetIdleTimeout(200 * time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
+	must(t, s.SetIdleTimeout(200*time.Millisecond))
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
 		for i := 0; i < 30; i++ {
 			select {
@@ -58,13 +43,8 @@ func TestIdleTimeoutAllowsStreamingAgent(t *testing.T) {
 		}
 		return nil
 	}))
-	task, err := s.CreateTask("chatty", "stream output", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "chatty", "stream output", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if done.Output != strings.Repeat(".", 30) {
 		t.Fatalf("output %q", done.Output)
@@ -72,10 +52,7 @@ func TestIdleTimeoutAllowsStreamingAgent(t *testing.T) {
 }
 
 func TestIdleTimeoutRejectsNegative(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
 	if s.SetIdleTimeout(-time.Second) == nil {
 		t.Fatal("expected error for negative timeout")
 	}

@@ -136,24 +136,19 @@ func (s *Service) SetModel(class, model string) error {
 	if class != ModelClassBig && class != ModelClassSmall {
 		return fmt.Errorf("model class must be %q or %q", ModelClassBig, ModelClassSmall)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
 	if model != "" {
 		if err := validateModelSelector(model); err != nil {
 			return err
 		}
-		s.modelSelection[class] = model
-	} else {
-		delete(s.modelSelection, class)
 	}
-	if err := saveModelConfig(s.modelSelectionPath, s.modelSelection, s.agentClasses); err != nil {
-		return err
-	}
-	s.applyModelSelectionLocked()
-	return nil
+	return s.whileOpen(func() error {
+		if model != "" {
+			s.modelSelection[class] = model
+		} else {
+			delete(s.modelSelection, class)
+		}
+		return s.saveModelConfigLocked()
+	})
 }
 
 // SetAgentClass pins an agent to a model class ("big" or "small"), overriding
@@ -161,22 +156,25 @@ func (s *Service) SetModel(class, model string) error {
 func (s *Service) SetAgentClass(agent, class string) error {
 	agent = strings.TrimSpace(agent)
 	class = strings.TrimSpace(class)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	if _, ok := s.runners[agent].(FantasyRunner); !ok {
-		return fmt.Errorf("%q is not a known agent", agent)
-	}
-	if class != "" && class != ModelClassBig && class != ModelClassSmall {
-		return fmt.Errorf("model class must be %q or %q", ModelClassBig, ModelClassSmall)
-	}
-	if class == "" {
-		delete(s.agentClasses, agent)
-	} else {
-		s.agentClasses[agent] = class
-	}
+	return s.whileOpen(func() error {
+		if _, ok := s.runners[agent].(FantasyRunner); !ok {
+			return fmt.Errorf("%q is not a known agent", agent)
+		}
+		if class != "" && class != ModelClassBig && class != ModelClassSmall {
+			return fmt.Errorf("model class must be %q or %q", ModelClassBig, ModelClassSmall)
+		}
+		if class == "" {
+			delete(s.agentClasses, agent)
+		} else {
+			s.agentClasses[agent] = class
+		}
+		return s.saveModelConfigLocked()
+	})
+}
+
+// saveModelConfigLocked persists models.json and applies the selection to
+// the runners. Caller holds mu.
+func (s *Service) saveModelConfigLocked() error {
 	if err := saveModelConfig(s.modelSelectionPath, s.modelSelection, s.agentClasses); err != nil {
 		return err
 	}

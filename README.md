@@ -1,285 +1,118 @@
 # pilharmonic
 
-pilharmonic is a local terminal application for submitting work to coding agents and tracking the result. Each request has a recorded acceptance decision, an immutable mandate and a history of execution attempts. The project takes inspiration from [DeepSeek's super-agent prototype](https://github.com/deepseek-ai/dsh-superagent-prototype).
+pilharmonic is a local terminal application for submitting work to coding agents and tracking the result. Each request has a recorded acceptance decision, an immutable mandate and a history of execution attempts. Inspired by [DeepSeek's super-agent prototype](https://github.com/deepseek-ai/dsh-superagent-prototype).
 
 ## Run
 
-Use Go 1.27.3 or newer and an interactive terminal. The built-in executor drives models in-process through [Fantasy](https://charm.land/fantasy), so it needs a provider API key — either in the environment (for example `OPENAI_API_KEY` or `DEEPSEEK_API_KEY`) or stored with the `/login <provider>` command in the UI — and a `provider/model` selector in `profiles.json` or through `-model`. From the repository root, run:
+Requires Go 1.27.3+ and an interactive terminal. The built-in executor drives models in-process through [Fantasy](https://charm.land/fantasy), so it needs a provider API key (environment, e.g. `OPENAI_API_KEY`, or stored with `/login <provider>`) and a `provider/model` selector from `profiles.json`, `-model` or the model menu.
 
 ```sh
-go run .
+go run .                 # run
+go build -o pilharmonic . # or go install .
 ```
 
-To build or install the CLI from the repository root:
+pilharmonic opens on the **NEW REQUEST** form (or the login menu when no credential exists). Type a request and press **Enter**: one compiled-in authorization step records the decision, and an accepted request becomes a task routed to an executor. Start with `@NAME` to pick an executor (`@tester add regression tests`); otherwise `general` runs it. Typing `@` lists matches and **Tab** completes. Up to four agents run at once (`-max-concurrent`); further starts queue FIFO.
 
-```sh
-go build -o pilharmonic .
-go install .
-```
+**F1** opens help everywhere; **?** opens it wherever it is not typed text. `/help` in the request form opens it too, and its **Commands** topic lists slash commands. **q** or **Ctrl-c** asks for confirmation before quitting; quitting cancels active attempts.
 
-pilharmonic opens on the **NEW REQUEST** form; a first launch with no provider credential opens the login menu until a key is stored. Type a request and press **Enter**. One compiled-in authorization step checks the request and records the decision; when accepted it becomes a task, selects an executor and requests execution. Start the request with `@NAME` to choose a registered executor, for example `@tester add regression tests`; without an explicit mention it uses `general`. Typing `@` shows the matching executors and **Tab** completes the first match. The mention is routing metadata and is not part of the recorded mandate. By default four agents can run at once. Additional start requests wait in FIFO order. The form also lists **NEEDS ACTION** and **RECENT TASKS**, up to eight rows each. **Tab** moves from the draft to a list, skipping an empty one; `j`/`k` select a row, the focused list scrolls to keep that row visible, and **Enter** opens the task on the board. Further presses of **Tab** (or **Shift-Tab**) cycle back to the draft. The draft is kept while the lists have focus. Press **Esc** for the task board or **/** to open a new request. Help is available on every screen — the board, this form, the composers, the pickers, the confirmations and the login, model and agent-class menus — with **F1** as the key that works everywhere, even while a text field has the focus, and **?** opening it wherever the character is not part of what you are typing, so a draft or an API key keeps it. Sending `/help` in the request form opens the same overlay instead of a one-line notice; help starts with **Concepts**, and its **Commands** topic lists the slash commands. Closing it returns to the screen you left with the draft and selection intact.
+Inputs use standard text editing keys (word delete, line kill, word movement, Home/End). **Ctrl-J** or **Alt-Enter** inserts a newline.
 
-On the task board, the **! action** hint jumps to the next task needing action: blocked, waiting, awaiting review, input undelivered, merge failed, failed or interrupted. **n** creates a task directly as a draft without routing. Choose an executor with **A**, then start it with **r**.
-
-The request form and every composer share one input box docked at the bottom of the screen: its label sits on the top border, the draft wraps and grows inside it, and the key hints stay in the footer below. Editing follows the shortcuts of a standard text input. **Ctrl-W** or **Alt-Backspace** deletes the previous word, **Alt-D** the next one, **Ctrl-K** and **Ctrl-U** delete to the end and the start of the line, **Delete** or **Ctrl-D** removes the next character, **Ctrl-Left** and **Ctrl-Right** (or **Alt-B** and **Alt-F**) move by word, and **Home**/**End** or **Ctrl-A**/**Ctrl-E** jump to the line bounds. Word deletion stays on the line you are editing. Press **Ctrl-J** (or **Alt-Enter**) to insert a newline, then **Enter** to submit. Use **PgUp** and **PgDn** to move through long input.
-
-Use `go run . -help` for all startup flags. Common options are `-workspace` for the source directory, `-state` for the JSON state file, `-max-concurrent` for the process limit (four by default), `-idle-timeout` to cancel an agent that produces no output and `-attempt-retention` to bound how many attempt transcripts a task keeps in full (`8` by default, `0` keeps every attempt). The defaults are the current directory and `orchestrator/state.json` under the user config directory. That state location is retained for compatibility with existing installs. Each state file supports one running instance: the CLI holds an instance lock and refuses to open a state file another instance is already using. The state file contains prompts, recent output (up to 256 KiB per attempt), routing decisions and history in plain text. `-version` prints the build version.
-
-## Install a release
-
-Tagged builds are published as GitHub releases. Each release carries one self-contained binary per supported platform — Linux and macOS on `amd64` and `arm64`, and Windows on `amd64` — named `pilharmonic_<tag>_<os>_<arch>`, with `.exe` appended on Windows, plus `sha256sums.txt`. The binary embeds the specialist prompts and needs no other file from this repository, so a download is enough to run it. Download the binary and the checksum file for your platform from the repository's **Releases** page, then:
-
-```sh
-tag=v0.1.0
-os=linux   # darwin for macOS, windows for Windows
-arch=amd64 # or arm64 on Linux and macOS
-name="pilharmonic_${tag}_${os}_${arch}"
-if [ "$os" = windows ]; then name="$name.exe"; fi
-grep " ${name}\$" sha256sums.txt | sha256sum -c -   # shasum -a 256 -c - on macOS
-chmod +x "$name"
-./"$name" -version
-```
-
-On Windows, `Get-FileHash -Algorithm SHA256 <file>` prints the same digest as the matching line of `sha256sums.txt`, and `-version` prints the tag and the full commit the binary was built from. A released binary still starts in the current directory, reads `profiles.json` beside its state file and needs the provider API key described above; the release only adds a build you do not have to compile.
-
-## Compatibility with existing installs
-
-The public project name is pilharmonic. These identifiers remain unchanged so durable state, running agents and recorded decisions stay compatible:
-
-- the engine package remains `internal/orchestrator`, now imported as `pilharmonic/internal/orchestrator`;
-- the default state, workspace and control files remain under `<user config dir>/orchestrator/`;
-- subagent environment variables keep the `ORCHESTRATOR_` prefix: `ORCHESTRATOR_CONTROL_SOCKET`, `ORCHESTRATOR_TASK_ID`, `ORCHESTRATOR_SUBAGENT_TOKEN` and `ORCHESTRATOR_SUBAGENT_CLI`;
-- authorization digests keep `orchestrator.authorization/v1`;
-- approved merges keep the fallback Git identity `Orchestrator <orchestrator@localhost>`.
-
-No migration is required for the rename.
+`go run . -help` lists all flags. Common ones: `-workspace` (default current directory), `-state` (default `<user config dir>/orchestrator/state.json`), `-idle-timeout`, `-isolation`, `-attempt-retention` (default 8, `0` keeps all), `-version`. One instance per state file (enforced by a lock). The state file stores prompts, recent output (up to 256 KiB per attempt), decisions and history in plain text.
 
 ## Task board
 
-| Action | Keys and behavior |
+| Action | Keys |
 | --- | --- |
-| Create a task | `n` creates a queued task directly without routing. Use `A` to choose its executor or `w` to toggle isolation before requesting a start with `r`. |
-| Share context | `a` creates a related task with its own mandate and the default profile in effect when accepted. `f` sends context to subscribed queued and running tasks in the thread. `s` pauses or resumes the selected task's subscription. |
-| Follow up on one task | `F` sends context to that task. For a finished task it also requeues it. Press `r` to start a fresh attempt with its mandate and context. |
-| Inspect work | `Tab` switches output and history. `T` toggles thinking blocks. `t` opens tool activity, where `f` filters calls and Enter in the detail pane expands arguments and results. |
-| Navigate | `h` and `l` focus tasks and details. `j` and `k` move within the focused pane. `!` on the task board selects the next task needing action in grouped display order, wrapping at the end. `z` toggles full-width details, and `[` / `]` scroll one detail line. The mouse wheel scrolls details. |
-| Copy output | Drag inside the details pane to select text. Releasing the mouse copies the selection through the terminal's OSC 52 clipboard support. Selection cannot start in or extend into the sidebar, header, footer or input box. Terminals that block OSC 52 ignore the copy. Use the terminal's normal shortcut to paste into composers. |
-| Report or review | `p` records a status report. On a task awaiting review, `v` approves and merges the prepared commit; `V` rejects it with a reason. Use `F` to add follow-up context and requeue rejected work. |
-| Cancel or retry | `c` cancels. `R` requeues a failed, interrupted or canceled task, or a completed task whose merge failed. Then `r` starts it. |
-| Clean up | `x` discards a clean, integrated worktree and keeps task history. `d` deletes an inactive task and its worktree. `X` and `D` apply the corresponding bulk actions. Confirm with `y`. |
+| Create | `n` queued draft without routing; `A` choose executor, `P` profile, `w` toggle isolation, `r` start. |
+| Share context | `a` related task in the thread; `f` context to subscribed tasks; `s` pause/resume subscription. |
+| Follow up | `F` context to one task (requeues a finished one); then `r`. |
+| Inspect | `Tab` output/history, `T` thinking, `t` tool activity (`f` filter, Enter expands). |
+| Navigate | `h`/`l` panes, `j`/`k` move, `!` next task needing action, `z` full width, `[`/`]` scroll, mouse wheel. |
+| Copy | Drag in the details pane; release copies via OSC 52. |
+| Report / review | `p` status report; `v` approve and merge, `V` reject with reason. |
+| Cancel / retry | `c` cancel; `R` requeue a failed, interrupted, canceled or merge-failed task. |
+| Clean up | `x` discard clean integrated worktree, `d` delete task; `X`/`D` bulk. Confirm with `y`. |
+| Delegate | `b` create a child task from a running one. |
+| Models | `m` or `/model [big\|small]`; `/agents` toggles agent classes. |
 
-Tool activity in the output view and in the `t` panel carries its status as a glyph alone: `⠋` running, `✓` finished, `✗` failed and `⊘` interrupted. Each row keeps the tool name in front of its summary, so a failed call shows the tool and its failure message together instead of the message on its own; a failure that names a tool with no start marker keeps its own row rather than taking over a call that is still running.
+Status glyphs: `●` running, `✓` completed, `✗` failed/blocked/merge failed, `⊘` interrupted/canceled, `◷` queued/waiting (including a parent waiting for subagents), `◆` awaiting review. Children are indented under their parent. The footer shows only actions valid for the selection. The header shows counts and, once reported, session token usage and estimated cost; task details show per-task usage and the current price.
 
-Task-list rows show status first as a coloured glyph: `●` running, `✓` completed, `✗` failed, blocked or merge failed, `⊘` interrupted or canceled, `◷` queued, scheduled, waiting or waiting for subagents, and `◆` awaiting review. Running rows use a blue accent. A running parent with a queued or running child, or a child still integrating its worktree, is shown as `◷` waiting for subagents rather than `●` running. Child tasks are grouped directly beneath their parent and delegated children are indented by depth so the status glyph itself shows the hierarchy without an extra arrow. The executor and workspace badge follow, so the status stays visible when a narrow sidebar truncates the row. Task details still show the status word.
-
-The header summarises the task count, tasks displayed as running, queued process state and the number of tasks that need action. Needs action covers blocked, waiting, awaiting review, input undelivered, merge failed, failed and interrupted tasks. A running parent waiting for subagents is not counted as running. The notice line above the footer reports a failed background state save and any non-fatal startup warning, such as a corrupt state file that was preserved and skipped; a transient action notice keeps its own line. The board footer offers only actions valid for the selected task and current mode, such as `v`/`V` for a pending review, `c`/`t` for a running task, `r` for an unscheduled draft and `R` for a retryable task. It also keeps help, request, new-task and quit hints as width permits. Help is reachable from every surface, including the request form, the composers, the pickers, the confirmations and the login, model and agent-class menus, and the footer names the key that works there: `? help` on the board, in activity and in detail focus, and `f1 help` in the request form, the composers, the pickers, the confirmations and the menus, because **F1** is the help key a text field leaves free. The hint is dropped only when the terminal is too narrow for it. Inside the overlay, **h**/**l** switch topics, **j**/**k** scroll, and **Esc**, **?**, **F1** or **q** closes it back onto the screen it covered, draft, selection and menus intact. The overlay keeps one shape while you page: a title row names the topic and its position, a topic strip marks the active one without moving the others, every topic aligns its shortcuts in the same column, and a long topic scrolls in its own column instead of reflowing the short ones. When the sidebar is hidden, the detail title starts with the selected task's grouped position, such as `TASK 2/5`.
-
-The header's right side shows the session's token usage once an adapter has reported any: `Σ` followed by input and output tokens and the estimated cost, such as `Σ 12.3k in · 4.5k out · $0.0043`. It shortens to `Σ 12.3k/4.5k · $0.0043` and then `Σ $0.0043` before being dropped, because the counters name what needs action and are worth more than the total on a narrow terminal. The total covers every task this process ran, delegated subagents included, and starts again when the app restarts. Task details add the selected task's `Usage:` line and, when the model is priced, a `Price:` line with the rate in force now per 1M tokens, such as `Price: $0.14/M in · $0.21/M out · deepseek off-peak`. The history tab appends each attempt's own `12.3k in · 4.5k out · $0.0043`.
-
-Usage counts the input and output tokens the provider reported for each streamed step; reasoning and cache counters are not inferred from them. Prices are a curated snapshot in US dollars per 1M tokens covering the OpenAI and DeepSeek models in the model catalog, so a model without an entry — including resellers such as `openrouter` — reports tokens without a cost instead of a guessed one. DeepSeek's daily off-peak window (00:30–08:30 Beijing time, 16:30–00:30 UTC) is charged at its discounted pair, and each attempt records the rate it was charged, so a peak run is never repriced later.
-
-Pressing **q** or **Ctrl-c** on any surface opens a confirmation dialog instead of exiting at once: it names how many tasks are still running, **y** or **Enter** quits, and **n**, **Esc** or **q** stays and leaves the screen underneath untouched. Quitting cancels active attempts and waits for their workers. After an unexpected stop, reopening the state file marks running attempts interrupted. Persisted start requests resume after startup configuration loads. Tasks created with **n** stay idle until started.
+Prices are a curated USD-per-1M snapshot for the catalog's OpenAI and DeepSeek models; other models show tokens without a cost. DeepSeek's off-peak window (16:30–00:30 UTC) is applied at recording time.
 
 ## Workspaces and review
 
-In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate explicitly requests a change, such as `fix`, `add`, `update` or `implement`. Read-only inspection requests (for example `review`, `explain`, `inspect`, `read` or `test`) and ambiguous requests with no detected edit action stay in the source workspace. The choice is a lexical request-opening heuristic; the selected executor does not create a worktree by itself. Use `w` on a task before it starts to override the automatic choice, or `-isolation=false` to keep every task in the source workspace. The worktree starts from committed files and is reused on retries. Other workspaces run in place.
+In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate opens with an edit action (`fix`, `add`, `update`, `implement`, ...). Read-only and ambiguous requests run in the source workspace. Override per task with `w`, or disable with `-isolation=false`. Worktrees are reused on retry.
 
-**Successful isolated runs commit pending changes for review unless the task's profile sets `no_integrate`; merging stays blocked until you accept the review.** A profile that withholds integration skips the commit, keeps the worktree and records `integration_skipped`. Press `v` to approve the displayed commit and automatically merge it into the source repository's current checkout. Merges are serialized. Press `V` to reject it without merging; the worktree remains available. Use `F` to add context or describe remaining work within the original mandate, then `r` to start the requeued task. If an approved merge fails, inspect the error and retained worktree. Uncommitted changes in the source do not block a merge: Git stashes the files the merge touches and reapplies them afterwards, and when they cannot be reapplied cleanly the task records a merge warning and keeps them in an autostash entry you can apply or drop yourself. Untracked source files that the merge would overwrite still block it until you move or commit them. Execution status, merge outcome, merge warning and operator review remain separate records.
+A successful isolated run commits its changes for review unless the profile sets `no_integrate`. `v` merges the displayed commit into the source checkout (serialized); `V` rejects and keeps the worktree; `F` then `r` reworks it within the mandate. Uncommitted source changes are autostashed and reapplied; if that fails, the task records a merge warning and the stash remains. Untracked files that a merge would overwrite block it.
 
-A parent waits to integrate while descendants use its worktree. Inspect any
-unsuccessful descendant before retrying integration. Delete descendant tasks
-before discarding the shared worktree. Cleanup runs in the background against
-the confirmed task IDs. After an interrupted discard, reopening the state file
-keeps a surviving tree or finishes clearing a removed one.
+A parent waits to integrate while descendants use its worktree. Delete descendants before discarding a shared worktree.
 
-Agents run with the host user's permissions. A running task can delegate with `b` in the UI or the `pilharmonic subagent` helper through its local control socket. Each child has an independent lifecycle and mandate and shares its parent's execution workspace. Defaults allow two levels of delegation and four children per parent. Use `-subagents=false` to disable delegation. A top-level `general` task with delegation is asked to split complex or multi-concern work into focused children using the child budget remaining after earlier attempts, while answering simple tasks directly. An exhausted child budget receives no delegation credentials or coordinator guidance. Independent scopes may run in parallel; dependent or shared-file work should run sequentially. Request handling never splits work automatically, and the guidance does not widen the mandate.
+Agents run with the host user's permissions. A running task can delegate with `b` or the `pilharmonic subagent` helper over a local control socket (defaults: depth 2, four children per parent; `-subagents=false` disables). A top-level `general` task is asked to answer simple work directly and split complex work into focused children; the guidance never widens the mandate.
 
-## Built-in specialists
+## Specialists, models and profiles
 
-Every launch registers six Fantasy specialists from `internal/orchestrator/specialists.go`.
+Six bundled Fantasy specialists, with prompts in [internal/orchestrator/prompts](internal/orchestrator/prompts) (embedded at build time):
 
-| Specialist | Use it for |
+| Specialist | Use |
 | --- | --- |
-| `debugger` | Reproduce a failure, isolate its cause, and report evidence for the implementer. |
-| `explorer` | Trace a code path or locate the files and tests behind a feature. |
-| `implementer` | Make a scoped change and verify it. |
+| `debugger` | Reproduce and isolate a failure. |
+| `explorer` | Trace a code path or locate files and tests. |
+| `implementer` | Make and verify a scoped change. |
 | `tester` | Design and run focused regression tests. |
-| `reviewer` | Inspect a proposed change for bugs and missing coverage. |
-| `gitter` | Inspect Git history or carry out delegated branch, commit, and merge work. |
+| `reviewer` | Inspect a change for bugs and missing coverage. |
+| `gitter` | Git history, branch, commit and merge work. |
 
-A request selects an executor only through a leading `@NAME` mention. For
-example, `@reviewer review the diff` selects `reviewer` and `@tester add tests
-for parsing` selects `tester`. Requests without a mention use `general`,
-including change requests such as “add a parser”; top-level routing never
-infers a specialist from the opening action. Select `implementer` with
-`@implementer`, with **A** on a draft, or let delegated work choose it
-automatically or by name. The mention must be the first token, uses the exact
-registered name and is removed from the mandate. An unknown or incomplete
-mention is rejected instead of falling back, and the request form keeps the draft so
-it can be corrected. Request hints list matching names
-and **Tab** completes the first one. Draft and related-task composers accept the
-same leading mention. The executor appears on the task board and in task
-details.
+Select one with a leading `@name`, with **A** on a draft, or let a delegating parent choose. A command executor with the same name in `-agents` takes precedence.
 
-Edit the [role prompts](internal/orchestrator/prompts) to customize specialist
-instructions. They are embedded at build time. Startup reads `profiles.json`
-from beside the state file (the user config directory) if present, never from
-the current directory, so pass `-profiles PATH` to load a file elsewhere, for
-example `-profiles profiles.json` for the
-[provided configuration](profiles.json) in this repository. The provided file selects the built-in
-`coordinator` profile as the routing default, applies `openai/gpt-6.1-sol` to
-it and sets DeepSeek Flash for the explorer, implementer and tester. To
-coordinate a task with that profile, create a draft and select `general` with **A**.
-The coordinator profile is built in, and its delegation guidance is compiled
-in. A top-level `general` attempt with delegation is asked to answer simple
-tasks directly; for complex or multi-concern work, to delegate multiple
-focused, self-contained subtasks when the child budget allows; to run
-independent scopes in parallel and dependent or shared-file work sequentially;
-and to verify child evidence. The guidance grants no authority beyond the
-mandate, and request handling does not split work automatically. A profile can
-add `coordinator_instructions` for extra trusted guidance, but the shipped
-`profiles.json` does not duplicate the compiled text.
-Child tasks appear beneath their parent on the board, labeled by specialist.
-Task details show the execution profile and the model requested for the latest
-attempt when the adapter recorded an explicit model.
-The specialist model takes precedence over the task profile model for both
-direct and delegated work. `-model` fills in for any executor that has no
-specialist model and takes precedence over the task profile model as well, and
-an attempt with no model at all fails with an explanatory error.
-A model is a `provider/model` selector such as `openai/gpt-6.1-sol` or
-`deepseek/deepseek-flash`; the provider prefix selects the endpoint and where
-its API key is read from. Built-in prefixes: `openai`, `deepseek`, `openrouter`,
-`groq`, `hyper` (Charm's model router, e.g. `hyper/prism`), and `bedrock` (AWS
-Bedrock, e.g. `bedrock/us.anthropic.claude-sonnet-4-6-v1:0`). Keys are stored
-with `/login <provider>` (or the matching environment variable) and are kept in
-a owner-only `credentials.json` beside the state file, never in task state.
+A model is a `provider/model` selector. Prefixes: `openai`, `deepseek`, `openrouter`, `groq`, `hyper`, `bedrock`. Keys go in an owner-only `credentials.json` beside the state file. `bedrock` splits at the first `/` (ARNs work), uses the AWS credential chain and region (default `us-east-1`) unless `/login bedrock` stores a bearer token.
 
-Bedrock differs from the other prefixes in two ways. Its `model` part is a
-foundation-model or inference-profile ID, which may itself contain slashes, so
-the selector splits at the first `/` only; an inference-profile ARN therefore
-works as-is. And it authenticates through AWS rather than a single key: with no
-stored token it uses the AWS credential chain (environment variables, a shared
-profile or SSO login, or a container role), and the region comes from
-`AWS_REGION`, `AWS_DEFAULT_REGION`, or the shared AWS config, defaulting to
-`us-east-1`. `/login bedrock` stores an AWS bearer token as an alternative.
-`/providers` shows Bedrock as configured when a bearer token, a static key pair,
-a web-identity or container credential source, or a shared AWS file with
-credential material is present; a profile that only names a region does not
-count, and instance metadata is not probed, so a machine that relies on it alone
-counts as unconfigured until a token is stored. The model menu lists the active system inference profiles and on-demand text
-models that Bedrock reports for the resolved region, using the stored bearer
-token or the AWS credential chain. If that call fails, the menu says so and shows
-a short built-in list of inference-profile IDs instead, and the free-text step
-accepts any other model or profile ID.
+Agents belong to a model class, `big` (default for `general`) or `small` (specialists). The model menu fetches each provider's catalog (cached ten minutes; a labelled built-in list on failure). Choices persist in `models.json`:
+`{"big": "provider/model", "small": "provider/model", "agents": {"implementer": "big"}}`. Resolution order: class model, specialist model from `profiles.json`, `-model`, task profile model.
 
-Agents run on one of two model classes, `big` (planning and heavy changes) or
-`small` (fast, focused work). Open the menu with **m** or `/model [big|small]`
-to pick a `provider/model` selector for each class from the list the provider
-reports (fetched when you choose the provider; a short built-in list is shown, and
-labelled, only when the fetch fails), or
-type a free-form selector. **/agents** toggles each agent between the two
-classes. By default only `general` runs big; `debugger`, `explorer`,
-`implementer`, `gitter`, `reviewer`, and `tester` run small. The choices are
-kept in `models.json` beside the state file, with shape
-`{"big": "provider/model", "small": "provider/model", "agents": {"implementer": "big"}}`.
-A class model overrides the profile and `-model` fallbacks; a class left empty
-uses them. A model whose provider charges a daily discount, such as DeepSeek,
-carries `peak` or `off-peak` on its row, so the menu shows whether choosing it
-now means list price or the discounted window; the confirmation repeats the
-window in force, and the class step labels the class's pinned model the same
-way.
-
-Open the task board, create a draft with **n**, then press **A** to see their
-descriptions. A delegating parent can select one by name. They use the same
-in-process Fantasy adapter, provider credentials and model fallback as the
-default executor. A command configured with the same name in `-agents` takes
-precedence.
-
-## Run a command executor without credentials
-
-Configured command executors are a separate opt-in that runs alongside the
-built-in Fantasy adapter; they are useful for smoke tests and for wrapping an
-existing program. Save the following as `agents.json` and run `go run . -agents agents.json`. On the task board, create a draft with `n`, choose `echo-test` with `A`, then start it with `r`.
-
-```json
-{
-  "agents": [
-    {"name": "echo-test", "description": "Print the received prompt for smoke tests.", "command": "cat", "args": []}
-  ]
-}
-```
-
-Each executor can have an optional `description`. Prefix a request with `@echo-test` to select a configured command executor. Parents with delegation enabled see the registered names and descriptions and can pass `--agent NAME` to the subagent helper. Omitting the flag selects from the child mandate, with the parent’s executor as fallback.
-
-The command receives the mandate and queued context on stdin. Its stdout and stderr appear in the output view. Configure only trusted executables and supply the configuration again on later launches. The built-in Fantasy adapter supports live follow-ups, structured tool activity and reports; a configured command executor is one-shot and offers none of them. See the [executor contract](docs/executors.md).
-
-## Profiles
-
-A subagent is a child task. Like its parent, it runs with an executor and a
-profile. The executor (for example, `implementer`) does the work. The profile
-configures tools, model, extra instructions, automatic integration and delegation.
-A child inherits its parent's profile unless a narrower one is requested.
-The service snapshots the profile at acceptance and records it on each attempt.
-Press `P` on a
-queued task to choose one, or define profiles in `profiles.json`:
+Startup reads `profiles.json` beside the state file (never the current directory); `-profiles PATH` loads another, e.g. the [provided one](profiles.json). Profiles set tools, model, instructions, `no_integrate` and `no_subagents`; the task snapshots its profile at acceptance:
 
 ```json
 {
   "profiles": [
-    {"name": "inspect-only", "description": "Read-only reconnaissance",
-     "tools": ["read", "grep", "find", "ls"], "no_integrate": true,
+    {"name": "inspect-only", "tools": ["read", "grep", "find", "ls"], "no_integrate": true,
      "instructions": "Inspect and report; do not change files."},
-    {"name": "implementer", "model": "provider/model-id"},
-    {"name": "manual-review", "tools": ["read", "grep", "find", "ls", "bash"],
-     "no_integrate": true, "no_subagents": true}
-  ]
+    {"name": "implementer", "model": "provider/model-id"}
+  ],
+  "specialists": [{"name": "reviewer", "tools": ["read", "grep", "find", "ls"]}]
 }
 ```
 
-Built-in profiles are compiled in. `implementer` is the routing default when no
-profiles file selects another profile, and its name is retained as the
-compatibility key for executor defaults. `coordinator` is also built in for
-top-level coordination; the provided `profiles.json` selects it as the default
-and supplies its model. Both built-in definitions set no tools, model or
-instructions, so they inherit the executor defaults and the compiled
-coordinator guidance. The terminal displays a built-in profile with no
-overrides as **Executor defaults**.
+Built-in profiles `implementer` (routing default) and `coordinator` set nothing and inherit executor defaults. Entries overlay built-ins field by field; `default_profile` picks the routing default. Specialist tool limits (also accepted standalone via `-specialist-tools`) intersect with the task profile; disjoint lists prevent the start.
 
-`profiles.json` modifies a built-in profile field by field or adds a new one.
-Omitted fields keep their built-in values; an explicitly empty value clears one.
-New names start empty. `default_profile` selects the routing default. Overriding
-the built-in profile changes the default settings for every executor, including
-delegated runs that inherit them. Tool names are executor-specific, so
-`inspect-only` above is meaningful for the built-in Fantasy adapter. An executor that cannot honor a
-profile's tools or model fails the start rather than silently ignoring them. A
-profile is not a sandbox: agents keep the host user's permissions.
+## Command executors
 
-To limit a specialist's tools in the same file, add an entry such as
-`{"name":"reviewer","tools":["read","grep","find","ls"]}` to `specialists`.
-The service intersects these tools with the task profile and inherited limits.
-Disjoint lists prevent execution. The existing `-specialist-tools` option
-also accepts a standalone tool file. When both files configure the same
-specialist's tools, the list in `-profiles` takes precedence.
+For smoke tests or wrapping a program, run `go run . -agents agents.json`:
+
+```json
+{"agents": [{"name": "echo-test", "description": "Print the prompt.", "command": "cat", "args": []}]}
+```
+
+The command receives the mandate and queued context on stdin; stdout and stderr appear as output. It is one-shot (no live follow-ups, tool activity or reports). Configure only trusted executables. See the [executor contract](docs/executors.md).
+
+## Compatibility
+
+State, workspaces and the control socket stay under `<user config dir>/orchestrator/`; subagent variables keep the `ORCHESTRATOR_` prefix; digests keep `orchestrator.authorization/v1`; merges fall back to `Orchestrator <orchestrator@localhost>`. No migration is needed.
 
 ## Releases
 
-Releases are cut from tags. `scripts/build-release.sh <tag>` builds the same artifacts locally into `dist/`. The `Release` workflow runs it for any pushed `v*` tag, verifies the checksums and that the host binary reports the tag, and publishes the binaries and checksums as a GitHub release. Re-running the workflow replaces the assets of the release it published before:
+Tagged builds (`v1.2.3`, optional suffix) publish one self-contained binary per platform (`pilharmonic_<tag>_<os>_<arch>`, Linux/macOS amd64+arm64, Windows amd64) plus `sha256sums.txt`. `scripts/build-release.sh <tag>` builds them locally into `dist/`.
 
 ```sh
-git tag -a v0.1.0 -m "pilharmonic v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.0 -m "pilharmonic v0.1.0" && git push origin v0.1.0
+grep " ${name}\$" sha256sums.txt | sha256sum -c -   # verify a download
 ```
-
-Tags must look like `v1.2.3`; a pre-release or build suffix such as `v1.2.3-rc1` is accepted. The workflow fails instead of publishing when the tag is malformed, when it does not point at the pushed commit, or when `go test ./...` fails. Continuous integration runs the same build script on every push, so a target that stops cross-compiling fails before a tag exists. Add a platform by listing its `GOOS/GOARCH` pair in the script.
 
 ## Development
 
-The module root builds the pilharmonic CLI, `internal/orchestrator` owns task state and execution, and `internal/tui` contains the Bubble Tea interface. Run these checks from the module root. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
+`internal/orchestrator` owns task state and execution; `internal/tui` is the Bubble Tea interface. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
 
 ```sh
-go build .
-go test ./...
-go vet ./...
+go test ./... && go vet ./...
 ```
 
-See the [repository instructions](AGENTS.md) and [design notes](docs/design.md).
+See [AGENTS.md](AGENTS.md) and the [design notes](docs/design.md).

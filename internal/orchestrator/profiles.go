@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -207,19 +208,21 @@ func validateProfileForRunner(runner Runner, p Profile) error {
 	return nil
 }
 
+type specialistConfig struct {
+	Name  string   `json:"name"`
+	Model string   `json:"model,omitempty"`
+	Tools []string `json:"tools,omitempty"`
+}
+
 // LoadProfiles loads trusted local profile definitions atomically. A JSON entry
 // overlays the matching built-in profile field by field, so operators can change
 // only what they need; a new name extends the catalog. Built-in profiles may be
 // redefined but not removed.
 func (s *Service) LoadProfiles(path string) error {
 	var config struct {
-		Profiles       []profileConfig `json:"profiles"`
-		DefaultProfile string          `json:"default_profile"`
-		Specialists    []struct {
-			Name  string   `json:"name"`
-			Model string   `json:"model,omitempty"`
-			Tools []string `json:"tools,omitempty"`
-		} `json:"specialists"`
+		Profiles       []profileConfig    `json:"profiles"`
+		DefaultProfile string             `json:"default_profile"`
+		Specialists    []specialistConfig `json:"specialists"`
 	}
 	if err := decodeConfigFile(path, "profiles", &config); err != nil {
 		return err
@@ -239,25 +242,45 @@ func (s *Service) LoadProfiles(path string) error {
 		}
 		loaded[p.Name] = p
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	if name := config.DefaultProfile; name != "" {
-		if _, exists := loaded[name]; !exists {
+	return s.whileOpen(func() error {
+		if name := config.DefaultProfile; name != "" {
+			_, defined := loaded[name]
 			_, registered := s.profiles[name]
 			_, builtin := builtins[name]
-			if !registered && !builtin {
+			if !defined && !registered && !builtin {
 				return fmt.Errorf("default profile %q unavailable", name)
 			}
 		}
-	}
+		if err := s.checkSpecialistsLocked(config.Specialists); err != nil {
+			return err
+		}
+		if config.DefaultProfile != "" {
+			s.routeProfile = config.DefaultProfile
+		}
+		for _, specialist := range config.Specialists {
+			if runner, ok := s.runners[specialist.Name].(FantasyRunner); ok && specialist.Model != "" {
+				runner.model = specialist.Model
+				s.runners[specialist.Name] = runner
+			}
+			if specialist.Tools != nil {
+				if s.specialistTools == nil {
+					s.specialistTools = make(map[string][]string)
+				}
+				s.specialistTools[specialist.Name] = specialist.Tools
+			}
+		}
+		maps.Copy(s.profiles, loaded)
+		s.applyModelSelectionLocked()
+		return nil
+	})
+}
+
+// checkSpecialistsLocked validates specialist overrides before any is applied.
+func (s *Service) checkSpecialistsLocked(specialists []specialistConfig) error {
 	seen := make(map[string]bool)
-	for _, specialist := range config.Specialists {
+	for _, specialist := range specialists {
 		name := specialist.Name
-		runner, ok := s.runners[name].(FantasyRunner)
-		if !ok || runner.instructions == "" {
+		if runner, ok := s.runners[name].(FantasyRunner); !ok || runner.instructions == "" {
 			return fmt.Errorf("%q is not a bundled specialist", name)
 		}
 		if seen[name] {
@@ -276,30 +299,6 @@ func (s *Service) LoadProfiles(path string) error {
 			}
 		}
 	}
-	for _, specialist := range config.Specialists {
-		if specialist.Model != "" {
-			if runner, ok := s.runners[specialist.Name].(FantasyRunner); ok {
-				runner.model = specialist.Model
-				s.runners[specialist.Name] = runner
-			}
-		}
-		if specialist.Tools != nil {
-			if s.specialistTools == nil {
-				s.specialistTools = make(map[string][]string)
-			}
-			s.specialistTools[specialist.Name] = specialist.Tools
-		}
-	}
-	if config.DefaultProfile != "" {
-		s.routeProfile = config.DefaultProfile
-	}
-	if s.profiles == nil {
-		s.profiles = builtinProfiles()
-	}
-	for name, p := range loaded {
-		s.profiles[name] = p
-	}
-	s.applyModelSelectionLocked()
 	return nil
 }
 
@@ -322,14 +321,7 @@ func (s *Service) SetRoutingProfile(name string) error {
 	if err != nil {
 		return err
 	}
-	name = resolved
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	s.routeProfile = name
-	return nil
+	return s.whileOpen(func() error { s.routeProfile = resolved; return nil })
 }
 
 // resolveProfileName validates a name and applies the routing default.

@@ -5,90 +5,93 @@ import (
 	"fmt"
 )
 
-// DeleteTask permanently removes an inactive task, its history and its
-// dedicated worktree. If no other task references its thread, the thread and
-// its routing history are removed as well. Files in the source workspace are
-// not touched. The task is deleted durably before its worktree is cleaned up;
-// a cleanup failure leaves the retained worktree and is reported.
+// DeleteTask permanently removes an inactive task, its history, its dedicated
+// worktree and its thread when no other task uses it. Source files are not
+// touched. The deletion is durable before cleanup runs; a cleanup failure
+// leaves the worktree and is reported.
 func (s *Service) DeleteTask(id string) error {
 	s.mu.Lock()
-	if s.closing {
-		s.mu.Unlock()
-		return errors.New("service is shutting down")
+	var err error
+	switch t := s.taskLocked(id); {
+	case s.closing:
+		err = errShuttingDown
+	case t == nil:
+		err = errTaskNotFound
+	default:
+		err = s.checkDeleteLocked(*t)
 	}
-	for i, t := range s.data.Tasks {
-		if t.ID != id {
-			continue
-		}
-		if t.MergeStatus == MergeWaiting {
-			s.mu.Unlock()
-			return errors.New("task worktree is awaiting integration")
-		}
-		if t.integrating {
-			s.mu.Unlock()
-			return errors.New("task worktree is being integrated; wait before deleting")
-		}
-		if t.DiscardPending {
-			s.mu.Unlock()
-			return errors.New("worktree is being discarded; wait before deleting")
-		}
-		if t.Status == Running {
-			s.mu.Unlock()
-			return fmt.Errorf("task is running; cancel it and wait before deleting")
-		}
-		if _, active := s.cancel[id]; active {
-			s.mu.Unlock()
-			return errors.New("task is still stopping; wait before deleting")
-		}
-		for _, other := range s.data.Tasks {
-			if other.ParentID == t.ID {
-				s.mu.Unlock()
-				return errors.New("task has spawned subagents; delete them before deleting the parent")
-			}
-		}
-
-		deleted := clone(t)
-		tasks := make([]Task, 0, len(s.data.Tasks)-1)
-		tasks = append(tasks, s.data.Tasks[:i]...)
-		tasks = append(tasks, s.data.Tasks[i+1:]...)
-		threadUsed := false
-		for _, other := range tasks {
-			if other.ThreadID == t.ThreadID {
-				threadUsed = true
-				break
-			}
-		}
-		threads := s.data.Threads
-		if !threadUsed {
-			threads = make([]Thread, 0, len(s.data.Threads))
-			for _, thread := range s.data.Threads {
-				if thread.ID != t.ThreadID {
-					threads = append(threads, thread)
-				}
-			}
-		}
-		oldTasks, oldThreads := s.data.Tasks, s.data.Threads
-		s.data.Tasks, s.data.Threads = tasks, threads
-		if err := s.save(); err != nil {
-			s.data.Tasks, s.data.Threads = oldTasks, oldThreads
-			s.mu.Unlock()
-			return err
-		}
-		s.wg.Add(1)
-		defer s.wg.Done()
-		s.resumeMergesLocked()
-		s.mu.Unlock()
-		if err := s.cleanupTaskWorkspace(deleted); err != nil {
-			return fmt.Errorf("task deleted but workspace cleanup failed: %w", err)
-		}
-		return nil
+	var deleted []Task
+	if err == nil {
+		deleted, err = s.removeTasksLocked(map[string]bool{id: true})
 	}
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.wg.Add(1)
+	defer s.wg.Done()
 	s.mu.Unlock()
-	return errors.New("task not found")
+	if err := s.cleanupTaskWorkspace(deleted[0]); err != nil {
+		return fmt.Errorf("task deleted but workspace cleanup failed: %w", err)
+	}
+	return nil
 }
 
-// CompletedDeletionCandidates returns the IDs eligible for bulk deletion. A completed task is skipped while it still has a child task
-// that would remain, so parent links never dangle.
+func (s *Service) checkDeleteLocked(t Task) error {
+	_, stopping := s.cancel[t.ID]
+	switch {
+	case t.MergeStatus == MergeWaiting:
+		return errors.New("task worktree is awaiting integration")
+	case t.integrating:
+		return errors.New("task worktree is being integrated; wait before deleting")
+	case t.DiscardPending:
+		return errors.New("worktree is being discarded; wait before deleting")
+	case t.Status == Running:
+		return errors.New("task is running; cancel it and wait before deleting")
+	case stopping:
+		return errors.New("task is still stopping; wait before deleting")
+	case s.subagentChildCountLocked(t.ID) > 0:
+		return errors.New("task has spawned subagents; delete them before deleting the parent")
+	}
+	return nil
+}
+
+// removeTasksLocked durably deletes the named tasks and every thread no
+// remaining task uses, restoring both if the save fails. Caller holds mu.
+func (s *Service) removeTasksLocked(ids map[string]bool) ([]Task, error) {
+	tasks := make([]Task, 0, len(s.data.Tasks))
+	var deleted []Task
+	used := make(map[string]bool)
+	for _, t := range s.data.Tasks {
+		if ids[t.ID] {
+			deleted = append(deleted, clone(t))
+			continue
+		}
+		tasks = append(tasks, t)
+		used[t.ThreadID] = true
+	}
+	dropped := make(map[string]bool)
+	for _, t := range deleted {
+		dropped[t.ThreadID] = !used[t.ThreadID]
+	}
+	threads := make([]Thread, 0, len(s.data.Threads))
+	for _, thread := range s.data.Threads {
+		if !dropped[thread.ID] {
+			threads = append(threads, thread)
+		}
+	}
+	snapshot := s.data
+	s.data.Tasks, s.data.Threads = tasks, threads
+	if err := s.commitLocked(snapshot); err != nil {
+		return nil, err
+	}
+	s.resumeMergesLocked()
+	return deleted, nil
+}
+
+// CompletedDeletionCandidates returns the IDs eligible for bulk deletion. A
+// completed task with a child that would remain is skipped, so parent links
+// never dangle.
 func (s *Service) CompletedDeletionCandidates() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,16 +111,14 @@ type SkippedDeletion struct {
 	Reason string
 }
 
-// DeleteCompletedTasksDetailed permanently removes the still-eligible
-// confirmed tasks, their threads when no remaining task uses them, and their
-// dedicated worktrees, and explains every requested task it left in place so
-// the caller can report which tasks were skipped and why instead of silently
-// dropping stale IDs. Files in the source workspace are not touched.
+// DeleteCompletedTasksDetailed permanently removes the confirmed tasks that
+// are still eligible, as DeleteTask does, and explains every requested task
+// it left in place instead of silently dropping stale IDs.
 func (s *Service) DeleteCompletedTasksDetailed(ids []string) (int, []SkippedDeletion, error) {
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
-		return 0, nil, errors.New("service is shutting down")
+		return 0, nil, errShuttingDown
 	}
 	confirmed := make(map[string]bool, len(ids))
 	for _, id := range ids {
@@ -129,34 +130,14 @@ func (s *Service) DeleteCompletedTasksDetailed(ids []string) (int, []SkippedDele
 		s.mu.Unlock()
 		return 0, skipped, nil
 	}
-	tasks := make([]Task, 0, len(s.data.Tasks)-len(eligible))
-	deleted := make([]Task, 0, len(eligible))
-	usedThreads := make(map[string]bool)
-	for _, task := range s.data.Tasks {
-		if eligible[task.ID] {
-			deleted = append(deleted, clone(task))
-			continue
-		}
-		tasks = append(tasks, task)
-		usedThreads[task.ThreadID] = true
-	}
-	threads := make([]Thread, 0, len(s.data.Threads))
-	for _, thread := range s.data.Threads {
-		if usedThreads[thread.ID] {
-			threads = append(threads, thread)
-		}
-	}
-	oldTasks, oldThreads := s.data.Tasks, s.data.Threads
-	s.data.Tasks, s.data.Threads = tasks, threads
-	if err := s.save(); err != nil {
-		s.data.Tasks, s.data.Threads = oldTasks, oldThreads
+	deleted, err := s.removeTasksLocked(eligible)
+	if err != nil {
 		s.mu.Unlock()
 		return 0, skipped, err
 	}
 	s.wg.Add(1)
 	defer s.wg.Done()
 	s.mu.Unlock()
-
 	var cleanupErr error
 	for _, task := range deleted {
 		if err := s.cleanupTaskWorkspace(task); err != nil {
@@ -170,7 +151,6 @@ func (s *Service) DeleteCompletedTasksDetailed(ids []string) (int, []SkippedDele
 }
 
 // skippedDeletionsLocked explains every requested task that is not eligible.
-// Caller holds mu.
 func (s *Service) skippedDeletionsLocked(ids []string, eligible map[string]bool) []SkippedDeletion {
 	seen := make(map[string]bool, len(ids))
 	skipped := make([]SkippedDeletion, 0, len(ids))
@@ -180,10 +160,9 @@ func (s *Service) skippedDeletionsLocked(ids []string, eligible map[string]bool)
 		}
 		seen[id] = true
 		reason := "task not found"
-		for i := range s.data.Tasks {
-			if s.data.Tasks[i].ID == id {
-				reason = s.deletionSkipReasonLocked(s.data.Tasks[i])
-				break
+		if t := s.taskLocked(id); t != nil {
+			if reason = s.bulkDeleteBlockerLocked(*t); reason == "" {
+				reason = "a completed child task must be deleted first"
 			}
 		}
 		skipped = append(skipped, SkippedDeletion{ID: id, Reason: reason})
@@ -191,9 +170,12 @@ func (s *Service) skippedDeletionsLocked(ids []string, eligible map[string]bool)
 	return skipped
 }
 
-// deletionSkipReasonLocked names the first rule that keeps a task from bulk
-// deletion. Caller holds mu.
-func (s *Service) deletionSkipReasonLocked(t Task) string {
+// bulkDeleteBlockerLocked names the first rule, other than remaining
+// children, that keeps a task from bulk deletion, or returns "". Prepared work
+// that is unreviewed or unmerged lives only in the task's worktree, which
+// deletion would remove with --force.
+func (s *Service) bulkDeleteBlockerLocked(t Task) string {
+	_, stopping := s.cancel[t.ID]
 	switch {
 	case t.Status != Completed:
 		return "task is not completed"
@@ -207,11 +189,10 @@ func (s *Service) deletionSkipReasonLocked(t Task) string {
 		return "worktree discard is pending"
 	case t.integrating:
 		return "worktree integration is in progress"
-	}
-	if _, stopping := s.cancel[t.ID]; stopping {
+	case stopping:
 		return "task is still stopping"
 	}
-	return "a completed child task must be deleted first"
+	return ""
 }
 
 // unmergedWorktree reports prepared work that is not in the source checkout
@@ -220,38 +201,21 @@ func unmergedWorktree(t Task) bool {
 	return t.WorktreeCommit != "" && t.MergeStatus != MergeMerged && t.MergeStatus != MergeUpToDate
 }
 
-// deletableCompletedLocked computes the set of completed tasks whose children,
-// if any, are also completed and eligible. Caller holds mu.
+// deletableCompletedLocked returns the completed tasks that pass every bulk
+// rule and whose children, if any, are eligible too. Caller holds mu.
 func (s *Service) deletableCompletedLocked(confirmed map[string]bool) map[string]bool {
-	children := make(map[string][]string)
-	for _, task := range s.data.Tasks {
-		if task.ParentID != "" {
-			children[task.ParentID] = append(children[task.ParentID], task.ID)
-		}
-	}
 	eligible := make(map[string]bool)
 	for _, task := range s.data.Tasks {
-		if task.Status != Completed || task.MergeStatus == MergeWaiting || (confirmed != nil && !confirmed[task.ID]) {
-			continue
-		}
-		// Prepared work that is unreviewed, rejected or unmerged lives only in
-		// the task's worktree; bulk deletion would remove it with --force.
-		if task.ReviewStatus == ReviewPending || unmergedWorktree(task) {
-			continue
-		}
-		if _, stopping := s.cancel[task.ID]; !stopping && !task.DiscardPending && !task.integrating {
+		if (confirmed == nil || confirmed[task.ID]) && s.bulkDeleteBlockerLocked(task) == "" {
 			eligible[task.ID] = true
 		}
 	}
 	for changed := true; changed; {
 		changed = false
-		for id := range eligible {
-			for _, child := range children[id] {
-				if !eligible[child] {
-					delete(eligible, id)
-					changed = true
-					break
-				}
+		for _, task := range s.data.Tasks {
+			if task.ParentID != "" && eligible[task.ParentID] && !eligible[task.ID] {
+				delete(eligible, task.ParentID)
+				changed = true
 			}
 		}
 	}

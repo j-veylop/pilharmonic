@@ -14,25 +14,17 @@ import (
 )
 
 func TestIsolatedCompletionPreparesReviewThenApprovalMerges(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
 	head := testGit(t, repo, "rev-parse", "HEAD")
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "artifact.txt"), []byte("from worktree\n"), 0600); err != nil {
 			return err
 		}
 		return os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("changed in worktree\n"), 0600)
 	}))
-	task, err := s.CreateTask("merge", "make changes", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "merge", "make changes", repo)
 	done := await(t, s, task.ID, Completed)
 	if done.ReviewStatus != ReviewPending || done.ReviewCommit == "" || done.ReviewCommit != done.WorktreeCommit {
 		t.Fatalf("prepared commit did not open review: %+v", done)
@@ -79,21 +71,13 @@ func TestIsolatedCompletionPreparesReviewThenApprovalMerges(t *testing.T) {
 // Approval merges the commit the operator reviewed. Worktree content that
 // appeared after review is neither committed nor merged.
 func TestApprovalMergesReviewedCommitWithoutLaterDirtyContent(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		return os.WriteFile(filepath.Join(task.Workspace, "reviewed.txt"), []byte("reviewed\n"), 0600)
 	}))
-	task, err := s.CreateTask("reviewed", "prepare changes", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "reviewed", "prepare changes", repo)
 	prepared := await(t, s, task.ID, Completed)
 	if !prepared.AwaitingReview() || prepared.ReviewCommit == "" {
 		t.Fatalf("completion did not prepare reviewed work: %+v", prepared)
@@ -107,9 +91,7 @@ func TestApprovalMergesReviewedCommitWithoutLaterDirtyContent(t *testing.T) {
 	}
 
 	late := filepath.Join(prepared.ExecutionWorkspace, "unreviewed.txt")
-	if err = os.WriteFile(late, []byte("not reviewed\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(late, []byte("not reviewed\n"), 0600))
 	merged := approveReview(t, s, task.ID)
 	if merged.MergeStatus != MergeMerged || merged.WorktreeCommit != prepared.ReviewCommit {
 		t.Fatalf("wrong worktree commit merged: %+v", merged)
@@ -133,21 +115,13 @@ func TestApprovalMergesReviewedCommitWithoutLaterDirtyContent(t *testing.T) {
 // Approval persists a durable merge intent and starts the merge asynchronously.
 // Follow-up, discard and delete must not race that merge.
 func TestApprovedMergeGuardsFollowUpDiscardAndDelete(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		return os.WriteFile(filepath.Join(task.Workspace, "guarded.txt"), []byte("work\n"), 0600)
 	}))
-	task, err := s.CreateTask("guarded", "prepare changes", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "guarded", "prepare changes", repo)
 	prepared := await(t, s, task.ID, Completed)
 	if !prepared.AwaitingReview() {
 		t.Fatalf("completion did not open review: %+v", prepared)
@@ -181,22 +155,14 @@ func TestApprovedMergeGuardsFollowUpDiscardAndDelete(t *testing.T) {
 // A persisted approval whose merge did not start before shutdown resumes after
 // restart without changing the reviewed commit.
 func TestApprovedMergeIntentResumesAfterRestart(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
 	path := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, path)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		return os.WriteFile(filepath.Join(task.Workspace, "restart.txt"), []byte("work\n"), 0600)
 	}))
-	task, err := s.CreateTask("restart", "prepare changes", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "restart", "prepare changes", repo)
 	prepared := await(t, s, task.ID, Completed)
 	if !prepared.AwaitingReview() {
 		t.Fatalf("completion did not open review: %+v", prepared)
@@ -216,22 +182,15 @@ func TestApprovedMergeIntentResumesAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Shutdown())
 
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustGet(Open(path))(t)
 	defer func() { _ = restored.Shutdown() }()
 	stored, _ := restored.GetTask(task.ID)
 	if stored.ReviewStatus != ReviewApproved || stored.MergeStatus != "" {
 		t.Fatalf("approval intent was not durable: %+v", stored)
 	}
-	if err = restored.SetConcurrencyLimit(DefaultConcurrency); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restored.SetConcurrencyLimit(DefaultConcurrency))
 	merged := awaitIntegration(t, restored, task.ID)
 	if merged.MergeStatus != MergeMerged || merged.WorktreeCommit != prepared.ReviewCommit {
 		t.Fatalf("restart did not merge the reviewed commit: %+v", merged)
@@ -242,24 +201,16 @@ func TestApprovedMergeIntentResumesAfterRestart(t *testing.T) {
 }
 
 func TestFailedIsolatedAttemptIsNotMerged(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "failed.txt"), []byte("do not merge"), 0600); err != nil {
 			return err
 		}
 		return errors.New("runner failed")
 	}))
-	task, err := s.CreateTask("failed", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "failed", "do work", repo)
 	done := await(t, s, task.ID, Failed)
 	if done.MergeStatus != "" {
 		t.Fatalf("failed attempt recorded a merge: %+v", done)
@@ -272,18 +223,9 @@ func TestFailedIsolatedAttemptIsNotMerged(t *testing.T) {
 func TestIsolatedCompletionWithoutChangesIsUpToDate(t *testing.T) {
 	repo := committedRepo(t)
 	head := testGit(t, repo, "rev-parse", "HEAD")
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-	task, err := s.CreateTask("noop", "do nothing", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "noop", "do nothing", repo)
 	done := await(t, s, task.ID, Completed)
 	if done.MergeStatus != MergeUpToDate || done.MergeCommit != head || done.WorktreeCommit != head {
 		t.Fatalf("unexpected merge result: %+v", done)
@@ -295,7 +237,7 @@ func TestIsolatedCompletionWithoutChangesIsUpToDate(t *testing.T) {
 
 func TestIsolatedMergeConflictIsRecordedAndAborted(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("worktree change\n"), 0600); err != nil {
 			return err
@@ -307,16 +249,7 @@ func TestIsolatedMergeConflictIsRecordedAndAborted(t *testing.T) {
 		testGit(t, repo, "commit", "-q", "-m", "advance source")
 		return nil
 	}))
-	task, err := s.CreateTask("conflict", "conflicting change", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "conflict", "conflicting change", repo)
 	prepared := await(t, s, task.ID, Completed)
 	if !prepared.AwaitingReview() || prepared.MergeStatus != "" {
 		t.Fatalf("completion did not stop at review: %+v", prepared)
@@ -358,7 +291,7 @@ func TestIsolatedMergeConflictIsRecordedAndAborted(t *testing.T) {
 
 func TestConcurrentIsolatedCompletionsMergeSerially(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	var mu sync.Mutex
 	seen := map[string]bool{}
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
@@ -373,15 +306,11 @@ func TestConcurrentIsolatedCompletionsMergeSerially(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = s.SetTaskIsolation(task.ID, true); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.SetTaskIsolation(task.ID, true))
 		tasks = append(tasks, task)
 	}
 	for _, task := range tasks {
-		if err := s.Start(context.Background(), task.ID); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.Start(context.Background(), task.ID))
 	}
 	for _, task := range tasks {
 		prepared := await(t, s, task.ID, Completed)
@@ -404,8 +333,9 @@ func TestConcurrentIsolatedCompletionsMergeSerially(t *testing.T) {
 }
 
 func TestCanceledIsolatedAttemptIsNotMerged(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	started := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "canceled.txt"), []byte("do not merge"), 0600); err != nil {
@@ -415,20 +345,9 @@ func TestCanceledIsolatedAttemptIsNotMerged(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	task, err := s.CreateTask("canceled", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "canceled", "do work", repo)
 	<-started
-	if err = s.Cancel(task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(task.ID))
 	done := await(t, s, task.ID, Canceled)
 	if done.MergeStatus != "" {
 		t.Fatalf("canceled attempt recorded a merge: %+v", done)
@@ -444,11 +363,9 @@ func TestCanceledIsolatedAttemptIsNotMerged(t *testing.T) {
 func TestMergeKeepsOverlappingUncommittedSourceEdits(t *testing.T) {
 	repo := committedRepo(t)
 	base := "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"
-	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte(base), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte(base), 0600))
 	testGit(t, repo, "commit", "-qam", "expand the tracked file")
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
@@ -456,16 +373,7 @@ func TestMergeKeepsOverlappingUncommittedSourceEdits(t *testing.T) {
 		<-release
 		return os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("one\ntwo\nthree\nfour\nfive\nsix\nSEVEN\n"), 0600)
 	}))
-	task, err := s.CreateTask("dirty", "append to the tracked file", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "dirty", "append to the tracked file", repo)
 	select {
 	case <-started:
 	case <-time.After(3 * time.Second):
@@ -473,9 +381,7 @@ func TestMergeKeepsOverlappingUncommittedSourceEdits(t *testing.T) {
 	}
 	// The operator edits the same file while the task runs.
 	local := "LOCAL\ntwo\nthree\nfour\nfive\nsix\nseven\n"
-	if err = os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte(local), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte(local), 0600))
 	close(release)
 	prepared := await(t, s, task.ID, Completed)
 	if !prepared.AwaitingReview() {
@@ -505,11 +411,9 @@ func TestMergeKeepsOverlappingUncommittedSourceEdits(t *testing.T) {
 // the file, and the task records a warning instead of losing the work.
 func TestMergeReportsRetainedAutostashForConflictingSourceEdits(t *testing.T) {
 	repo := committedRepo(t)
-	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("alpha\nbeta\ngamma\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("alpha\nbeta\ngamma\n"), 0600))
 	testGit(t, repo, "commit", "-qam", "expand the tracked file")
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
@@ -517,25 +421,14 @@ func TestMergeReportsRetainedAutostashForConflictingSourceEdits(t *testing.T) {
 		<-release
 		return os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("alpha\nWORKTREE\ngamma\n"), 0600)
 	}))
-	task, err := s.CreateTask("stashed", "rewrite the middle line", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "stashed", "rewrite the middle line", repo)
 	select {
 	case <-started:
 	case <-time.After(3 * time.Second):
 		t.Fatal("runner did not start")
 	}
 	// The operator rewrites the same line the worktree changes.
-	if err = os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("alpha\nLOCAL\ngamma\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("alpha\nLOCAL\ngamma\n"), 0600))
 	close(release)
 	await(t, s, task.ID, Completed)
 	done := approveReview(t, s, task.ID)
@@ -574,12 +467,10 @@ func TestMergeReportsRetainedAutostashForConflictingSourceEdits(t *testing.T) {
 // source checkout including uncommitted edits Git stashed for the attempt.
 func TestConflictingMergeRestoresStashedSourceEdits(t *testing.T) {
 	repo := committedRepo(t)
-	if err := os.WriteFile(filepath.Join(repo, "other.txt"), []byte("keep me\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(repo, "other.txt"), []byte("keep me\n"), 0600))
 	testGit(t, repo, "add", "other.txt")
 	testGit(t, repo, "commit", "-q", "-m", "add other")
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "tracked.txt"), []byte("worktree\n"), 0600); err != nil {
 			return err
@@ -591,21 +482,10 @@ func TestConflictingMergeRestoresStashedSourceEdits(t *testing.T) {
 		testGit(t, repo, "commit", "-q", "-m", "advance source")
 		return nil
 	}))
-	task, err := s.CreateTask("conflict", "conflicting change", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "conflict", "conflicting change", repo)
 	await(t, s, task.ID, Completed)
 	// The runner committed its source change; the operator keeps an edit too.
-	if err = os.WriteFile(filepath.Join(repo, "other.txt"), []byte("local edit\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(repo, "other.txt"), []byte("local edit\n"), 0600))
 	done := approveReview(t, s, task.ID)
 	if done.MergeStatus != MergeFailed || !done.MergeConflict() {
 		t.Fatalf("conflicting merge = %+v", done)

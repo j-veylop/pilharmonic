@@ -129,7 +129,7 @@ func (s *Service) LoadAgents(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
-		return errors.New("service is shutting down")
+		return errShuttingDown
 	}
 	for name := range runners {
 		if _, exists := s.runners[name]; exists {

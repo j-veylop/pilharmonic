@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// openUsageTestService opens a service over a temporary state file and shuts it
-// down with the test, so usage tests share one shape without credentials or a
-// live provider.
-func openUsageTestService(t *testing.T) *Service {
-	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Shutdown() })
-	return s
-}
-
 // usageRecorderFor reports the sink's usage capability as an error instead of
 // panicking inside a runner goroutine, where t.Fatal cannot be used.
 func usageRecorderFor(out io.Writer) (UsageRecorder, error) {
@@ -36,10 +23,8 @@ func usageRecorderFor(out io.Writer) (UsageRecorder, error) {
 // the task sums both, and the session counts both. Output retention drops only
 // the older transcript, never the usage that is part of the task's history.
 func TestRetriedTaskKeepsEachAttemptUsage(t *testing.T) {
-	s := openUsageTestService(t)
-	if err := s.SetAttemptRetention(1); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetAttemptRetention(1))
 	attempts := 0
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		attempts++
@@ -58,20 +43,11 @@ func TestRetriedTaskKeepsEachAttemptUsage(t *testing.T) {
 		}
 		return recorder.RecordUsage("openai/gpt-4.1", TokenUsage{InputTokens: 2000, OutputTokens: 300})
 	}))
-	task, err := s.CreateTask("retry", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "retry", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Failed)
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if len(done.Attempts) != 2 {
 		t.Fatalf("attempts = %+v, want two", done.Attempts)
@@ -166,7 +142,7 @@ func TestRetainAttemptOutputsKeepsUsage(t *testing.T) {
 // reported is kept even when the run fails afterwards: the tokens were spent,
 // so they stay on the attempt, in the task total and in the session total.
 func TestRecordUsageThroughFailedAttemptKeepsUsage(t *testing.T) {
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		recorder, err := usageRecorderFor(out)
 		if err != nil {
@@ -177,13 +153,8 @@ func TestRecordUsageThroughFailedAttemptKeepsUsage(t *testing.T) {
 		}
 		return errors.New("provider exploded")
 	}))
-	task, err := s.CreateTask("fails", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "fails", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Failed)
 	if done.Error != "provider exploded" {
 		t.Fatalf("task error = %q", done.Error)
@@ -214,7 +185,7 @@ func TestRecordUsageThroughFailedAttemptKeepsUsage(t *testing.T) {
 // TestRecordUsageThroughCanceledAttemptKeepsUsage proves a canceled run keeps
 // the tokens it already reported, so cancellation cannot hide spend.
 func TestRecordUsageThroughCanceledAttemptKeepsUsage(t *testing.T) {
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	recorded := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
 		recorder, err := usageRecorderFor(out)
@@ -228,17 +199,10 @@ func TestRecordUsageThroughCanceledAttemptKeepsUsage(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	task, err := s.CreateTask("canceled", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "canceled", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	<-recorded
-	if err = s.Cancel(task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(task.ID))
 	done := await(t, s, task.ID, Canceled)
 	if len(done.Attempts) != 1 || done.Attempts[0].Status != Canceled {
 		t.Fatalf("attempts = %+v", done.Attempts)
@@ -261,7 +225,7 @@ func TestRecordUsageThroughCanceledAttemptKeepsUsage(t *testing.T) {
 // from charging usage to an attempt that already ended: a report through the
 // sink of a finished attempt is refused and changes nothing.
 func TestRecordUsageAfterAttemptFinishedIsRefused(t *testing.T) {
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	captured := make(chan io.Writer, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		recorder, err := usageRecorderFor(out)
@@ -274,13 +238,8 @@ func TestRecordUsageAfterAttemptFinishedIsRefused(t *testing.T) {
 		captured <- out
 		return nil
 	}))
-	task, err := s.CreateTask("late", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "late", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	late := <-captured
 	done := await(t, s, task.ID, Completed)
 	wantCost := 1000*2.0/millionTokens + 100*8.0/millionTokens
@@ -312,7 +271,7 @@ func TestRecordUsageAfterAttemptFinishedIsRefused(t *testing.T) {
 // refused and the new attempt keeps only its own tokens. This is the retry case
 // the attempt binding in taskLocked exists for.
 func TestRecordUsageFromStaleAttemptIsRefused(t *testing.T) {
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	stale := make(chan io.Writer, 1)
 	secondAttempt := make(chan struct{})
 	releaseSecond := make(chan struct{})
@@ -347,21 +306,12 @@ func TestRecordUsageFromStaleAttemptIsRefused(t *testing.T) {
 		<-releaseSecond
 		return nil
 	}))
-	task, err := s.CreateTask("stale", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "stale", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	staleWriter := <-stale
 	await(t, s, task.ID, Failed)
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	<-secondAttempt
 	recorder, ok := staleWriter.(UsageRecorder)
 	if !ok {
@@ -389,10 +339,7 @@ func TestRecordUsageFromStaleAttemptIsRefused(t *testing.T) {
 // TestRecordUsageAfterShutdownIsRefused proves a provider callback arriving
 // while the service shuts down cannot write usage to durable state.
 func TestRecordUsageAfterShutdownIsRefused(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
 	captured := make(chan io.Writer, 1)
 	recorded := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
@@ -408,18 +355,11 @@ func TestRecordUsageAfterShutdownIsRefused(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	task, err := s.CreateTask("shutdown", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "shutdown", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	late := <-captured
 	<-recorded
-	if err = s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Shutdown())
 	recorder, ok := late.(UsageRecorder)
 	if !ok {
 		t.Fatal("runner sink cannot record usage")

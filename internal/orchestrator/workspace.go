@@ -12,109 +12,55 @@ import (
 	"time"
 )
 
-// SetTaskIsolation changes the workspace choice for a queued task. A worktree is
-// selected automatically only for mandates that explicitly request changes and
-// when the workspace supports isolation. Read-only and ambiguous work is shared.
-// An operator choice is explicit and disables later automatic changes. Worktrees
-// are preserved while the task exists, including across retries and review.
+// SetTaskIsolation changes the workspace choice of an unscheduled queued task.
+// An operator choice is explicit and disables later automatic changes.
+// Worktrees are kept while the task exists, across retries and review.
 func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 	if enabled {
 		// Validation runs Git, so it must not hold the service mutex.
-		workspace, err := s.taskWorkspace(id)
-		if err != nil {
+		var workspace string
+		if err := s.withTask(id, func(t *Task) error { workspace = t.Workspace; return nil }); err != nil {
 			return err
 		}
 		if !workspaceIsolatable(workspace) {
-			return s.recordIsolationUnavailable(id)
-		}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != id {
-			continue
-		}
-		return s.mutateTaskLocked(t, func(t *Task) error {
-			if t.Status != Queued || t.ScheduleRequested {
-				return errors.New("isolation can only be changed on an unscheduled queued task")
-			}
-			if t.Isolated == enabled {
-				if !t.IsolationAuto {
-					return nil
-				}
-				t.IsolationAuto = false
+			if err := s.updateTask(id, func(t *Task) error {
 				t.UpdatedAt = time.Now().UTC()
-				t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Workspace choice confirmed by operator"})
+				t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Isolation unavailable: workspace is not a Git repository with a committed HEAD"})
 				return nil
+			}); err != nil {
+				return err
 			}
-			if t.ExecutionWorkspace != "" {
-				return errors.New("prepared workspace must be retained for retries; create a new task to change isolation")
-			}
-			t.Isolated = enabled
-			t.IsolationAuto = false
-			t.UpdatedAt = time.Now().UTC()
-			message := "Shared source workspace selected"
-			if enabled {
-				message = "Isolated committed-HEAD worktree selected; uncommitted files are excluded"
-			}
-			t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
+			return errors.New("workspace cannot be isolated: it is not a Git repository with a committed HEAD")
+		}
+	}
+	return s.updateTask(id, func(t *Task) error {
+		if t.Status != Queued || t.ScheduleRequested {
+			return errors.New("isolation can only be changed on an unscheduled queued task")
+		}
+		message := "Workspace choice confirmed by operator"
+		switch {
+		case t.Isolated == enabled && !t.IsolationAuto:
 			return nil
-		})
-	}
-	return errors.New("task not found")
-}
-
-// taskWorkspace reads a task's source workspace without holding the mutex while
-// Git validation runs.
-func (s *Service) taskWorkspace(id string) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return "", errors.New("service is shutting down")
-	}
-	for _, t := range s.data.Tasks {
-		if t.ID == id {
-			return t.Workspace, nil
+		case t.Isolated == enabled:
+		case t.ExecutionWorkspace != "":
+			return errors.New("prepared workspace must be retained for retries; create a new task to change isolation")
+		case enabled:
+			message = "Isolated committed-HEAD worktree selected; uncommitted files are excluded"
+		default:
+			message = "Shared source workspace selected"
 		}
-	}
-	return "", errors.New("task not found")
-}
-
-// recordIsolationUnavailable persists why an explicit isolation request was
-// refused so the operator can see the reason in the task history.
-func (s *Service) recordIsolationUnavailable(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != id {
-			continue
-		}
-		if err := s.mutateTaskLocked(t, func(t *Task) error {
-			t.UpdatedAt = time.Now().UTC()
-			t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", "Isolation unavailable: workspace is not a Git repository with a committed HEAD"})
-			return nil
-		}); err != nil {
-			return err
-		}
-		return errors.New("workspace cannot be isolated: it is not a Git repository with a committed HEAD")
-	}
-	return errors.New("task not found")
+		t.Isolated, t.IsolationAuto = enabled, false
+		t.UpdatedAt = time.Now().UTC()
+		t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
+		return nil
+	})
 }
 
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	// A fixed locale keeps Git's diagnostics matchable by describeMergeFailure;
-	// disabling the terminal prompt keeps a missing credential from blocking a
-	// worker forever.
+	// A fixed locale keeps diagnostics matchable by describeMergeFailure; no
+	// terminal prompt keeps a missing credential from blocking a worker.
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "GIT_TERMINAL_PROMPT=0")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -127,8 +73,8 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 	return strings.TrimSpace(string(output)), nil
 }
 
-// gitPath resolves a path reported by git rev-parse before comparing it with
-// a reservation. Git may return a path through a symlink.
+// gitPath resolves a path reported by git rev-parse, which may go through a
+// symlink, so it can be compared with a reservation.
 func gitPath(ctx context.Context, dir string, option string) (string, error) {
 	path, err := gitOutput(ctx, dir, "rev-parse", "--path-format=absolute", option)
 	if err != nil {
@@ -137,11 +83,8 @@ func gitPath(ctx context.Context, dir string, option string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 
-// workspaceIsolatable reports whether a task created for workspace can start in
-// a dedicated worktree. Isolation is the default only when the workspace is in
-// a Git repository with a committed HEAD. A non-repository, an unborn
-// repository, or a missing git executable keeps the task in the shared
-// workspace because no worktree can be prepared from it.
+// workspaceIsolatable reports whether the workspace is in a Git repository
+// with a committed HEAD, the only source a worktree can be prepared from.
 func workspaceIsolatable(workspace string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -153,6 +96,29 @@ func workspaceIsolatable(workspace string) bool {
 }
 
 type workspaceOwner struct{ TaskID, Source, CommonDir, Commit string }
+
+// reservationPath names a task's worktree reservation beside the state file.
+// The task ID must be a single local path component.
+func reservationPath(statePath, taskID string) (string, error) {
+	if statePath == "" || taskID == "." || !filepath.IsLocal(taskID) || filepath.Base(taskID) != taskID {
+		return "", errors.New("invalid task identity for workspace")
+	}
+	base, err := filepath.Abs(filepath.Join(filepath.Dir(statePath), "workspaces"))
+	return filepath.Join(base, taskID), err
+}
+
+// realDir returns Lstat's error, or an error when path is not a directory;
+// a symlink is not one.
+func realDir(path, label string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	if !info.IsDir() {
+		return errors.New(label + " is not a regular directory")
+	}
+	return nil
+}
 
 func readWorkspaceOwner(reservation, taskID string) (workspaceOwner, error) {
 	var owner workspaceOwner
@@ -184,16 +150,6 @@ func emptyReservation(reservation string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
-// writeWorkspaceOwner persists the ownership record atomically so a crash never
-// leaves a truncated record that every later attempt would reject.
-func writeWorkspaceOwner(reservation string, owner workspaceOwner) error {
-	b, err := json.Marshal(owner)
-	if err != nil {
-		return err
-	}
-	return writeFileAtomic(filepath.Join(reservation, "owner.json"), ".owner-*.json", b)
-}
-
 // removeReservation deletes an ownership record and its directory without
 // touching a worktree.
 func removeReservation(reservation string) {
@@ -201,8 +157,8 @@ func removeReservation(reservation string) {
 	_ = os.Remove(reservation)
 }
 
-// discardBrokenWorktree removes a worktree directory and prunes the registration
-// Git keeps for it, which an interrupted worktree add can leave behind.
+// discardBrokenWorktree removes a worktree directory and prunes the
+// registration an interrupted worktree add can leave behind.
 func discardBrokenWorktree(ctx context.Context, source, tree string) error {
 	if err := os.RemoveAll(tree); err != nil {
 		return err
@@ -216,21 +172,26 @@ func addReservedWorktree(ctx context.Context, source, tree, commit string) error
 	return err
 }
 
-// checkReservedWorktree verifies that path is still the reserved worktree of the
-// repository Git reports as common.
-func checkReservedWorktree(ctx context.Context, path, common string) error {
-	actual, err := gitPath(ctx, path, "--git-common-dir")
+// checkReservedWorktree verifies that tree is still the reserved worktree of
+// the repository whose common directory is common.
+func checkReservedWorktree(ctx context.Context, tree, common string) error {
+	actual, err := gitPath(ctx, tree, "--git-common-dir")
 	if err != nil {
 		return err
 	}
 	if actual != common {
-		return errors.New("execution workspace belongs to a different repository")
+		return errors.New("worktree belongs to a different repository")
 	}
-	top, err := gitPath(ctx, path, "--show-toplevel")
+	top, err := gitPath(ctx, tree, "--show-toplevel")
 	if err != nil {
 		return err
 	}
-	if top != path {
+	// Git reports a resolved path, so compare against the resolved tree.
+	want, err := filepath.EvalSymlinks(tree)
+	if err != nil {
+		return err
+	}
+	if top != want {
 		return errors.New("execution workspace is not the reserved worktree")
 	}
 	return nil
@@ -238,9 +199,8 @@ func checkReservedWorktree(ctx context.Context, path, common string) error {
 
 const workspaceCleanupTimeout = 30 * time.Second
 
-// cleanupTaskWorkspace removes a deleted task's dedicated worktree and
-// reservation. Cleanup runs outside the service mutex because it invokes Git.
-// It never touches the source workspace.
+// cleanupTaskWorkspace removes a deleted task's worktree and reservation
+// outside the service mutex. It never touches the source workspace.
 func (s *Service) cleanupTaskWorkspace(t Task) error {
 	s.mergeMu.Lock()
 	defer s.mergeMu.Unlock()
@@ -249,51 +209,29 @@ func (s *Service) cleanupTaskWorkspace(t Task) error {
 	return removeTaskWorkspace(ctx, s.path, t)
 }
 
-// validTaskID reports whether id can safely name a path component under the
-// workspaces directory. filepath.IsLocal rejects an empty id, ".", "..", an
-// absolute path and any embedded separator.
-func validTaskID(id string) bool {
-	return filepath.IsLocal(id)
-}
-
-// removeTaskWorkspace validates the reservation's ownership record before
-// removing anything. A missing reservation is a successful no-op, so shared
-// workspace tasks and tasks that never prepared a worktree need no special
-// handling.
+// removeTaskWorkspace validates the ownership record before removing anything.
+// A missing reservation is a successful no-op.
 func removeTaskWorkspace(ctx context.Context, statePath string, t Task) error {
-	if statePath == "" || !validTaskID(t.ID) {
-		return errors.New("invalid task identity for workspace cleanup")
-	}
-	base, err := filepath.Abs(filepath.Join(filepath.Dir(statePath), "workspaces"))
+	reservation, err := reservationPath(statePath, t.ID)
 	if err != nil {
 		return err
 	}
-	reservation := filepath.Join(base, t.ID)
-	info, err := os.Lstat(reservation)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("workspace reservation: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("workspace reservation is not a regular directory")
+	if err = realDir(reservation, "workspace reservation"); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
 	owner, err := readWorkspaceOwner(reservation, t.ID)
 	if err != nil {
 		return err
 	}
-
 	tree := filepath.Join(reservation, "tree")
-	info, err = os.Lstat(tree)
-	if errors.Is(err, os.ErrNotExist) {
-		return os.RemoveAll(reservation)
-	}
-	if err != nil {
-		return fmt.Errorf("workspace worktree: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("workspace worktree is not a regular directory")
+	if err = realDir(tree, "workspace worktree"); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return os.RemoveAll(reservation)
+		}
+		return err
 	}
 	common, err := gitPath(ctx, tree, "--git-common-dir")
 	if err != nil {
@@ -308,6 +246,9 @@ func removeTaskWorkspace(ctx context.Context, statePath string, t Task) error {
 	return os.RemoveAll(reservation)
 }
 
+// prepareWorkspace checks out the source repository's committed HEAD in the
+// task's reservation, or reuses the worktree an earlier attempt prepared. It
+// returns the execution directory and the isolation commit.
 func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, string, error) {
 	root, err := gitPath(ctx, t.Workspace, "--show-toplevel")
 	if err != nil {
@@ -325,112 +266,114 @@ func prepareWorkspace(ctx context.Context, statePath string, t Task) (string, st
 	if err != nil {
 		return "", "", err
 	}
-	if !validTaskID(t.ID) {
-		return "", "", errors.New("invalid task identity")
-	}
-	base, err := filepath.Abs(filepath.Join(filepath.Dir(statePath), "workspaces"))
+	reservation, err := reservationPath(statePath, t.ID)
 	if err != nil {
 		return "", "", err
 	}
-	if err = os.MkdirAll(base, 0700); err != nil {
+	if err = os.MkdirAll(filepath.Dir(reservation), 0700); err != nil {
 		return "", "", err
 	}
-	reservation := filepath.Join(base, t.ID)
+	owner, created, err := reserveWorkspace(ctx, reservation, workspaceOwner{TaskID: t.ID, Source: root, CommonDir: common})
+	if err != nil {
+		return "", "", err
+	}
 	tree := filepath.Join(reservation, "tree")
-	owner := workspaceOwner{TaskID: t.ID, Source: root, CommonDir: common}
-	created := false
-	if err = os.Mkdir(reservation, 0700); err == nil {
-		created = true
-	} else if errors.Is(err, os.ErrExist) {
-		info, statErr := os.Lstat(reservation)
-		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return "", "", errors.New("workspace reservation is not a regular directory")
-		}
-		saved, readErr := readWorkspaceOwner(reservation, t.ID)
-		switch {
-		case readErr == nil:
-			if saved.Source != root || saved.CommonDir != common {
-				return "", "", errors.New("workspace ownership does not match source")
-			}
-			owner = saved
-		case emptyReservation(reservation):
-			// A crash between Mkdir and the ownership write leaves a reservation
-			// with no record and no worktree. Recreate it instead of failing
-			// every later attempt.
-			created = true
-		default:
-			return "", "", readErr
-		}
-	} else {
-		return "", "", err
-	}
-	// A reservation this attempt created must not survive a failure, otherwise
-	// it blocks every later attempt.
+	// A reservation this attempt created must not survive a failure, or it
+	// blocks every later attempt.
 	defer func() {
-		if !created {
-			return
+		if created {
+			if _, statErr := os.Lstat(tree); statErr == nil {
+				_ = discardBrokenWorktree(ctx, root, tree)
+			}
+			removeReservation(reservation)
 		}
-		if _, statErr := os.Lstat(tree); statErr == nil {
-			_ = discardBrokenWorktree(ctx, root, tree)
-		}
-		removeReservation(reservation)
 	}()
-	if created {
-		if owner.Commit, err = gitOutput(ctx, root, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
-			return "", "", err
-		}
-		if err = writeWorkspaceOwner(reservation, owner); err != nil {
-			return "", "", err
-		}
-	}
-	if info, statErr := os.Lstat(tree); statErr == nil {
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return "", "", errors.New("execution workspace is not a regular directory")
-		}
-		if err = checkReservedWorktree(ctx, tree, common); err != nil {
-			// An interrupted worktree add can leave a tree Git does not
-			// recognize, and its stale registration blocks every retry. Remove
-			// it, prune and add it once more.
-			if removeErr := discardBrokenWorktree(ctx, root, tree); removeErr != nil {
-				return "", "", fmt.Errorf("%w: %w; delete %s and retry", err, removeErr, tree)
-			}
-			if err = addReservedWorktree(ctx, root, tree, owner.Commit); err != nil {
-				return "", "", fmt.Errorf("execution workspace %s is unusable: %w; delete the directory and retry", tree, err)
-			}
-		}
-	} else if errors.Is(statErr, os.ErrNotExist) {
-		if err = addReservedWorktree(ctx, root, tree, owner.Commit); err != nil {
-			_ = discardBrokenWorktree(ctx, root, tree)
-			return "", "", err
-		}
-	} else {
-		return "", "", statErr
+	if err = ensureWorktree(ctx, tree, owner); err != nil {
+		return "", "", err
 	}
 	cwd := filepath.Join(tree, rel)
-	info, err := os.Stat(cwd)
-	if err != nil || !info.IsDir() {
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
 		return "", "", errors.New("source subdirectory does not exist in committed snapshot")
 	}
 	created = false
 	return cwd, owner.Commit, nil
 }
 
-// prepareTaskWorkspace serializes worktree creation with merge and discard,
-// which mutate the same source repository.
-func (s *Service) prepareTaskWorkspace(ctx context.Context, statePath string, t Task) (string, string, error) {
-	s.mergeMu.Lock()
-	defer s.mergeMu.Unlock()
-	return prepareWorkspace(ctx, statePath, t)
+// reserveWorkspace claims the reservation directory and records the source
+// HEAD it will check out, or adopts the reservation an earlier attempt of the
+// same task left. It reports whether this call created the reservation.
+func reserveWorkspace(ctx context.Context, reservation string, owner workspaceOwner) (workspaceOwner, bool, error) {
+	if err := os.Mkdir(reservation, 0700); errors.Is(err, os.ErrExist) {
+		if err = realDir(reservation, "workspace reservation"); err != nil {
+			return owner, false, err
+		}
+		saved, readErr := readWorkspaceOwner(reservation, owner.TaskID)
+		if readErr == nil {
+			if saved.Source != owner.Source || saved.CommonDir != owner.CommonDir {
+				return owner, false, errors.New("workspace ownership does not match source")
+			}
+			return saved, false, nil
+		}
+		// A crash between Mkdir and the ownership write leaves an empty
+		// reservation; recreate it instead of failing every later attempt.
+		if !emptyReservation(reservation) {
+			return owner, false, readErr
+		}
+	} else if err != nil {
+		return owner, false, err
+	}
+	var err error
+	if owner.Commit, err = gitOutput(ctx, owner.Source, "rev-parse", "--verify", "HEAD^{commit}"); err == nil {
+		// Written atomically: a truncated record would be rejected forever.
+		var b []byte
+		if b, err = json.Marshal(owner); err == nil {
+			err = writeFileAtomic(filepath.Join(reservation, "owner.json"), ".owner-*.json", b)
+		}
+	}
+	if err != nil {
+		removeReservation(reservation)
+		return owner, false, err
+	}
+	return owner, true, nil
 }
 
+// ensureWorktree checks out the reserved commit, or verifies the worktree an
+// earlier attempt left. An interrupted add can leave a tree Git does not
+// recognize whose stale registration blocks every retry, so it is removed,
+// pruned and added once more.
+func ensureWorktree(ctx context.Context, tree string, owner workspaceOwner) error {
+	err := realDir(tree, "execution workspace")
+	if errors.Is(err, os.ErrNotExist) {
+		if err = addReservedWorktree(ctx, owner.Source, tree, owner.Commit); err != nil {
+			_ = discardBrokenWorktree(ctx, owner.Source, tree)
+		}
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if err = checkReservedWorktree(ctx, tree, owner.CommonDir); err == nil {
+		return nil
+	}
+	if removeErr := discardBrokenWorktree(ctx, owner.Source, tree); removeErr != nil {
+		return fmt.Errorf("%w: %w; delete %s and retry", err, removeErr, tree)
+	}
+	if err = addReservedWorktree(ctx, owner.Source, tree, owner.Commit); err != nil {
+		return fmt.Errorf("execution workspace %s is unusable: %w; delete the directory and retry", tree, err)
+	}
+	return nil
+}
+
+// prepareExecution prepares an isolated attempt's worktree, serialized with
+// merge and discard, which mutate the same source repository, and records it
+// before the runner starts.
 func (s *Service) prepareExecution(ctx context.Context, t Task) (Task, error) {
 	if !t.Isolated {
 		return t, nil
 	}
-	s.mu.Lock()
-	path := s.path
-	s.mu.Unlock()
-	cwd, commit, err := s.prepareTaskWorkspace(ctx, path, t)
+	s.mergeMu.Lock()
+	cwd, commit, err := prepareWorkspace(ctx, s.path, t)
+	s.mergeMu.Unlock()
 	if err != nil {
 		return t, fmt.Errorf("prepare isolated workspace: %w", err)
 	}
@@ -439,23 +382,18 @@ func (s *Service) prepareExecution(ctx context.Context, t Task) (Task, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.data.Tasks {
-		current := &s.data.Tasks[i]
-		if current.ID != t.ID {
-			continue
-		}
-		old := clone(*current)
+	current := s.taskLocked(t.ID)
+	if current == nil {
+		return t, errors.New("task not found during workspace preparation")
+	}
+	if err = s.mutateTaskLocked(current, func(current *Task) error {
 		current.ExecutionWorkspace = cwd
 		current.IsolationCommit = commit
 		current.Events = append(current.Events, Event{time.Now().UTC(), "workspace_prepared", "Execution workspace: " + cwd + " (initial commit " + commit + ")"})
-		if err = s.save(); err != nil {
-			*current = old
-			return t, err
-		}
-		t.ExecutionWorkspace = cwd
-		t.IsolationCommit = commit
-		t.Workspace = cwd
-		return t, nil
+		return nil
+	}); err != nil {
+		return t, err
 	}
-	return t, errors.New("task not found during workspace preparation")
+	t.ExecutionWorkspace, t.IsolationCommit, t.Workspace = cwd, commit, cwd
+	return t, nil
 }

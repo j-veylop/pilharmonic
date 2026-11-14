@@ -30,23 +30,17 @@ func (s *Service) SetSubagentLimits(maxDepth, maxChildren int) error {
 	if maxDepth < 0 || maxChildren < 0 {
 		return errors.New("subagent limits cannot be negative")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	s.subagentMaxDepth = maxDepth
-	s.subagentMaxChildren = maxChildren
-	return nil
+	return s.whileOpen(func() error {
+		s.subagentMaxDepth, s.subagentMaxChildren = maxDepth, maxChildren
+		return nil
+	})
 }
 
-// SpawnSubagent records and starts a child task for work delegated by a running
-// parent. The child gets a separate thread, immutable mandate, decision and
-// attempt. It does not inherit the parent's context or authority beyond the
-// delegated mandate, and its lifecycle is independent after creation. This is
-// the trusted in-process entry point used by the CLI and terminal UI;
-// control-socket callers must present the parent attempt's credential through
-// spawnSubagent instead.
+// SpawnSubagent records and starts a child task delegated by a running parent,
+// with its own thread, mandate, decision and attempt and no authority beyond
+// the delegated mandate. This trusted in-process entry point is for the
+// terminal UI; control-socket callers must present the parent attempt's
+// credential through spawnSubagent.
 func (s *Service) SpawnSubagent(parentID, title, prompt, agent string) (Task, error) {
 	return s.spawnSubagentWithCredential(parentID, title, prompt, agent, "", "", true)
 }
@@ -72,82 +66,26 @@ func (s *Service) spawnSubagentWithCredential(parentID, title, prompt, agent, pr
 }
 
 func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token string, operator bool) (Task, error) {
-	title = strings.TrimSpace(title)
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return Task{}, errors.New("subagent mandate is required")
 	}
+	title = strings.TrimSpace(title)
 	if title == "" {
 		title = requestTitle(prompt)
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closing {
-		return Task{}, errors.New("service is shutting down")
-	}
-	if s.subagentMaxDepth == 0 || s.subagentMaxChildren == 0 {
-		return Task{}, errors.New("subagent spawning is disabled")
-	}
-	var parent *Task
-	var parentIndex int
-	for i := range s.data.Tasks {
-		if s.data.Tasks[i].ID == parentID {
-			parent = &s.data.Tasks[i]
-			parentIndex = i
-			break
-		}
-	}
-	if parent == nil {
-		return Task{}, errors.New("parent task not found")
-	}
-	if !operator {
-		if token == "" {
-			return Task{}, errors.New("subagent credential required")
-		}
-		if parent.controlToken == "" || subtle.ConstantTimeCompare([]byte(parent.controlToken), []byte(token)) != 1 {
-			return Task{}, errors.New("invalid subagent credential")
-		}
-	}
-	if parent.integrating {
-		return Task{}, errors.New("parent worktree is being integrated")
-	}
-	parentProfile, err := s.profileForTaskLocked(*parent)
+	parent, parentProfile, err := s.delegatingParentLocked(parentID, token, operator)
 	if err != nil {
 		return Task{}, err
 	}
-	if parentProfile.NoSubagents {
-		return Task{}, fmt.Errorf("profile %q does not allow delegation", parentProfile.Name)
-	}
-	if parent.Status != Running {
-		return Task{}, fmt.Errorf("parent task is %s, not running", parent.Status)
-	}
-	depth := parent.Depth + 1
-	if depth > s.subagentMaxDepth {
-		return Task{}, fmt.Errorf("subagent depth limit reached (maximum %d)", s.subagentMaxDepth)
-	}
-	if s.subagentChildCountLocked(parent.ID) >= s.subagentMaxChildren {
-		return Task{}, fmt.Errorf("subagent limit reached (maximum %d child tasks)", s.subagentMaxChildren)
-	}
-	agent = strings.TrimSpace(agent)
-	if agent == "" {
+	if agent = strings.TrimSpace(agent); agent == "" {
 		agent = s.selectAgentLocked(prompt, parent.Agent)
 	}
-	runner, ok := s.runners[agent]
-	if !ok {
-		return Task{}, fmt.Errorf("agent %q unavailable", agent)
-	}
-	childProfile, profileErr := s.childProfileLocked(parentProfile, parent.Agent, agent, profile)
-	if profileErr != nil {
-		return Task{}, profileErr
-	}
-	limits := Task{Agent: agent, InheritedTools: parentProfile.Tools, SpecialistTools: s.specialistTools[agent]}
-	effective, profileErr := s.limitTaskProfileLocked(limits, childProfile)
-	if profileErr != nil {
-		return Task{}, profileErr
-	}
-	if profileErr = validateProfileForRunner(runner, effective); profileErr != nil {
-		return Task{}, profileErr
+	childProfile, err := s.delegatedProfileLocked(parent.Agent, parentProfile, agent, profile)
+	if err != nil {
+		return Task{}, err
 	}
 	workspace := parent.ExecutionWorkspace
 	if workspace == "" {
@@ -156,66 +94,81 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token 
 		}
 		workspace = parent.Workspace
 	}
-	info, err := os.Stat(workspace)
-	if err != nil {
-		return Task{}, fmt.Errorf("parent execution workspace: %w", err)
+	if err = requireDir(workspace, "parent execution workspace"); err != nil {
+		return Task{}, err
 	}
-	if !info.IsDir() {
-		return Task{}, errors.New("parent execution workspace must be a directory")
-	}
-	id := newID()
-	triggerID := newID()
-	threadID := newID()
-	now := time.Now().UTC()
-	trigger := Trigger{ID: triggerID, Source: SubagentPolicySource, Text: prompt, CreatedAt: now}
-	decision, err := s.authorize(AuthorizationRequest{
-		Source:    SubagentPolicySource,
-		Actor:     "task:" + parent.ID,
-		Purpose:   PurposeSubagent,
-		TriggerID: triggerID,
-		ThreadID:  threadID,
-		ParentID:  parent.ID,
-		Text:      prompt,
-		Workspace: workspace,
-		Depth:     depth,
+	depth := parent.Depth + 1
+	return s.acceptLocked(acceptedTaskInput{
+		auth: AuthorizationRequest{Source: SubagentPolicySource, Actor: "task:" + parent.ID, Purpose: PurposeSubagent,
+			ParentID: parent.ID, Text: prompt, Workspace: workspace, Depth: depth},
+		title:     title,
+		agent:     agent,
+		spec:      &childProfile,
+		inherited: parentProfile.Tools,
+		accepted:  "Subagent mandate accepted from running task " + parent.ID,
+		notes: []Event{{Kind: "delegated", Message: "Authorization " + SubagentPolicyVersion + " · depth " + fmt.Sprint(depth) +
+			" · profile " + childProfile.Name + " · workspace inherited from parent"}},
 	})
+}
+
+// delegatingParentLocked checks that a running parent may delegate one more
+// child: spawning is enabled, a control request carries the parent attempt's
+// credential, and the parent's depth and child budget allow it.
+func (s *Service) delegatingParentLocked(parentID, token string, operator bool) (*Task, Profile, error) {
+	if s.closing {
+		return nil, Profile{}, errShuttingDown
+	}
+	if s.subagentMaxDepth == 0 || s.subagentMaxChildren == 0 {
+		return nil, Profile{}, errors.New("subagent spawning is disabled")
+	}
+	parent := s.taskLocked(parentID)
+	if parent == nil {
+		return nil, Profile{}, errors.New("parent task not found")
+	}
+	if !operator {
+		if token == "" {
+			return nil, Profile{}, errors.New("subagent credential required")
+		}
+		if parent.controlToken == "" || subtle.ConstantTimeCompare([]byte(parent.controlToken), []byte(token)) != 1 {
+			return nil, Profile{}, errors.New("invalid subagent credential")
+		}
+	}
+	if parent.integrating {
+		return nil, Profile{}, errors.New("parent worktree is being integrated")
+	}
+	profile, err := s.profileForTaskLocked(*parent)
+	switch {
+	case err != nil:
+		return nil, Profile{}, err
+	case profile.NoSubagents:
+		return nil, Profile{}, fmt.Errorf("profile %q does not allow delegation", profile.Name)
+	case parent.Status != Running:
+		return nil, Profile{}, fmt.Errorf("parent task is %s, not running", parent.Status)
+	case parent.Depth+1 > s.subagentMaxDepth:
+		return nil, Profile{}, fmt.Errorf("subagent depth limit reached (maximum %d)", s.subagentMaxDepth)
+	case s.subagentChildCountLocked(parent.ID) >= s.subagentMaxChildren:
+		return nil, Profile{}, fmt.Errorf("subagent limit reached (maximum %d child tasks)", s.subagentMaxChildren)
+	}
+	return parent, profile, nil
+}
+
+// delegatedProfileLocked resolves the child's profile and checks that the
+// chosen executor can run it within the parent's and executor's tool limits.
+func (s *Service) delegatedProfileLocked(parentAgent string, parent Profile, agent, requested string) (Profile, error) {
+	runner, ok := s.runners[agent]
+	if !ok {
+		return Profile{}, fmt.Errorf("agent %q unavailable", agent)
+	}
+	child, err := s.childProfileLocked(parent, parentAgent, agent, requested)
 	if err != nil {
-		return Task{}, err
+		return Profile{}, err
 	}
-	decision.CreatedAt = now
-	task := Task{
-		ID:              id,
-		ThreadID:        threadID,
-		ParentID:        parent.ID,
-		Depth:           depth,
-		Title:           title,
-		Prompt:          prompt,
-		Workspace:       workspace,
-		Status:          Queued,
-		Agent:           agent,
-		ProfileName:     childProfile.Name,
-		ProfileSpec:     &childProfile,
-		InheritedTools:  limits.InheritedTools,
-		SpecialistTools: limits.SpecialistTools,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-		Trigger:         trigger,
-		Decision:        decision,
-		Events: []Event{
-			{now, "accepted", "Subagent mandate accepted from running task " + parent.ID},
-			{now, "delegated", "Authorization " + SubagentPolicyVersion + " · depth " + fmt.Sprint(depth) + " · profile " + childProfile.Name + " · workspace inherited from parent"},
-		},
+	limits := Task{Agent: agent, InheritedTools: parent.Tools, SpecialistTools: s.specialistTools[agent]}
+	effective, err := s.limitTaskProfileLocked(limits, child)
+	if err != nil {
+		return Profile{}, err
 	}
-	s.data.Tasks = append(s.data.Tasks, task)
-	s.data.Threads = append(s.data.Threads, Thread{ID: threadID, Triggers: []Trigger{trigger}, Decisions: []Decision{decision}})
-	s.data.Tasks[parentIndex].Events = append(s.data.Tasks[parentIndex].Events, Event{now, "subagent", "Subagent spawned: " + id + " · " + title})
-	if err = s.save(); err != nil {
-		s.data.Tasks = s.data.Tasks[:len(s.data.Tasks)-1]
-		s.data.Threads = s.data.Threads[:len(s.data.Threads)-1]
-		s.data.Tasks[parentIndex].Events = s.data.Tasks[parentIndex].Events[:len(s.data.Tasks[parentIndex].Events)-1]
-		return Task{}, err
-	}
-	return clone(task), nil
+	return child, validateProfileForRunner(runner, effective)
 }
 
 // childProfileLocked resolves the profile a delegated child runs with. An empty
@@ -244,20 +197,14 @@ func (s *Service) childProfileLocked(parent Profile, parentAgent, agent, request
 func (s *Service) noteSubagentStartFailure(id string, cause error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != id {
-			continue
-		}
+	if t := s.taskLocked(id); t != nil {
 		if err := s.mutateTaskLocked(t, func(t *Task) error {
-			now := time.Now().UTC()
-			t.UpdatedAt = now
-			t.Events = append(t.Events, Event{now, "start_failed", cause.Error()})
+			t.UpdatedAt = time.Now().UTC()
+			t.Events = append(t.Events, Event{t.UpdatedAt, "start_failed", cause.Error()})
 			return nil
 		}); err != nil {
 			s.persistErr = err
 		}
-		return
 	}
 }
 

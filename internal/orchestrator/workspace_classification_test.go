@@ -64,172 +64,67 @@ func TestTaskMakesChangesClassification(t *testing.T) {
 	}
 }
 
-func TestInspectionRequestsUseSharedWorkspace(t *testing.T) {
+// A submitted request selects a worktree only when its mandate asks for a
+// change; the chosen executor is not a signal.
+func TestSubmittedRequestWorkspaceChoice(t *testing.T) {
 	repo := committedRepo(t)
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, statePath)
-	runs := make(chan Task, 8)
-	for _, agent := range []string{"reviewer", "explorer", "tester", "debugger", "gitter"} {
+	runs := make(chan Task, 1)
+	for _, agent := range []string{"general", "implementer", "reviewer", "explorer", "tester", "debugger", "gitter"} {
 		s.RegisterRunner(agent, runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 			runs <- task
 			return nil
 		}))
 	}
-	cases := []struct {
-		prompt string
-		agent  string
+	for _, tc := range []struct {
+		prompt, agent string
+		isolated      bool
 	}{
-		{"@reviewer review the parser", "reviewer"},
-		{"@explorer explain the parser", "explorer"},
-		{"@tester run the tests", "tester"},
-		{"@debugger debug the failure", "debugger"},
-		{"@gitter git status", "gitter"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.agent, func(t *testing.T) {
+		{"@reviewer review the parser", "reviewer", false},
+		{"@explorer explain the parser", "explorer", false},
+		{"@tester run the tests", "tester", false},
+		{"@debugger debug the failure", "debugger", false},
+		{"@gitter git status", "gitter", false},
+		{"review the parser", "general", false},
+		{"do work", "general", false},
+		{"@implementer do work", "implementer", false},
+		{"@reviewer do work", "reviewer", false},
+		{"fix the parser", "general", true},
+		{"@implementer fix the parser", "implementer", true},
+		{"@reviewer review the parser and fix the bug", "reviewer", true},
+		{"@tester run tests then update the docs", "tester", true},
+		{"@gitter git commit the changes", "gitter", true},
+	} {
+		t.Run(tc.prompt, func(t *testing.T) {
 			task, err := s.SubmitRequest(tc.prompt, repo)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if task.Agent != tc.agent {
-				t.Fatalf("agent %q, want %q", task.Agent, tc.agent)
-			}
-			if task.Isolated || !task.IsolationAuto {
-				t.Fatalf("inspection workspace choice: isolated=%v automatic=%v", task.Isolated, task.IsolationAuto)
+			must(t, err)
+			if task.Agent != tc.agent || task.Isolated != tc.isolated || !task.IsolationAuto {
+				t.Fatalf("agent %q isolated=%v automatic=%v, want %q isolated=%v", task.Agent, task.Isolated, task.IsolationAuto, tc.agent, tc.isolated)
 			}
 			done := await(t, s, task.ID, Completed)
-			if done.Isolated || done.ExecutionWorkspace != "" {
-				t.Fatalf("inspection task prepared a worktree: %+v", done)
-			}
 			run := <-runs
-			if run.Workspace != repo {
-				t.Fatalf("runner cwd %q, want source workspace %q", run.Workspace, repo)
-			}
-			if _, err := os.Stat(filepath.Join(filepath.Dir(statePath), "workspaces", task.ID)); !os.IsNotExist(err) {
-				t.Fatalf("inspection task created a workspace reservation: %v", err)
-			}
-			found := false
-			for _, event := range done.Events {
-				if event.Kind == "workspace" && strings.Contains(event.Message, "shared source workspace") {
-					found = true
+			routed := "shared workspace"
+			if tc.isolated {
+				routed = "isolated committed-HEAD worktree"
+				if done.ExecutionWorkspace == "" || !strings.Contains(run.Workspace, filepath.Join("workspaces", task.ID, "tree")) {
+					t.Fatalf("change ran in %q instead of the task worktree", run.Workspace)
+				}
+			} else {
+				if run.Workspace != repo || done.ExecutionWorkspace != "" {
+					t.Fatalf("runner cwd %q, want source workspace %q", run.Workspace, repo)
+				}
+				if _, err := os.Stat(filepath.Join(filepath.Dir(statePath), "workspaces", task.ID)); !os.IsNotExist(err) {
+					t.Fatalf("shared task created a workspace reservation: %v", err)
 				}
 			}
-			if !found {
-				t.Fatalf("inspection workspace decision was not recorded: %+v", done.Events)
+			routedFound, sharedFound := false, false
+			for _, event := range done.Events {
+				routedFound = routedFound || event.Kind == "routed" && strings.Contains(event.Message, routed)
+				sharedFound = sharedFound || event.Kind == "workspace" && strings.Contains(event.Message, "shared source workspace")
 			}
-		})
-	}
-}
-
-func TestInspectionRequestWithFallbackExecutorUsesSharedWorkspace(t *testing.T) {
-	repo := committedRepo(t)
-	statePath := filepath.Join(t.TempDir(), "state.json")
-	s := openTestService(t, statePath)
-	seen := make(chan Task, 1)
-	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
-		seen <- task
-		return nil
-	}))
-	task, err := s.SubmitRequest("review the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if task.Agent != DefaultRouteAgent || task.Isolated || !task.IsolationAuto {
-		t.Fatalf("fallback inspection classification: %+v", task)
-	}
-	await(t, s, task.ID, Completed)
-	if run := <-seen; run.Workspace != repo {
-		t.Fatalf("fallback runner cwd %q, want %q", run.Workspace, repo)
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(statePath), "workspaces", task.ID)); !os.IsNotExist(err) {
-		t.Fatalf("fallback inspection task created a workspace reservation: %v", err)
-	}
-}
-
-func TestAmbiguousRequestsUseSharedWorkspace(t *testing.T) {
-	repo := committedRepo(t)
-	statePath := filepath.Join(t.TempDir(), "state.json")
-	s := openTestService(t, statePath)
-	runs := make(chan Task, 8)
-	for _, agent := range []string{"general", "implementer", "reviewer"} {
-		s.RegisterRunner(agent, runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
-			runs <- task
-			return nil
-		}))
-	}
-	cases := []struct {
-		prompt string
-		agent  string
-	}{
-		{"do work", "general"},
-		{"@implementer do work", "implementer"},
-		{"@reviewer do work", "reviewer"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.agent, func(t *testing.T) {
-			task, err := s.SubmitRequest(tc.prompt, repo)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if task.Agent != tc.agent {
-				t.Fatalf("agent %q, want %q", task.Agent, tc.agent)
-			}
-			if task.Isolated || !task.IsolationAuto {
-				t.Fatalf("ambiguous workspace choice: isolated=%v automatic=%v", task.Isolated, task.IsolationAuto)
-			}
-			done := await(t, s, task.ID, Completed)
-			if done.Isolated || done.ExecutionWorkspace != "" {
-				t.Fatalf("ambiguous task prepared a worktree: %+v", done)
-			}
-			if run := <-runs; run.Workspace != repo {
-				t.Fatalf("runner cwd %q, want source workspace %q", run.Workspace, repo)
-			}
-			if _, err := os.Stat(filepath.Join(filepath.Dir(statePath), "workspaces", task.ID)); !os.IsNotExist(err) {
-				t.Fatalf("ambiguous task created a workspace reservation: %v", err)
-			}
-		})
-	}
-}
-
-func TestChangeRequestsRetainIsolation(t *testing.T) {
-	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	runs := make(chan Task, 8)
-	for _, agent := range []string{"general", "implementer", "reviewer", "tester", "gitter"} {
-		s.RegisterRunner(agent, runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
-			runs <- task
-			return nil
-		}))
-	}
-	cases := []struct {
-		prompt string
-		agent  string
-	}{
-		{"fix the parser", "general"},
-		{"@implementer fix the parser", "implementer"},
-		{"@reviewer review the parser and fix the bug", "reviewer"},
-		{"@tester run tests then update the docs", "tester"},
-		{"@gitter git commit the changes", "gitter"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.agent, func(t *testing.T) {
-			task, err := s.SubmitRequest(tc.prompt, repo)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if task.Agent != tc.agent {
-				t.Fatalf("agent %q, want %q", task.Agent, tc.agent)
-			}
-			if !task.Isolated || !task.IsolationAuto {
-				t.Fatalf("change workspace choice: isolated=%v automatic=%v", task.Isolated, task.IsolationAuto)
-			}
-			done := await(t, s, task.ID, Completed)
-			run := <-runs
-			if !done.Isolated || done.ExecutionWorkspace == "" {
-				t.Fatalf("change task did not prepare a worktree: %+v", done)
-			}
-			if run.Workspace == repo || !strings.Contains(run.Workspace, filepath.Join("workspaces", task.ID, "tree")) {
-				t.Fatalf("runner cwd %q is not the task worktree", run.Workspace)
+			if !routedFound || sharedFound == tc.isolated {
+				t.Fatalf("workspace decision was not recorded: %+v", done.Events)
 			}
 		})
 	}
@@ -237,68 +132,48 @@ func TestChangeRequestsRetainIsolation(t *testing.T) {
 
 func TestExecutorChangePreservesWorkspaceChoice(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
-	task, err := s.CreateTask("draft", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "draft", "do work", repo)
 	if task.Isolated || !task.IsolationAuto {
 		t.Fatalf("ambiguous draft did not use the shared workspace: %+v", task)
 	}
 
-	if err = s.SetTaskAgent(task.ID, "explorer"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskAgent(task.ID, "explorer"))
 	got, _ := s.GetTask(task.ID)
 	if got.Isolated || !got.IsolationAuto {
 		t.Fatalf("inspection executor changed the automatic workspace choice: %+v", got)
 	}
 
-	if err = s.SetTaskAgent(task.ID, "implementer"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskAgent(task.ID, "implementer"))
 	got, _ = s.GetTask(task.ID)
 	if got.Isolated || !got.IsolationAuto {
 		t.Fatalf("executor role alone enabled isolation: %+v", got)
 	}
 
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskIsolation(task.ID, true))
 	got, _ = s.GetTask(task.ID)
 	if !got.Isolated || got.IsolationAuto {
 		t.Fatalf("explicit isolation was not recorded: %+v", got)
 	}
-	if err = s.SetTaskAgent(task.ID, "reviewer"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskAgent(task.ID, "reviewer"))
 	got, _ = s.GetTask(task.ID)
 	if !got.Isolated || got.IsolationAuto {
 		t.Fatalf("executor change overrode explicit isolation: %+v", got)
 	}
 
-	if err = s.SetTaskIsolation(task.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskAgent(task.ID, "implementer"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskIsolation(task.ID, false))
+	must(t, s.SetTaskAgent(task.ID, "implementer"))
 	got, _ = s.GetTask(task.ID)
 	if got.Isolated || got.IsolationAuto {
 		t.Fatalf("executor change overrode explicit shared choice: %+v", got)
 	}
 
-	change, err := s.CreateTask("change", "fix the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	change := createTask(t, s, "change", "fix the parser", repo)
 	if !change.Isolated || !change.IsolationAuto {
 		t.Fatalf("change request did not select isolation: %+v", change)
 	}
-	if err = s.SetTaskAgent(change.ID, "explorer"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskAgent(change.ID, "explorer"))
 	got, _ = s.GetTask(change.ID)
 	if !got.Isolated || !got.IsolationAuto {
 		t.Fatalf("executor change overrode the mandate's change signal: %+v", got)
@@ -306,17 +181,15 @@ func TestExecutorChangePreservesWorkspaceChoice(t *testing.T) {
 }
 
 func TestAutomaticWorkspaceChoiceReconciledAtStart(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	seen := make(chan Task, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("legacy", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "legacy", "do work", repo)
 	// Simulate an automatic isolated choice persisted by the previous
 	// role-based heuristic for a mandate with no change action.
 	s.mu.Lock()
@@ -332,9 +205,7 @@ func TestAutomaticWorkspaceChoiceReconciledAtStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if done.Isolated || done.ExecutionWorkspace != "" {
 		t.Fatalf("legacy automatic choice prepared a worktree: %+v", done)
@@ -356,37 +227,20 @@ func TestAutomaticWorkspaceChoiceReconciledAtStart(t *testing.T) {
 func TestAutomaticWorkspaceChoiceSurvivesRestart(t *testing.T) {
 	repo := committedRepo(t)
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Shutdown() })
+	s := openTestService(t, path)
 	s.LoadBuiltinSpecialists()
 
-	inspection, err := s.CreateTask("inspect", "review the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	change, err := s.CreateTask("change", "fix the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	inspection := createTask(t, s, "inspect", "review the parser", repo)
+	change := createTask(t, s, "change", "fix the parser", repo)
 	if inspection.Isolated || !inspection.IsolationAuto || !change.Isolated || !change.IsolationAuto {
 		t.Fatalf("initial workspace choices: inspection=%+v change=%+v", inspection, change)
 	}
 	// Confirming the automatic shared choice makes it an explicit operator
 	// choice, which a later executor change must not override.
-	if err = s.SetTaskIsolation(inspection.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskIsolation(inspection.ID, false))
+	must(t, s.Shutdown())
 
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustGet(Open(path))(t)
 	t.Cleanup(func() { _ = restored.Shutdown() })
 	restored.LoadBuiltinSpecialists()
 
@@ -394,9 +248,7 @@ func TestAutomaticWorkspaceChoiceSurvivesRestart(t *testing.T) {
 	if gotInspection.Isolated || gotInspection.IsolationAuto {
 		t.Fatalf("explicit shared choice did not survive restart: %+v", gotInspection)
 	}
-	if err = restored.SetTaskAgent(inspection.ID, "implementer"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restored.SetTaskAgent(inspection.ID, "implementer"))
 	gotInspection, _ = restored.GetTask(inspection.ID)
 	if gotInspection.Isolated || gotInspection.IsolationAuto {
 		t.Fatalf("executor change overrode persisted shared choice: %+v", gotInspection)
@@ -406,9 +258,7 @@ func TestAutomaticWorkspaceChoiceSurvivesRestart(t *testing.T) {
 	if !gotChange.Isolated || !gotChange.IsolationAuto {
 		t.Fatalf("automatic isolation did not survive restart: %+v", gotChange)
 	}
-	if err = restored.SetTaskAgent(change.ID, "reviewer"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restored.SetTaskAgent(change.ID, "reviewer"))
 	gotChange, _ = restored.GetTask(change.ID)
 	if !gotChange.Isolated || !gotChange.IsolationAuto {
 		t.Fatalf("executor change overrode the mandate's change signal: %+v", gotChange)
@@ -417,26 +267,18 @@ func TestAutomaticWorkspaceChoiceSurvivesRestart(t *testing.T) {
 
 func TestRelatedInspectionTaskUsesSharedWorkspace(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	seen := make(chan Task, 1)
 	s.RegisterRunner("reviewer", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
-	parent, err := s.CreateTask("parent", "implement the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.CreateRelatedTask(parent.ID, "review", "@reviewer review the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "implement the parser", repo)
+	task := mustGet(s.CreateRelatedTask(parent.ID, "review", "@reviewer review the parser", repo))(t)
 	if task.Agent != "reviewer" || task.Isolated || !task.IsolationAuto {
 		t.Fatalf("related inspection classification: %+v", task)
 	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Completed)
 	if run := <-seen; run.Workspace != repo {
 		t.Fatalf("related inspection runner cwd %q, want %q", run.Workspace, repo)
@@ -448,39 +290,23 @@ func TestCustomReviewerWithoutChangeRequestUsesSharedWorkspace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, path)
 	s.LoadBuiltinSpecialists()
-	task, err := s.CreateTask("draft", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetTaskAgent(task.ID, "reviewer"); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "draft", "do work", repo)
+	must(t, s.SetTaskAgent(task.ID, "reviewer"))
 	if selected, _ := s.GetTask(task.ID); selected.Isolated {
 		t.Fatal("bundled reviewer selected a worktree without a change request")
 	}
-	if err := s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Shutdown())
 
 	restored := openTestService(t, path)
-	if err := restored.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"reviewer","command":"cat"}]}`)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restored.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"reviewer","command":"cat"}]}`)))
 	restored.LoadBuiltinSpecialists()
-	draft, err := restored.CreateTask("another draft", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := restored.SetTaskAgent(draft.ID, "reviewer"); err != nil {
-		t.Fatal(err)
-	}
+	draft := createTask(t, restored, "another draft", "do work", repo)
+	must(t, restored.SetTaskAgent(draft.ID, "reviewer"))
 	if selected, _ := restored.GetTask(draft.ID); selected.Isolated {
 		t.Fatal("custom reviewer enabled isolation from its role alone")
 	}
 
-	if err := restored.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restored.Start(context.Background(), task.ID))
 	done := await(t, restored, task.ID, Completed)
 	if done.Isolated || done.ExecutionWorkspace != "" {
 		t.Fatalf("restored ambiguous task prepared a worktree: %+v", done)

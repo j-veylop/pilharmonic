@@ -15,13 +15,8 @@ import (
 // previous process alive.
 func writeUsageState(t *testing.T, path string, tasks ...Task) {
 	t.Helper()
-	b, err := json.Marshal(state{Version: stateVersion, Tasks: tasks})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, b, 0600); err != nil {
-		t.Fatal(err)
-	}
+	b := mustGet(json.Marshal(state{Version: stateVersion, Tasks: tasks}))(t)
+	must(t, os.WriteFile(path, b, 0600))
 }
 
 // usageAttempt builds a completed attempt that recorded usage at when.
@@ -64,11 +59,7 @@ func TestSessionUsageExcludesEarlierAttemptsButTaskKeepsThem(t *testing.T) {
 	}
 	writeUsageState(t, path, earlierOnly, ranEarlier)
 
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 	// Nothing was recorded by this process yet, so the session is empty even
 	// though durable history holds usage.
 	if usage := s.SessionUsage(); usage.InputTokens != 0 || usage.OutputTokens != 0 || usage.Tasks != 0 || len(usage.Models) != 0 {
@@ -76,12 +67,8 @@ func TestSessionUsageExcludesEarlierAttemptsButTaskKeepsThem(t *testing.T) {
 	}
 
 	s.RegisterRunner("general", sessionUsageRunner("openai/gpt-4.1", TokenUsage{InputTokens: 500, OutputTokens: 100}))
-	if err = s.Retry("retried-task"); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), "retried-task"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry("retried-task"))
+	must(t, s.Start(context.Background(), "retried-task"))
 	done := await(t, s, "retried-task", Completed)
 
 	// The task keeps the attempt from before the restart alongside the new one.
@@ -126,7 +113,7 @@ func TestSessionUsageExcludesEarlierAttemptsButTaskKeepsThem(t *testing.T) {
 // counts every token, names the unpriced selector and still lists both models
 // separately in the breakdown.
 func TestSessionUsageMixesPricedAndUnpricedModels(t *testing.T) {
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, out io.Writer) error {
 		recorder, err := usageRecorderFor(out)
 		if err != nil {
@@ -142,9 +129,7 @@ func TestSessionUsageMixesPricedAndUnpricedModels(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = s.Start(context.Background(), task.ID); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.Start(context.Background(), task.ID))
 		await(t, s, task.ID, Completed)
 	}
 
@@ -204,7 +189,8 @@ func TestSessionUsageMixesPricedAndUnpricedModels(t *testing.T) {
 // creates no record at all, so an attempt that reported nothing is not shown as
 // having cost zero.
 func TestRecordUsageIgnoresZeroTokenCount(t *testing.T) {
-	s := openUsageTestService(t)
+	var err error
+	s := newTestService(t)
 	reported := make(chan error, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		recorder, err := usageRecorderFor(out)
@@ -214,13 +200,8 @@ func TestRecordUsageIgnoresZeroTokenCount(t *testing.T) {
 		reported <- recorder.RecordUsage("openai/gpt-4.1", TokenUsage{})
 		return nil
 	}))
-	task, err := s.CreateTask("no tokens", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "no tokens", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	if err = <-reported; err != nil {
 		t.Fatalf("zero usage report failed: %v", err)
 	}
@@ -247,15 +228,10 @@ func TestRecordUsageIgnoresZeroTokenCount(t *testing.T) {
 // records the tokens the provider reported, marked unpriced, so the operator can
 // see the work even though no price is known for it.
 func TestRecordUsagePricesUnpricedModelWithoutCost(t *testing.T) {
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	s.RegisterRunner("general", sessionUsageRunner("nosuch/model", TokenUsage{InputTokens: 40, OutputTokens: 2}))
-	task, err := s.CreateTask("unknown", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "unknown", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	usage := done.Attempts[0].Usage
 	if usage == nil || usage.InputTokens != 40 || usage.OutputTokens != 2 {
@@ -276,17 +252,12 @@ func TestRecordUsagePricesUnpricedModelWithoutCost(t *testing.T) {
 // attributed to the attempt's own requested model rather than left unlabelled,
 // so the price lookup and the breakdown use the model the attempt ran.
 func TestRecordUsageFallsBackToAttemptModel(t *testing.T) {
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	// The fake runner's requested model stands in for the selector an adapter
 	// would report through Runner's optional RequestedModel capability.
 	s.RegisterRunner("general", modelRunner{model: "openai/gpt-4.1"})
-	task, err := s.CreateTask("fallback", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "fallback", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	usage := done.Attempts[0].Usage
 	if usage == nil || usage.Model != "openai/gpt-4.1" {
@@ -329,20 +300,15 @@ func TestRecordUsageWithoutCapabilityIsNotCharged(t *testing.T) {
 	if err := adapterUsage(io.Discard, "openai/gpt-4.1", TokenUsage{}); err != nil {
 		t.Fatalf("zero usage through a discarded sink failed: %v", err)
 	}
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	// A runner that never reports usage must leave the attempt record absent
 	// rather than imply the attempt cost nothing.
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		_, err := io.WriteString(out, "no usage reported")
 		return err
 	}))
-	task, err := s.CreateTask("plain", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "plain", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if usage := done.Attempts[0].Usage; usage != nil {
 		t.Fatalf("unreported usage was invented: %+v", usage)

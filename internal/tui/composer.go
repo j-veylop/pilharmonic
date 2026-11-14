@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,114 +21,73 @@ const (
 	rejectReviewInput inputKind = "REJECT REVIEW"
 )
 
-// composerMaxLines bounds the draft rows so the input box never crowds out the
-// panels above it on a short terminal.
+// composerMaxLines bounds the draft rows so the box never crowds out the
+// panels above it.
 const composerMaxLines = 6
 
-// composerPrompt is the marker that starts the draft row inside the box.
 const composerPrompt = "› "
 
-// The target is captured when the composer opens. Task ordering can change
-// while the operator is typing.
+// composer is a task-scoped input. target is captured when it opens, because
+// task ordering can change while the operator types.
 type composer struct {
+	editor
 	kind         inputKind
 	target       string
 	reviewCommit string
-	text         string
-	cursor       int
-	scroll       int
 }
 
-func (c composer) editorState() editor {
-	return editor{text: c.text, cursor: c.cursor, scroll: c.scroll}
+var composerPlaceholders = map[inputKind]string{
+	newTaskInput:      "Describe the task… type @ to choose an executor",
+	relatedTaskInput:  "Describe the related task…",
+	subagentInput:     "Enter a self-contained mandate for the subagent…",
+	threadInput:       "Context for thread subscribers…",
+	followUpInput:     "Follow-up context; the mandate is unchanged…",
+	reportInput:       "kind and message, e.g. blocked need database access…",
+	rejectReviewInput: "Reason for rejection; the worktree is kept…",
 }
 
-func (c *composer) setEditorState(e editor) {
-	c.text, c.cursor, c.scroll = e.text, e.cursor, e.scroll
-}
+// composerOpen reports whether View docks the input box shared by the request
+// form and every composer.
+func (m model) composerOpen() bool { return m.router.open || m.input.kind != "" }
 
-// composerOpen reports whether View docks an input box at the bottom of the
-// screen: the request form and every composer type share it.
-func (m model) composerOpen() bool {
-	return m.router.open || m.input.kind != ""
-}
+// composerFocused reports whether keys reach the draft. Tab in the request
+// form moves focus to a list, which dims the box.
+func (m model) composerFocused() bool { return !m.router.open || m.router.focus == routerFocusComposer }
 
-// composerFocused reports whether keys reach the draft. The request form hands
-// focus to its action or recent list with Tab, which dims the box.
-func (m model) composerFocused() bool {
+func (m *model) composerEditor() *editor {
 	if m.router.open {
-		return m.router.focus == routerFocusComposer
+		return &m.router.editor
 	}
-	return true
+	return &m.input.editor
 }
 
-// composerEditor returns the draft the open box edits.
-func (m model) composerEditor() editor {
-	if m.router.open {
-		return m.routerEditor()
-	}
-	return m.input.editorState()
-}
-
-func (m *model) setComposerEditor(e editor) {
-	if m.router.open {
-		m.setRouterEditor(e)
-		return
-	}
-	m.input.setEditorState(e)
-}
-
-// composerBoxWidth is the outer width of the docked box: the full terminal
-// width, so the input lines up with the panels above it.
+// composerBoxWidth spans the terminal so the box lines up with the panels.
 func (m model) composerBoxWidth() int {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	return max(4, width)
+	w, _ := m.size()
+	return max(4, w)
 }
 
-// composerInnerWidth is the box content width. The rounded border and the
-// horizontal padding take four cells.
-func (m model) composerInnerWidth() int {
-	return max(1, m.composerBoxWidth()-4)
-}
+// composerInnerWidth leaves four cells for the rounded border and padding.
+func (m model) composerInnerWidth() int { return max(1, m.composerBoxWidth()-4) }
 
-// composerWidth is the draft width used to wrap and move the cursor. One cell
-// is reserved for the block cursor drawn at the end of a full line.
+// composerWidth wraps the draft, reserving a cell for the cursor at line end.
 func (m model) composerWidth() int {
 	return max(1, m.composerInnerWidth()-lipgloss.Width(composerPrompt)-1)
 }
 
-// composerHeight is how many draft rows the box shows.
-func (m model) composerHeight() int {
-	return max(1, m.layout().composerDraft)
-}
+func (m model) composerHeight() int { return max(1, m.layout().composerDraft) }
 
-// composerDraftRows picks the draft rows for a terminal whose footer and hint
-// rows are already reserved. The box grows with the draft, keeps two rows when
-// it can and always leaves a usable body above it.
+// composerDraftRows grows the box with the draft, keeping two rows when it can
+// and always leaving the header, the reserved rows, the border and a three-row
+// body.
 func (m model) composerDraftRows(reserved int) int {
-	height := m.height
-	if height <= 0 {
-		height = 24
+	_, height := m.size()
+	limit := min(composerMaxLines, max(1, height-1-reserved-2-3))
+	needed := 1
+	if e := m.composerEditor(); e.text != "" && !(m.router.open && m.login.provider != "") {
+		needed = len(wrapEditor(e.text, m.composerWidth()))
 	}
-	// The header, the reserved rows, the box border and a three-row body.
-	available := height - 1 - reserved - 2 - 3
-	limit := min(composerMaxLines, max(1, available))
-	return max(min(2, limit), min(limit, m.composerNeededRows()))
-}
-
-// composerNeededRows is how many rows the draft occupies once wrapped.
-func (m model) composerNeededRows() int {
-	if m.router.open && m.login.provider != "" {
-		return 1
-	}
-	e := m.composerEditor()
-	if e.text == "" {
-		return 1
-	}
-	return max(1, len(wrapEditor(e.text, m.composerWidth())))
+	return max(min(2, limit), min(limit, needed))
 }
 
 // composerExtraRows counts the hint rows rendered under the box.
@@ -140,104 +98,73 @@ func (m model) composerExtraRows() int {
 	return len(m.routerMentionHintLines(m.composerBoxWidth()))
 }
 
-// composerTitle names the box on its top border and, when it fits, shows the
-// compiled-in authorization step whose decision is recorded on the right.
+// composerTitle names the box on its top border, with an optional note on the
+// right such as the authorization step that records its decision.
 func (m model) composerTitle() (title, note string) {
-	if m.router.open {
-		if m.login.provider != "" {
-			return "API KEY", terminalText(m.login.provider)
-		}
+	switch {
+	case m.router.open && m.login.provider != "":
+		return "API KEY", terminalText(m.login.provider)
+	case m.router.open:
 		return "NEW REQUEST", "authorization " + orchestrator.LocalPolicyVersion
-	}
-	if m.input.kind == rejectReviewInput {
+	case m.input.kind == rejectReviewInput:
 		return string(m.input.kind), "keeps worktree · F requeues"
 	}
 	return string(m.input.kind), ""
 }
 
-// composerPlaceholder describes the expected draft while the box is empty.
-func (m model) composerPlaceholder() string {
-	if m.router.open {
-		return "Describe the work… type @ to choose an executor"
-	}
-	switch m.input.kind {
-	case newTaskInput:
-		return "Describe the task… type @ to choose an executor"
-	case relatedTaskInput:
-		return "Describe the related task…"
-	case subagentInput:
-		return "Enter a self-contained mandate for the subagent…"
-	case threadInput:
-		return "Context for thread subscribers…"
-	case followUpInput:
-		return "Follow-up context; the mandate is unchanged…"
-	case reportInput:
-		return "kind and message, e.g. blocked need database access…"
-	case rejectReviewInput:
-		return "Reason for rejection; the worktree is kept…"
-	}
-	return "Enter text…"
-}
-
-// composerBoxLines renders the draft inside the border: the prompt marker on
-// the first row and a hanging indent on wrapped rows.
+// composerBoxLines renders the draft with the prompt on the first row and a
+// hanging indent on wrapped rows.
 func (m model) composerBoxLines(rows int) []string {
-	inner := m.composerInnerWidth()
-	contentWidth := m.composerWidth()
+	if m.router.open && m.login.provider != "" {
+		return m.loginComposerLines(m.composerInnerWidth())
+	}
+	focused := m.composerFocused()
 	prefix := accentStyle.Render(composerPrompt)
-	if !m.composerFocused() {
+	if !focused {
 		prefix = mutedStyle.Render(composerPrompt)
 	}
-	pad := strings.Repeat(" ", lipgloss.Width(composerPrompt))
-	if m.router.open && m.login.provider != "" {
-		return m.loginComposerLines(inner)
-	}
 	e := m.composerEditor()
-	focused := m.composerFocused()
-	cursor := ""
-	if focused {
-		cursor = "▏"
-	}
 	var visible []string
 	if e.text == "" {
-		visible = []string{fit(mutedStyle.Render(m.composerPlaceholder()), contentWidth, 1) + cursor}
+		placeholder := "Describe the work… type @ to choose an executor"
+		if !m.router.open {
+			placeholder = composerPlaceholders[m.input.kind]
+		}
+		cursor := ""
+		if focused {
+			cursor = "▏"
+		}
+		visible = []string{fit(mutedStyle.Render(placeholder), m.composerWidth(), 1) + cursor}
 	} else {
-		visible = e.viewLinesCursor(contentWidth, rows, focused)
+		visible = e.viewLinesCursor(m.composerWidth(), rows, focused)
 	}
-	lines := make([]string, 0, len(visible))
-	for i, line := range visible {
+	for i := range visible {
 		if i == 0 {
-			lines = append(lines, prefix+line)
+			visible[i] = prefix + visible[i]
 		} else {
-			lines = append(lines, pad+line)
+			visible[i] = strings.Repeat(" ", lipgloss.Width(composerPrompt)) + visible[i]
 		}
 	}
-	return lines
+	return visible
 }
 
-// composerBox draws the docked input box. Its label sits on the top border and
-// the border brightens while the draft has focus.
-func (m model) composerBox(rows int) []string {
+// composerBlock is the docked box, labelled on its top border and brightened
+// while focused, plus the request form's executor hints.
+func (m model) composerBlock(rows int) []string {
 	title, note := m.composerTitle()
 	color := border
 	if m.composerFocused() {
 		color = accent
 	}
 	width := m.composerBoxWidth()
-	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(color).
-		Padding(0, 1).
-		Width(width - 2).
-		Height(rows).
-		MaxWidth(width).
-		MaxHeight(rows + 2)
+	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(color).Padding(0, 1).
+		Width(width - 2).Height(rows).MaxWidth(width).MaxHeight(rows + 2)
 	content := fit(strings.Join(m.composerBoxLines(rows), "\n"), m.composerInnerWidth(), rows)
 	box := strings.Split(style.Render(content), "\n")
-	if len(box) == 0 {
-		return nil
-	}
 	box[0] = composerTopBorder(title, note, width, color, m.composerFocused())
+	if m.router.open {
+		box = append(box, m.routerMentionHintLines(width)...)
+	}
 	return box
 }
 
@@ -250,34 +177,18 @@ func composerTopBorder(title, note string, width int, color lipgloss.Color, focu
 	if labelWidth+4 > width {
 		return edge.Render("╭" + strings.Repeat("─", max(0, width-2)) + "╮")
 	}
-	noteLabel := ""
 	if note != "" {
-		noteLabel = " " + note + " "
+		note = " " + note + " "
 	}
-	fill := width - 4 - labelWidth - lipgloss.Width(noteLabel)
+	fill := width - 4 - labelWidth - lipgloss.Width(note)
 	if fill < 3 {
-		noteLabel, fill = "", width-4-labelWidth
+		note, fill = "", width-4-labelWidth
 	}
-	labelStyle := lipgloss.NewStyle().Foreground(color)
+	labelStyle := edge
 	if focused {
 		labelStyle = accentStyle
 	}
-	row := edge.Render("╭─") + labelStyle.Render(label)
-	if noteLabel != "" {
-		row += edge.Render(strings.Repeat("─", fill)) + faintStyle.Render(noteLabel) + edge.Render("─╮")
-		return row
-	}
-	return row + edge.Render(strings.Repeat("─", fill)+"─╮")
-}
-
-// composerBlock is the whole docked block: the box plus the request form's
-// executor hints.
-func (m model) composerBlock(rows int) []string {
-	lines := m.composerBox(rows)
-	if m.router.open {
-		lines = append(lines, m.routerMentionHintLines(m.composerBoxWidth())...)
-	}
-	return lines
+	return edge.Render("╭─") + labelStyle.Render(label) + edge.Render(strings.Repeat("─", fill)) + faintStyle.Render(note) + edge.Render("─╮")
 }
 
 func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
@@ -292,76 +203,47 @@ func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 			m.notice.text = "Enter text first."
 			return m, nil
 		}
-		return m, m.submitInputCmd(prompt)
+		return m, func() tea.Msg { return m.submitInput(prompt) }
 	default:
-		e := m.composerEditor()
-		e.handleKey(msg, m.composerWidth(), m.composerHeight())
-		m.setComposerEditor(e)
+		m.input.handleKey(msg, m.composerWidth(), m.composerHeight())
 	}
 	return m, nil
 }
 
-func (m model) submitInputCmd(prompt string) tea.Cmd {
-	return func() tea.Msg {
-		notice, err := m.submitInput(prompt)
-		return composerResultMsg{notice: notice, err: err}
-	}
-}
-
-func (m model) submitInput(prompt string) (string, error) {
-	id := m.input.target
+func (m model) submitInput(prompt string) composerResultMsg {
+	id, s := m.input.target, m.service
+	done := func(notice string, err error) composerResultMsg { return composerResultMsg(resultFor(notice, err)) }
 	switch m.input.kind {
 	case rejectReviewInput:
-		if err := m.service.RejectReview(id, m.input.reviewCommit, prompt); err != nil {
-			return "", err
-		}
-		return "Review rejected; worktree retained; press F to follow up.", nil
+		return done("Review rejected; worktree retained; press F to follow up.", s.RejectReview(id, m.input.reviewCommit, prompt))
 	case reportInput:
 		kind, message, _ := strings.Cut(prompt, " ")
-		if err := m.service.RecordReport(id, kind, message); err != nil {
-			return "", err
-		}
-		return "Report recorded.", nil
+		return done("Report recorded.", s.RecordReport(id, kind, message))
 	case threadInput:
-		if err := m.service.AddManualThreadContext(id, prompt); err != nil {
-			return "", err
-		}
-		return "Context recorded; delivery status is in history.", nil
+		return done("Context recorded; delivery status is in history.", s.AddManualThreadContext(id, prompt))
 	case followUpInput:
-		requeued, err := m.service.FollowUp(id, prompt)
+		requeued, err := s.FollowUp(id, prompt)
 		if requeued {
-			return "Follow-up recorded; requeued. Press r to start.", err
+			return composerResultMsg{notice: "Follow-up recorded; requeued. Press r to start.", err: err}
 		}
-		if err != nil {
-			return "", err
-		}
-		return "Follow-up recorded; delivery status is in history.", nil
+		return done("Follow-up recorded; delivery status is in history.", err)
 	case subagentInput:
-		task, err := m.service.SpawnSubagent(id, "", prompt, "")
-		if err != nil {
-			return "", err
-		}
-		return "Subagent started: " + task.ID, nil
-	case newTaskInput, relatedTaskInput:
-		title := prompt
-		if _, request, explicit := orchestrator.SplitAgentMention(prompt); explicit {
-			title = request
-		}
-		if runes := []rune(title); len(runes) > 60 {
-			title = string(runes[:57]) + "..."
-		}
-		var task orchestrator.Task
-		var err error
-		if m.input.kind == relatedTaskInput {
-			task, err = m.service.CreateRelatedTask(id, title, prompt, m.workspace)
-		} else {
-			task, err = m.service.CreateTask(title, prompt, m.workspace)
-		}
-		if err != nil {
-			return "", err
-		}
-		return "Task queued: " + task.ID, nil
-	default:
-		return "", fmt.Errorf("unknown input kind %q", m.input.kind)
+		task, err := s.SpawnSubagent(id, "", prompt, "")
+		return done("Subagent started: "+task.ID, err)
 	}
+	title := prompt
+	if _, request, explicit := orchestrator.SplitAgentMention(prompt); explicit {
+		title = request
+	}
+	if runes := []rune(title); len(runes) > 60 {
+		title = string(runes[:57]) + "..."
+	}
+	var task orchestrator.Task
+	var err error
+	if m.input.kind == relatedTaskInput {
+		task, err = s.CreateRelatedTask(id, title, prompt, m.workspace)
+	} else {
+		task, err = s.CreateTask(title, prompt, m.workspace)
+	}
+	return done("Task queued: "+task.ID, err)
 }

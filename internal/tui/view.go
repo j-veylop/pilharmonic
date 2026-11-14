@@ -42,10 +42,8 @@ func singleLine(s string) string {
 	return strings.ReplaceAll(terminalText(s), "\n", " ")
 }
 
-// layout is the single source of the terminal's responsive geometry: the body
-// height left between header and footer, whether the task sidebar shows, and
-// the width each panel receives. Panels derive their inner rows and columns
-// from it so the breakpoint is not duplicated.
+// layout is the single source of responsive geometry: the body height between
+// header and footer, whether the sidebar shows, and each panel's width.
 type layout struct {
 	width, height int
 	bodyHeight    int
@@ -56,14 +54,20 @@ type layout struct {
 	composerRows  int // total rows of the docked input block, hint rows included
 }
 
-func (m model) layout() layout {
-	w, h := m.width, m.height
+// size is the terminal size, defaulting to 80×24 before the first resize.
+func (m model) size() (w, h int) {
+	w, h = m.width, m.height
 	if w <= 0 {
 		w = 80
 	}
 	if h <= 0 {
 		h = 24
 	}
+	return w, h
+}
+
+func (m model) layout() layout {
+	w, h := m.size()
 	l := layout{width: w, height: h}
 	if w < 30 || h < 10 {
 		return l
@@ -92,11 +96,6 @@ func (layout) panelInner(width int) int { return width - 4 }
 // tab row, title and position line.
 func (layout) detailRows(height int) int { return height - 5 }
 
-// taskState gives each task one status word, glyph and semantic colour. The
-// task sidebar renders only the glyph, while other surfaces pair it with the
-// label so status stays readable without relying on colour alone. This form
-// describes the task on its own; the terminal model adds waiting-for-subagents
-// when the task is running with active children.
 func (m model) View() string {
 	l := m.layout()
 	w, h := l.width, l.height
@@ -109,31 +108,25 @@ func (m model) View() string {
 		}
 		return fit("PILHARMONIC\nResize terminal to at least 30 × 10\n"+prompt, w, h)
 	}
-	top := m.headerRow(w)
-	footer := m.footer(w)
-	bodyHeight := l.bodyHeight
 	var body string
-	if m.router.open {
-		body = m.routerPanel(w, bodyHeight)
-	} else if l.sidebar {
-		left := l.taskWidth
-		right := l.detailWidth
-		body = lipgloss.JoinHorizontal(lipgloss.Top, m.taskPanel(left, bodyHeight), " ", m.detailPanel(right, bodyHeight))
-	} else {
-		body = m.detailPanel(w, bodyHeight)
+	switch {
+	case m.router.open:
+		body = m.routerPanel(w, l.bodyHeight)
+	case l.sidebar:
+		body = lipgloss.JoinHorizontal(lipgloss.Top, m.taskPanel(l.taskWidth, l.bodyHeight), " ", m.detailPanel(l.detailWidth, l.bodyHeight))
+	default:
+		body = m.detailPanel(w, l.bodyHeight)
 	}
-
-	rows := []string{top}
+	rows := []string{m.headerRow(w)}
 	if body != "" {
 		rows = append(rows, body)
 	}
 	if l.composerRows > 0 {
 		rows = append(rows, m.composerBlock(l.composerDraft)...)
 	}
-	rows = append(rows, footer)
+	rows = append(rows, m.footer(w))
 	screen := fit(strings.Join(rows, "\n"), w, h)
-	// Menus compose over the board and help composes over everything, so the
-	// overlay an operator opened is always the one on top.
+	// Menus draw over the board, help over menus, and the quit dialog last.
 	if m.login.menu {
 		screen = m.loginMenuView(screen, w, h)
 	}
@@ -146,8 +139,6 @@ func (m model) View() string {
 	if m.help.open {
 		screen = m.helpView(screen, w, h)
 	}
-	// The quit confirmation answers an exit request from any of those surfaces,
-	// so it is always the last frame drawn.
 	if m.quitConfirm {
 		screen = m.quitView(screen, w, h)
 	}

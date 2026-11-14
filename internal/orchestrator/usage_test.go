@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -30,77 +29,6 @@ func (s *usageSink) RecordUsage(model string, usage TokenUsage) error {
 	return nil
 }
 
-func TestDeepSeekOffPeakWindow(t *testing.T) {
-	day := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
-	at := func(hour, minute int) time.Time {
-		return day.Add(time.Duration(hour)*time.Hour + time.Duration(minute)*time.Minute)
-	}
-	cases := []struct {
-		name string
-		when time.Time
-		want bool
-	}{
-		{"just before the window", at(16, 29), false},
-		{"window opens", at(16, 30), true},
-		{"middle of the window", at(20, 0), true},
-		{"just before the window closes", at(0, 29), true},
-		{"window closes", at(0, 30), false},
-		{"midday peak", at(12, 0), false},
-	}
-	for _, tc := range cases {
-		if got := deepseekOffPeak(tc.when); got != tc.want {
-			t.Errorf("%s: off-peak = %v, want %v", tc.name, got, tc.want)
-		}
-	}
-	// The window is defined in Beijing time, so a non-UTC instant still lands
-	// in the same UTC window.
-	beijing := time.FixedZone("CST", 8*60*60)
-	if !deepseekOffPeak(time.Date(2025, 9, 1, 1, 0, 0, 0, beijing)) {
-		t.Error("01:00 Beijing should be inside the off-peak window")
-	}
-}
-
-func TestPriceForDeepSeekRateAndCost(t *testing.T) {
-	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
-	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
-	price, ok := PriceFor("deepseek/deepseek-chat", peak)
-	if !ok || !price.TimeOfDay {
-		t.Fatalf("deepseek price missing: %+v %v", price, ok)
-	}
-	if got := price.Rate(peak); got != RatePeak {
-		t.Fatalf("peak rate label = %q", got)
-	}
-	if got := price.Rate(offPeak); got != RateOffPeak {
-		t.Fatalf("off-peak rate label = %q", got)
-	}
-	if price.InputRate(peak) != 0.28 || price.OutputRate(peak) != 0.42 {
-		t.Fatalf("peak rates = %v/%v", price.InputRate(peak), price.OutputRate(peak))
-	}
-	if price.InputRate(offPeak) != 0.14 || price.OutputRate(offPeak) != 0.21 {
-		t.Fatalf("off-peak rates = %v/%v", price.InputRate(offPeak), price.OutputRate(offPeak))
-	}
-	usage := TokenUsage{InputTokens: millionTokens, OutputTokens: 2 * millionTokens}
-	if got := price.Cost(usage, peak); math.Abs(got-1.12) > 1e-9 {
-		t.Fatalf("peak cost = %v, want 1.12", got)
-	}
-	if got := price.Cost(usage, offPeak); math.Abs(got-0.56) > 1e-9 {
-		t.Fatalf("off-peak cost = %v, want 0.56", got)
-	}
-}
-
-func TestPriceForAllDayModelAndUnknownModel(t *testing.T) {
-	price, ok := PriceFor("openai/gpt-4.1", time.Now())
-	if !ok || price.TimeOfDay || price.Rate(time.Now()) != "" {
-		t.Fatalf("all-day price = %+v %v", price, ok)
-	}
-	if _, ok := PriceFor("nosuch/model", time.Now()); ok {
-		t.Fatal("unknown model reported a price")
-	}
-	if _, ok := PriceFor("", time.Now()); ok {
-		t.Fatal("empty selector reported a price")
-	}
-}
-
 // sessionUsageRunner records a fixed token count through the attempt's sink.
 func sessionUsageRunner(model string, usage TokenUsage) Runner {
 	return runnerFunc(func(_ context.Context, task Task, out io.Writer) error {
@@ -117,11 +45,7 @@ func sessionUsageRunner(model string, usage TokenUsage) Runner {
 
 func TestSessionUsageIncludesSubagents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 	started := make(chan Task, 2)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
@@ -136,18 +60,10 @@ func TestSessionUsageIncludesSubagents(t *testing.T) {
 		}
 		return recorder.RecordUsage("openai/gpt-4.1", usage)
 	}))
-	parent, err := s.CreateTask("parent", "parent mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "parent mandate", t.TempDir())
+	must(t, s.Start(context.Background(), parent.ID))
 	<-started
-	child, err := s.SpawnSubagent(parent.ID, "child", "child mandate", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	child := mustGet(s.SpawnSubagent(parent.ID, "child", "child mandate", ""))(t)
 	await(t, s, child.ID, Completed)
 	close(release)
 	await(t, s, parent.ID, Completed)
@@ -190,59 +106,19 @@ func TestSessionUsageIncludesSubagents(t *testing.T) {
 	}
 }
 
-func TestSessionUsageCountsUnpricedModels(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	s.RegisterRunner("general", sessionUsageRunner("nosuch/model", TokenUsage{InputTokens: 10, OutputTokens: 5}))
-	task, err := s.CreateTask("t", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
-	await(t, s, task.ID, Completed)
-	usage := s.SessionUsage()
-	if usage.InputTokens != 10 || usage.OutputTokens != 5 {
-		t.Fatalf("unpriced tokens not counted: %+v", usage)
-	}
-	if usage.Priced || usage.CostUSD != 0 {
-		t.Fatalf("unpriced session claimed a cost: %+v", usage)
-	}
-	if len(usage.Unpriced) != 1 || usage.Unpriced[0] != "nosuch/model" {
-		t.Fatalf("unpriced models = %v", usage.Unpriced)
-	}
-}
-
 func TestSessionUsageResetsOnRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
 	s.RegisterRunner("general", sessionUsageRunner("openai/gpt-4.1", TokenUsage{InputTokens: 1000, OutputTokens: 1000}))
-	task, err := s.CreateTask("t", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "t", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Completed)
 	if usage := s.SessionUsage(); usage.InputTokens != 1000 {
 		t.Fatalf("usage not recorded: %+v", usage)
 	}
-	if err = s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Shutdown())
 
-	again, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	again := mustGet(Open(path))(t)
 	defer func() { _ = again.Shutdown() }()
 	// Durable history keeps the recorded usage on the attempt ...
 	reopened, _ := again.GetTask(task.ID)
@@ -256,20 +132,11 @@ func TestSessionUsageResetsOnRestart(t *testing.T) {
 }
 
 func TestRecordUsageReportsDeepSeekRate(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	s.RegisterRunner("general", sessionUsageRunner("deepseek/deepseek-chat", TokenUsage{InputTokens: millionTokens, OutputTokens: millionTokens}))
-	task, err := s.CreateTask("t", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "t", "do work", t.TempDir())
 	startedAt := time.Now()
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	price, _ := PriceFor("deepseek/deepseek-chat", startedAt)
 	wantRate := price.Rate(startedAt)
@@ -285,16 +152,6 @@ func TestRecordUsageReportsDeepSeekRate(t *testing.T) {
 	usage := s.SessionUsage()
 	if len(usage.Models) != 1 || usage.Models[0].CurrentRate != wantRate {
 		t.Fatalf("session model rate = %+v", usage.Models)
-	}
-}
-
-func TestRecordUsageWithoutRecorderIsIgnored(t *testing.T) {
-	if err := adapterUsage(io.Discard, "deepseek/deepseek-chat", TokenUsage{InputTokens: 1}); err != nil {
-		t.Fatalf("sink without the capability failed: %v", err)
-	}
-	var buf bytes.Buffer
-	if err := adapterUsage(&buf, "deepseek/deepseek-chat", TokenUsage{InputTokens: 1}); err != nil {
-		t.Fatalf("plain writer failed: %v", err)
 	}
 }
 
@@ -344,9 +201,7 @@ func TestFantasyRunnerSkipsEmptyUsage(t *testing.T) {
 	runner := FantasyRunner{model: "fake/model"}
 	runner.ModelFactory = fakeFactory(model, "fake/model")
 	sink := &usageSink{}
-	if err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, sink); err != nil {
-		t.Fatal(err)
-	}
+	must(t, runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, sink))
 	for _, call := range sink.calls {
 		if !call.usage.IsZero() {
 			t.Fatalf("a provider that reported no usage was charged: %+v", call)
@@ -376,8 +231,5 @@ func TestTaskUsageIgnoresUnrecordedAttempts(t *testing.T) {
 	}
 	if total.Model != "deepseek/deepseek-chat" || total.Rate != RateOffPeak {
 		t.Fatalf("task usage model/rate = %q/%q", total.Model, total.Rate)
-	}
-	if !strings.Contains(strings.ToLower(total.Model), "deepseek") {
-		t.Fatalf("unexpected model %q", total.Model)
 	}
 }

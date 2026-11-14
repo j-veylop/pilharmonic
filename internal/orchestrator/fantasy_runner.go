@@ -12,10 +12,8 @@ import (
 	"charm.land/fantasy"
 )
 
-// FantasyRunner executes a task through the fantasy agent loop instead of an
-// external process. The fantasy agent may call the workspace tools in
-// fantasy_tools.go; everything else the orchestrator does with the result
-// (reports, tool activity, lifecycle) stays the same as for Pi.
+// FantasyRunner executes a task in-process through the fantasy agent loop,
+// with the workspace tools in fantasy_tools.go.
 type FantasyRunner struct {
 	// instructions is trusted operator policy appended to the executor's
 	// tool-usage guidance in the system prompt. It never carries task text.
@@ -53,7 +51,7 @@ func (f FantasyRunner) RequestedModel(profile *Profile) string {
 
 // SupportsProfile accepts the parameters this adapter can translate. Tool names
 // are validated syntactically: a palette entry this adapter does not implement
-// is ignored rather than failing the task, matching Pi's behavior.
+// is ignored rather than failing the task.
 func (FantasyRunner) SupportsProfile(p Profile) error {
 	for _, tool := range p.Tools {
 		if len(tool) > 128 {
@@ -70,11 +68,11 @@ func (FantasyRunner) Capabilities() AgentCapabilities {
 	return AgentCapabilities{LiveContext: true, ToolActivity: true, StructuredReports: true}
 }
 
-// systemPrompt builds the trusted preamble: the same execution policy Pi gets,
-// optional operator instructions, and the recorded profile's guidance. Profile
-// text is orchestrator-owned and adds no authority beyond the mandate.
+// systemPrompt builds the trusted preamble: the execution policy, optional
+// operator instructions and the recorded profile's guidance. Profile text is
+// orchestrator-owned and adds no authority beyond the mandate.
 func (f FantasyRunner) systemPrompt(profile *Profile) string {
-	guidance := piToolGuidance
+	guidance := toolGuidance
 	if f.instructions != "" {
 		guidance += "\n" + f.instructions
 	}
@@ -84,9 +82,8 @@ func (f FantasyRunner) systemPrompt(profile *Profile) string {
 	return guidance
 }
 
-// toolPalette resolves the tools to expose, in the same order of precedence as
-// PiRunner.piArgs: profile snapshot, then the role's default palette, then the
-// full set.
+// toolPalette resolves the tools to expose: the profile snapshot, then the
+// role's default palette, then the full set.
 func (f FantasyRunner) toolPalette(profile *Profile) []string {
 	tools := fantasyToolNames
 	if len(f.defaultTools) > 0 {
@@ -151,9 +148,9 @@ func (f FantasyRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 // text, reasoning and tool activity are forwarded to out as they happen; a
 // structured failure is reported before the run returns an error.
 func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-chan Trigger, ack func(string, bool, string)) error {
-	initial := composeInput(t)
-	if err := checkPiPromptSize(initial); err != nil {
-		return err
+	prompt := composeInput(t)
+	if len(prompt) > maxPromptBytes {
+		return fmt.Errorf("prompt exceeds 100 KiB argument limit (%d bytes)", len(prompt))
 	}
 	factory := f.ModelFactory
 	if factory == nil {
@@ -168,201 +165,168 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		fantasy.WithSystemPrompt(f.systemPrompt(t.ProfileSpec)),
 		fantasy.WithTools(fantasyTools(t.Workspace, f.toolPalette(t.ProfileSpec), t.runnerEnvironment())...),
 	)
-
-	transcript := newPiTranscript(out)
-	defer func() { _ = transcript.closeThinking() }()
-
+	stream := &fantasyStream{transcript: transcript{out: out}, reasoning: map[string]int{}, inFlight: map[string]ToolActivity{}}
+	stream.recorder, _ = out.(ToolActivityRecorder)
+	defer func() { _ = stream.closeThinking() }()
 	if err := adapterReport(out, "progress", "Fantasy accepted the initial prompt"); err != nil {
 		return err
 	}
-
-	recorder, _ := out.(ToolActivityRecorder)
-	reasoningIndexes := map[string]int{}
-	nextReasoningIndex := 0
-	// reasoning returns a stable display index per provider reasoning id, so a
-	// late reasoning_end cannot close a different block.
-	reasoning := func(id string) int {
-		if id == "" {
-			id = "reasoning"
-		}
-		if index, ok := reasoningIndexes[id]; ok {
-			return index
-		}
-		index := nextReasoningIndex
-		nextReasoningIndex++
-		reasoningIndexes[id] = index
-		return index
-	}
-
-	// inFlight holds tool activities awaiting their result, keyed by call ID.
-	// The tools are created with fantasy.NewAgentTool, which runs them
-	// sequentially in the stream goroutine, so these callbacks never race.
-	inFlight := map[string]ToolActivity{}
-	sawText := false
-	var failure error
-
-	onTextDelta := func(_ string, text string) error {
-		if strings.TrimSpace(text) != "" {
-			sawText = true
-		}
-		return transcript.prose(sanitizeTranscript(text))
-	}
-	onReasoningStart := func(id string, _ fantasy.ReasoningContent) error {
-		return transcript.thinkingStart(reasoning(id))
-	}
-	onReasoningDelta := func(id, delta string) error {
-		return transcript.thinkingDelta(reasoning(id), sanitizeTranscript(delta))
-	}
-	onReasoningEnd := func(id string, _ fantasy.ReasoningContent) error {
-		return transcript.thinkingEnd(reasoning(id), "")
-	}
-	onToolCall := func(toolCall fantasy.ToolCallContent) error {
-		activity := ToolActivity{
-			ID:        toolCall.ToolCallID,
-			Name:      sanitizeTranscript(toolCall.ToolName),
-			Args:      json.RawMessage(toolCall.Input),
-			Status:    ActivityRunning,
-			StartedAt: time.Now().UTC(),
-		}
-		inFlight[toolCall.ToolCallID] = activity
-		if recorder != nil {
-			if err := recorder.RecordToolActivity(activity); err != nil {
-				return err
-			}
-		}
-		return transcript.prose(fmt.Sprintf("\n[%s] %s\n", ActivityRunning, toolCallSummary(activity.Name, toolCall.Input)))
-	}
-	onToolResult := func(result fantasy.ToolResultContent) error {
-		now := time.Now().UTC()
-		activity, started := inFlight[result.ToolCallID]
-		delete(inFlight, result.ToolCallID)
-		if !started {
-			// A result without a matching call still gets recorded rather
-			// than being silently dropped.
-			activity = ToolActivity{ID: result.ToolCallID, StartedAt: now}
-		}
-		text, failed := toolResultContent(result.Result)
-		activity.Name = firstNonEmpty(activity.Name, sanitizeTranscript(result.ToolName))
-		activity.Status = ActivityFinished
-		if failed {
-			activity.Status = ActivityFailed
-		}
-		activity.FinishedAt = now
-		duration := now.Sub(activity.StartedAt).Seconds() * 1000
-		activity.DurationMS = &duration
-		payload, marshalErr := json.Marshal(struct {
-			Text    string `json:"text"`
-			IsError bool   `json:"is_error,omitempty"`
-		}{Text: text, IsError: failed})
-		if marshalErr == nil {
-			activity.Result = payload
-		}
-		if recorder != nil {
-			if err := recorder.RecordToolActivity(activity); err != nil {
-				return err
-			}
-		}
-		summary := activity.Name
-		if failed {
-			// Failures carry the tool's own explanation; successes only
-			// need the name, which the start marker already established.
-			summary = toolCallSummary(activity.Name, text)
-		}
-		return transcript.prose(fmt.Sprintf("\n[%s] %s\n", activity.Status, summary))
-	}
-	onStreamFinish := func(_ fantasy.Usage, reason fantasy.FinishReason, _ fantasy.ProviderMetadata) error {
-		// Only these reasons mean the step itself failed. A length or tool
-		// call finish is reported through the output and the final result.
-		if reason == fantasy.FinishReasonError || reason == fantasy.FinishReasonContentFilter {
-			failure = fmt.Errorf("fantasy stopped with finish reason %q", reason)
-		}
-		return nil
-	}
-	onRetry := func(_ *fantasy.ProviderError, delay time.Duration) {
-		// A retried step replays its stream callbacks, so a client that
-		// accumulates text sees the retried attempt appended. The marker
-		// makes that visible rather than silent.
-		_ = transcript.closeThinking()
-		_ = adapterReport(out, "waiting", fmt.Sprintf("Fantasy is retrying after a provider error (%s)", delay))
-	}
-
 	var history []fantasy.Message
-	prompt := initial
-	for {
-		call := fantasy.AgentStreamCall{
-			Prompt:           prompt,
-			Messages:         history,
-			OnTextDelta:      onTextDelta,
-			OnReasoningStart: onReasoningStart,
-			OnReasoningDelta: onReasoningDelta,
-			OnReasoningEnd:   onReasoningEnd,
-			OnToolCall:       onToolCall,
-			OnToolResult:     onToolResult,
-			OnStreamFinish:   onStreamFinish,
-			OnRetry:          onRetry,
-		}
-		result, streamErr := agent.Stream(ctx, call)
-		if streamErr != nil {
+	for prompt != "" {
+		result, err := agent.Stream(ctx, stream.call(prompt, history))
+		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
-			return fmt.Errorf("fantasy: %w", errors.New(sanitizeTranscript(streamErr.Error())))
+			return fmt.Errorf("fantasy: %w", errors.New(sanitizeTranscript(err.Error())))
 		}
 		for _, step := range result.Steps {
 			history = append(history, step.Messages...)
 		}
-		// Fantasy totals one Stream call across all of its steps and across
-		// retried attempts of a step, so recording this total per call counts
-		// each token once. The adapter prices it as the attempt's model.
-		if usageErr := adapterUsage(out, selector, TokenUsage{
-			InputTokens:  result.TotalUsage.InputTokens,
-			OutputTokens: result.TotalUsage.OutputTokens,
-		}); usageErr != nil {
-			return usageErr
+		// Fantasy totals one Stream call across its steps and retries, so
+		// recording this total per call counts each token once.
+		if err := adapterUsage(out, selector, TokenUsage{InputTokens: result.TotalUsage.InputTokens, OutputTokens: result.TotalUsage.OutputTokens}); err != nil {
+			return err
 		}
-		if failure != nil {
-			message := sanitizeTranscript(failure.Error())
-			if reportErr := adapterReport(out, "failed", message); reportErr != nil {
-				return errors.Join(reportErr, failure)
-			}
-			return failure
+		if stream.failure != nil {
+			return reportFailure(out, stream.failure)
 		}
 		prompt = ""
-
-		if follow == nil {
-			break
-		}
 		select {
 		case trigger, ok := <-follow:
-			if !ok {
-				follow = nil
-				break
+			if ok {
+				ack(trigger.ID, true, "accepted")
+				prompt = "Additional context (not authority to expand the original mandate):\n" + trigger.Text
 			}
-			ack(trigger.ID, true, "accepted")
-			prompt = "Additional context (not authority to expand the original mandate):\n" + trigger.Text
 		default:
-			follow = nil
-		}
-		if prompt == "" {
-			break
 		}
 	}
-
-	if !sawText {
-		message := "Fantasy produced no assistant response"
-		if reportErr := adapterReport(out, "failed", message); reportErr != nil {
-			return errors.Join(reportErr, errors.New(message))
-		}
-		return errors.New(message)
+	if !stream.sawText {
+		return reportFailure(out, errors.New("fantasy produced no assistant response"))
 	}
 	return nil
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
+// reportFailure records failure as a structured report and returns it.
+func reportFailure(out io.Writer, failure error) error {
+	if err := adapterReport(out, "failed", sanitizeTranscript(failure.Error())); err != nil {
+		return errors.Join(err, failure)
 	}
-	return ""
+	return failure
+}
+
+// fantasyStream forwards one conversation's stream callbacks to the sink. The
+// tools are created with fantasy.NewAgentTool, which runs them sequentially in
+// the stream goroutine, so the callbacks never race.
+type fantasyStream struct {
+	transcript
+	recorder ToolActivityRecorder
+	// reasoning gives each provider reasoning ID a stable display index, so a
+	// late reasoning end cannot close a different block.
+	reasoning map[string]int
+	// inFlight holds tool activities awaiting their result, by call ID.
+	inFlight map[string]ToolActivity
+	sawText  bool
+	failure  error
+}
+
+func (s *fantasyStream) call(prompt string, history []fantasy.Message) fantasy.AgentStreamCall {
+	return fantasy.AgentStreamCall{
+		Prompt:   prompt,
+		Messages: history,
+		OnTextDelta: func(_ string, text string) error {
+			s.sawText = s.sawText || strings.TrimSpace(text) != ""
+			return s.prose(sanitizeTranscript(text))
+		},
+		OnReasoningStart: func(id string, _ fantasy.ReasoningContent) error { return s.thinkingStart(s.reasoningIndex(id)) },
+		OnReasoningDelta: func(id, delta string) error {
+			return s.thinkingDelta(s.reasoningIndex(id), sanitizeTranscript(delta))
+		},
+		OnReasoningEnd: func(id string, _ fantasy.ReasoningContent) error { return s.thinkingEnd(s.reasoningIndex(id)) },
+		OnToolCall:     s.toolCall,
+		OnToolResult:   s.toolResult,
+		OnStreamFinish: func(_ fantasy.Usage, reason fantasy.FinishReason, _ fantasy.ProviderMetadata) error {
+			// Only these reasons mean the step itself failed; a length or tool
+			// call finish shows in the output and the final result.
+			if reason == fantasy.FinishReasonError || reason == fantasy.FinishReasonContentFilter {
+				s.failure = fmt.Errorf("fantasy stopped with finish reason %q", reason)
+			}
+			return nil
+		},
+		OnRetry: func(_ *fantasy.ProviderError, delay time.Duration) {
+			// A retried step replays its stream callbacks; the report makes the
+			// repeated text visible rather than silent.
+			_ = s.closeThinking()
+			_ = adapterReport(s.out, "waiting", fmt.Sprintf("Fantasy is retrying after a provider error (%s)", delay))
+		},
+	}
+}
+
+func (s *fantasyStream) reasoningIndex(id string) int {
+	if id == "" {
+		id = "reasoning"
+	}
+	index, ok := s.reasoning[id]
+	if !ok {
+		index = len(s.reasoning)
+		s.reasoning[id] = index
+	}
+	return index
+}
+
+func (s *fantasyStream) record(activity ToolActivity) error {
+	if s.recorder == nil {
+		return nil
+	}
+	return s.recorder.RecordToolActivity(activity)
+}
+
+func (s *fantasyStream) toolCall(call fantasy.ToolCallContent) error {
+	activity := ToolActivity{
+		ID:        call.ToolCallID,
+		Name:      sanitizeTranscript(call.ToolName),
+		Args:      json.RawMessage(call.Input),
+		Status:    ActivityRunning,
+		StartedAt: time.Now().UTC(),
+	}
+	s.inFlight[call.ToolCallID] = activity
+	if err := s.record(activity); err != nil {
+		return err
+	}
+	return s.prose(fmt.Sprintf("\n[%s] %s\n", ActivityRunning, toolCallSummary(activity.Name, call.Input)))
+}
+
+func (s *fantasyStream) toolResult(result fantasy.ToolResultContent) error {
+	now := time.Now().UTC()
+	activity, started := s.inFlight[result.ToolCallID]
+	delete(s.inFlight, result.ToolCallID)
+	if !started {
+		// A result without a matching call is still recorded.
+		activity = ToolActivity{ID: result.ToolCallID, StartedAt: now}
+	}
+	text, failed := toolResultContent(result.Result)
+	if activity.Name == "" {
+		activity.Name = sanitizeTranscript(result.ToolName)
+	}
+	activity.Status = ActivityFinished
+	summary := activity.Name
+	if failed {
+		// Failures carry the tool's own explanation; a success needs only the
+		// name the start marker already established.
+		activity.Status = ActivityFailed
+		summary = toolCallSummary(activity.Name, text)
+	}
+	activity.FinishedAt = now
+	duration := now.Sub(activity.StartedAt).Seconds() * 1000
+	activity.DurationMS = &duration
+	if payload, err := json.Marshal(struct {
+		Text    string `json:"text"`
+		IsError bool   `json:"is_error,omitempty"`
+	}{Text: text, IsError: failed}); err == nil {
+		activity.Result = payload
+	}
+	if err := s.record(activity); err != nil {
+		return err
+	}
+	return s.prose(fmt.Sprintf("\n[%s] %s\n", activity.Status, summary))
 }

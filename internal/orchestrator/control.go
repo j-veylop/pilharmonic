@@ -96,7 +96,7 @@ func (s *Service) EnableSubagentControl(path string) error {
 		cancel()
 		_ = listener.Close()
 		_ = os.Remove(path)
-		return errors.New("service is shutting down")
+		return errShuttingDown
 	}
 	if s.controlListener != nil {
 		s.mu.Unlock()
@@ -269,15 +269,14 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return 2
 	}
 	prompt, err := io.ReadAll(io.LimitReader(stdin, maxSubagentPrompt+1))
-	if err != nil {
+	switch {
+	case err != nil:
 		fmt.Fprintln(stderr, "subagent:", err)
 		return 1
-	}
-	if len(prompt) > maxSubagentPrompt {
+	case len(prompt) > maxSubagentPrompt:
 		fmt.Fprintln(stderr, "subagent: mandate exceeds 256 KiB")
 		return 2
-	}
-	if strings.TrimSpace(string(prompt)) == "" {
+	case strings.TrimSpace(string(prompt)) == "":
 		fmt.Fprintln(stderr, "subagent: mandate on stdin is required")
 		return 2
 	}
@@ -321,6 +320,10 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		fmt.Fprintln(stderr, "subagent:", err)
 		return 1
 	}
+	return printSubagentResponse(resp, stdout, stderr)
+}
+
+func printSubagentResponse(resp subagentResponse, stdout, stderr io.Writer) int {
 	if resp.Output != "" {
 		fmt.Fprint(stdout, resp.Output)
 		if !strings.HasSuffix(resp.Output, "\n") {
@@ -340,12 +343,10 @@ func RunSubagentCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		if resp.Output == "" {
 			fmt.Fprintf(stdout, "Subagent %s completed with no output.\n", resp.TaskID)
 		}
-		return 0
 	case string(Queued):
 		fmt.Fprintf(stdout, "Subagent %s queued (%s).\n", resp.TaskID, resp.Note)
-		return 0
 	default:
 		fmt.Fprintf(stdout, "Subagent %s %s.\n", resp.TaskID, resp.Status)
-		return 0
 	}
+	return 0
 }

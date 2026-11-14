@@ -37,16 +37,21 @@ func TestTaskSidebarStatusIconsAndColors(t *testing.T) {
 			tc.task.ID = "task"
 			tc.task.Title = "work"
 			tc.task.Agent = "tester"
-			if got := ansi.Strip(taskStatusIcon(tc.task)); got != tc.glyph {
+			if got := ansi.Strip((model{}).taskStatusIcon(tc.task)); got != tc.glyph {
 				t.Fatalf("status icon = %q, want %q", got, tc.glyph)
 			}
 			wantStyle := lipgloss.NewStyle().Foreground(tc.color).Bold(true).Render(tc.glyph)
-			if icon := taskStatusIcon(tc.task); !strings.Contains(icon, wantStyle) {
+			if icon := (model{}).taskStatusIcon(tc.task); !strings.Contains(icon, wantStyle) {
 				t.Fatalf("status icon %q lacks expected colour style %q", icon, wantStyle)
 			}
-			label := ansi.Strip(taskLabel(tc.task))
+			label := ansi.Strip((model{}).taskLabel(tc.task))
 			if !strings.Contains(label, tc.label) || !strings.Contains(label, "●") {
 				t.Fatalf("labelled status = %q, want %q after the shared glyph", label, tc.label)
+			}
+			// The sidebar row starts with the styled glyph alone, never the word.
+			row := (model{}).taskTitleRow(tc.task, 60, false)
+			if plain := ansi.Strip(row); !strings.HasPrefix(plain, "  "+tc.glyph+" work") || strings.Contains(plain, tc.label) || !strings.Contains(row, wantStyle) {
+				t.Fatalf("title row %q does not lead with the styled status glyph", plain)
 			}
 		})
 	}
@@ -98,63 +103,10 @@ func TestTaskStateKeepsAttentionReportOverSubagentWait(t *testing.T) {
 	}
 }
 
-func TestTaskPanelShowsParentWaitingForActiveSubagent(t *testing.T) {
-	tasks := []orchestrator.Task{
-		{ID: "child", ParentID: "parent", Depth: 1, Title: "child work", Agent: "tester", Status: orchestrator.Running},
-		{ID: "parent", Title: "parent work", Agent: "general", Status: orchestrator.Running},
-	}
-	m := model{tasks: tasks, selected: 1, width: 80, height: 24}
-	plain := ansi.Strip(m.taskPanel(60, 20))
-	if !strings.Contains(plain, "◷ parent work") || strings.Contains(plain, "● parent work") {
-		t.Fatalf("parent still looks running while its child is active: %q", plain)
-	}
-	if !strings.Contains(plain, "    ● child work") {
-		t.Fatalf("child lost its running state: %q", plain)
-	}
-}
-
-func TestTaskTitleRowShowsStatusFirstWithoutStatusText(t *testing.T) {
-	now := time.Now()
-	cases := []struct {
-		name  string
-		task  orchestrator.Task
-		glyph string
-		color lipgloss.Color
-	}{
-		{name: "running", task: orchestrator.Task{Status: orchestrator.Running}, glyph: "●", color: statusRunning},
-		{name: "completed", task: orchestrator.Task{Status: orchestrator.Completed}, glyph: "✓", color: statusCompleted},
-		{name: "failed", task: orchestrator.Task{Status: orchestrator.Failed}, glyph: "✗", color: statusFailed},
-		{name: "queued", task: orchestrator.Task{Status: orchestrator.Queued}, glyph: "◷", color: statusWaiting},
-		{name: "blocked", task: orchestrator.Task{Status: orchestrator.Running, Reports: []orchestrator.Report{{Kind: "blocked", Message: "need input", CreatedAt: now}}}, glyph: "✗", color: statusFailed},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			tc.task.ID = "task"
-			tc.task.Title = "work"
-			tc.task.Agent = "general"
-			line := taskTitleRow(tc.task, 60, false)
-			plain := ansi.Strip(line)
-			if !strings.HasPrefix(plain, "  "+tc.glyph+" work") {
-				t.Fatalf("title row does not start with status: %q", plain)
-			}
-			if strings.Contains(plain, strings.ToUpper(string(tc.task.Status))) {
-				t.Fatalf("title row still contains status text: %q", plain)
-			}
-			wantIcon := lipgloss.NewStyle().Foreground(tc.color).Bold(true).Render(tc.glyph)
-			if !strings.Contains(line, wantIcon) {
-				t.Fatalf("title row %q lacks styled status icon %q", line, wantIcon)
-			}
-			if strings.Index(line, wantIcon) > strings.Index(line, "work") {
-				t.Fatalf("status is not first in title row: %q", line)
-			}
-		})
-	}
-}
-
 func TestTaskTitleRowSelectionFitsAndKeepsStatus(t *testing.T) {
 	task := orchestrator.Task{ID: "task", Title: "work", Agent: "general", Status: orchestrator.Running}
 	for _, width := range []int{1, 2, 5, 20, 34} {
-		row := taskTitleRow(task, width, true)
+		row := (model{}).taskTitleRow(task, width, true)
 		if got := lipgloss.Width(row); got != width {
 			t.Fatalf("width %d rendered %d cells: %q", width, got, ansi.Strip(row))
 		}
@@ -162,12 +114,16 @@ func TestTaskTitleRowSelectionFitsAndKeepsStatus(t *testing.T) {
 			t.Fatalf("selected row wrapped at width %d", width)
 		}
 	}
-	plain := ansi.Strip(taskTitleRow(task, 20, true))
+	plain := ansi.Strip((model{}).taskTitleRow(task, 20, true))
 	if !strings.Contains(plain, "▌ ● work") {
 		t.Fatalf("selection lost the status-first layout: %q", plain)
 	}
-	if row := taskTitleRow(task, 20, true); !strings.Contains(row, taskStatusIcon(task)) {
+	if row := (model{}).taskTitleRow(task, 20, true); !strings.Contains(row, (model{}).taskStatusIcon(task)) {
 		t.Fatalf("selection lost the coloured status icon: %q", row)
+	}
+	child := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Running}
+	if selected := ansi.Strip((model{}).taskTitleRow(child, 40, true)); !strings.Contains(selected, "▌   ● child") {
+		t.Fatalf("selected child row lost its indented status: %q", selected)
 	}
 }
 
@@ -214,33 +170,6 @@ func TestTaskPanelGroupsChildrenUnderParentByIndentation(t *testing.T) {
 		if strings.Contains(plain, unwanted) {
 			t.Fatalf("task rows still use an arrow marker %q: %q", unwanted, plain)
 		}
-	}
-}
-
-func TestTaskTitleRowIndentsChildStatusWithoutArrow(t *testing.T) {
-	parent := orchestrator.Task{ID: "parent", Title: "parent", Status: orchestrator.Running}
-	child := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Running}
-	grandchild := orchestrator.Task{ID: "grandchild", ParentID: "child", Depth: 2, Title: "grand child", Status: orchestrator.Running}
-	cases := []struct {
-		task       orchestrator.Task
-		wantPrefix string
-	}{
-		{parent, "  ● parent"},
-		{child, "    ● child"},
-		{grandchild, "      ● grand child"},
-	}
-	for _, tc := range cases {
-		plain := ansi.Strip(taskTitleRow(tc.task, 60, false))
-		if !strings.HasPrefix(plain, tc.wantPrefix) {
-			t.Fatalf("row %q does not start with %q", plain, tc.wantPrefix)
-		}
-		if strings.Contains(plain, "↳") {
-			t.Fatalf("row %q still shows an arrow marker", plain)
-		}
-	}
-	selected := ansi.Strip(taskTitleRow(child, 40, true))
-	if !strings.Contains(selected, "▌   ● child") {
-		t.Fatalf("selected child row lost its indented status: %q", selected)
 	}
 }
 

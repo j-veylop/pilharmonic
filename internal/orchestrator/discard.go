@@ -11,15 +11,10 @@ import (
 
 const discardTimeout = 30 * time.Second
 
-// DiscardWorktree removes the retained worktree of an isolated task. The task
-// and its history are kept; only the worktree reservation and the task's
-// recorded execution path are removed. Discarding is always an explicit
-// operator action: it never runs automatically on merge or on task deletion.
-//
-// The worktree must be clean and its HEAD must already have been merged into
-// the source checkout, so discarding never deletes uncommitted changes or
-// unintegrated commits. Git operations never run while holding the service
-// mutex.
+// DiscardWorktree removes the retained worktree of an isolated task, keeping
+// the task and its history. It is always an explicit operator action. The
+// worktree must be clean and merged, so discarding never deletes uncommitted
+// changes or unintegrated commits. Git never runs while holding the mutex.
 func (s *Service) DiscardWorktree(id string) error {
 	s.mu.Lock()
 	t, err := s.discardableTaskLocked(id)
@@ -60,48 +55,31 @@ func (s *Service) DiscardWorktree(id string) error {
 		// Keep the durable intent. An explicit retry or restart can reconcile it.
 		return errors.Join(err, reconcileErr)
 	}
-	for i := range s.data.Tasks {
-		current := &s.data.Tasks[i]
-		if current.ID != id {
-			continue
-		}
-		old := clone(*current)
-		// A Git refusal leaves the worktree in place; only an interrupted
-		// attempt is worth reporting as an interruption.
-		kind := "worktree_discard_interrupted"
-		if err != nil {
-			kind = "worktree_discard_refused"
-		}
-		message := "Worktree retained"
-		if err != nil {
-			message += ": " + err.Error()
-		}
-		current.finishDiscardWithKind(gone, kind, message)
-		if saveErr := s.save(); saveErr != nil {
-			*current = old
-			if gone {
-				return saveErr
-			}
-			return errors.Join(err, saveErr)
-		}
-		if gone {
-			// Git already removed the tree, so the discard succeeded even when the
-			// invocation reported an error; keep it only in the event message.
-			return nil
-		}
-		return err
+	current := s.taskLocked(id)
+	if current == nil {
+		return errTaskNotFound
 	}
-	return errors.New("task not found")
+	// A Git refusal is not an interruption; history must not claim one.
+	kind, message := "worktree_discard_interrupted", "Worktree retained"
+	if err != nil {
+		kind, message = "worktree_discard_refused", message+": "+err.Error()
+	}
+	if saveErr := s.mutateTaskLocked(current, func(t *Task) error { t.finishDiscard(gone, kind, message); return nil }); saveErr != nil {
+		if gone {
+			return saveErr
+		}
+		return errors.Join(err, saveErr)
+	}
+	if gone {
+		// Git removed the tree, so the discard succeeded even if the invocation
+		// reported an error; it is kept only in the event message.
+		return nil
+	}
+	return err
 }
 
-func (t *Task) finishDiscard(gone bool, message string) {
-	t.finishDiscardWithKind(gone, "worktree_discard_interrupted", message)
-}
-
-// finishDiscardWithKind records the outcome and clears the durable intent. A
-// clean refusal is a distinct event kind so the history does not claim an
-// interruption that never happened.
-func (t *Task) finishDiscardWithKind(gone bool, kind, message string) {
+// finishDiscard records the outcome and clears the durable intent.
+func (t *Task) finishDiscard(gone bool, kind, message string) {
 	t.DiscardPending = false
 	t.UpdatedAt = time.Now().UTC()
 	if gone {
@@ -116,30 +94,16 @@ func (t *Task) finishDiscardWithKind(gone bool, kind, message string) {
 // reconcileDiscard never removes a surviving tree. If Git removed it, only
 // an empty reservation or the task's validated ownership record may remain.
 func reconcileDiscard(statePath string, t Task) (bool, error) {
-	if !validTaskID(t.ID) {
-		return false, errors.New("invalid task identity for discard")
-	}
-	base := filepath.Join(filepath.Dir(statePath), "workspaces")
-	info, err := os.Lstat(base)
-	if errors.Is(err, os.ErrNotExist) {
-		return true, nil
-	}
+	reservation, err := reservationPath(statePath, t.ID)
 	if err != nil {
 		return false, err
 	}
-	if !info.IsDir() {
-		return false, errors.New("workspace base is not a directory")
-	}
-	reservation := filepath.Join(base, t.ID)
-	info, err = os.Lstat(reservation)
-	if errors.Is(err, os.ErrNotExist) {
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if !info.IsDir() {
-		return false, errors.New("workspace reservation is not a regular directory")
+	for _, dir := range []string{filepath.Dir(reservation), reservation} {
+		if err = realDir(dir, "workspace reservation"); errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		} else if err != nil {
+			return false, err
+		}
 	}
 	if _, err = os.Lstat(filepath.Join(reservation, "tree")); err == nil {
 		return false, nil
@@ -166,15 +130,12 @@ func reconcileDiscard(statePath string, t Task) (bool, error) {
 
 func (s *Service) discardableTaskLocked(id string) (*Task, error) {
 	if s.closing {
-		return nil, errors.New("service is shutting down")
+		return nil, errShuttingDown
 	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID == id {
-			return t, s.checkDiscardLocked(*t)
-		}
+	if t := s.taskLocked(id); t != nil {
+		return t, s.checkDiscardLocked(*t)
 	}
-	return nil, errors.New("task not found")
+	return nil, errTaskNotFound
 }
 
 // checkDiscardLocked checks state shared by the single and bulk operations.

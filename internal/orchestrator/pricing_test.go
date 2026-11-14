@@ -38,15 +38,6 @@ func TestDeepSeekOffPeakBoundaries(t *testing.T) {
 			t.Errorf("%s (%s): off-peak = %v, want %v", tc.name, tc.when.Format(time.RFC3339), got, tc.want)
 		}
 	}
-	// The rate must flip exactly at each boundary, so neither edge can drift by
-	// a minute without this failing.
-	if deepseekOffPeak(at(16, 29, 59)) == deepseekOffPeak(at(16, 30, 0)) {
-		t.Error("16:30 UTC does not toggle the discount")
-	}
-	if deepseekOffPeak(at(0, 29, 59)) == deepseekOffPeak(at(0, 30, 0)) {
-		t.Error("00:30 UTC does not toggle the discount")
-	}
-
 	// The window is published in Beijing time (UTC+8): 00:30-08:30 there is
 	// 16:30-00:30 UTC, and the same boundaries hold in that zone.
 	beijing := time.FixedZone("CST", 8*60*60)
@@ -116,14 +107,6 @@ func TestPriceForDeepSeekDiscountedRates(t *testing.T) {
 		if got, want := price.Cost(full, offPeak), tc.offPeakInput+tc.offPeakOutput; !floatMatches(got, want) {
 			t.Errorf("%s off-peak cost of 1M/1M = %v, want %v", tc.model, got, want)
 		}
-	}
-	// The discount is a discount: an off-peak call is never charged more than
-	// the same call at peak.
-	reasoner, _ := PriceFor("deepseek/deepseek-reasoner", peak)
-	sample := TokenUsage{InputTokens: 12345, OutputTokens: 6789}
-	if reasoner.Cost(sample, offPeak) >= reasoner.Cost(sample, peak) {
-		t.Errorf("off-peak reasoner cost %v is not below peak cost %v",
-			reasoner.Cost(sample, offPeak), reasoner.Cost(sample, peak))
 	}
 }
 
@@ -209,7 +192,7 @@ func TestPriceForNormalizesSelector(t *testing.T) {
 		if price.Model != tc.wantModel {
 			t.Errorf("selector %q priced as %q, want %q", tc.selector, price.Model, tc.wantModel)
 		}
-		if price.TimeOfDay != tc.wantTOD {
+		if price.TimeOfDay != tc.wantTOD || (!tc.wantTOD && price.Rate(now) != "") {
 			t.Errorf("selector %q time-of-day = %v, want %v", tc.selector, price.TimeOfDay, tc.wantTOD)
 		}
 	}

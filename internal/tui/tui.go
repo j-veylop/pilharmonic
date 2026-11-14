@@ -19,13 +19,7 @@ var defaultRunningGlyph = spinner.MiniDot.Frames[0]
 
 type tickMsg time.Time
 
-type isolationResultMsg struct {
-	err     error
-	enabled bool
-}
-
-// actionResultMsg reports a mutating service call that carries no UI-only
-// payload beyond its notice.
+// actionResultMsg reports a mutating service call by its notice or error.
 type actionResultMsg struct {
 	notice string
 	err    error
@@ -33,10 +27,9 @@ type actionResultMsg struct {
 
 // composerResultMsg reports a composer submission. The draft is retained when
 // err is set so the operator can correct it.
-type composerResultMsg struct {
-	notice string
-	err    error
-}
+type composerResultMsg actionResultMsg
+
+type isolationResultMsg actionResultMsg
 
 // routerResultMsg reports a submitted request. A task with an empty ID means
 // nothing was accepted and the draft is still the operator's only copy.
@@ -45,21 +38,17 @@ type routerResultMsg struct {
 	err  error
 }
 
-// fetchModelsMsg delivers a provider's model list (or its fetch error) to the
-// model menu.
 type fetchModelsMsg struct {
 	provider string
 	models   []string
 	err      error
 }
 
-// Service is the orchestrator surface the terminal drives. It keeps the model
-// testable and lets slow service calls run outside the update loop.
+// Service is the orchestrator surface the terminal drives. The board reads
+// snapshots, usage and standing conditions on its one refresh tick; slow calls
+// run as commands outside the update loop.
 type Service interface {
 	ListTasks() []orchestrator.Task
-	// SessionUsage is the running process's token total and estimate. The board
-	// reads it with the task snapshot on the existing refresh tick, so it never
-	// starts a second polling loop.
 	SessionUsage() orchestrator.SessionUsage
 	ListAgents() []orchestrator.AgentInfo
 	ListProfiles() []orchestrator.Profile
@@ -95,10 +84,6 @@ type Service interface {
 	FetchModels(ctx context.Context, provider string) ([]string, error)
 	SetAgentClass(agent, class string) error
 	AgentClasses() []orchestrator.AgentClass
-	// PersistenceError reports the most recent failed background save, and
-	// StartupWarning a non-fatal problem opening the state file. The board
-	// reads both on its existing refresh tick and shows them on the notice
-	// line, so neither needs a second polling loop.
 	PersistenceError() error
 	StartupWarning() string
 }
@@ -140,7 +125,6 @@ type model struct {
 	agentClass    agentClassState
 }
 
-// activityState is the tool-call activity panel.
 type activityState struct {
 	open     bool
 	filter   activityFilter
@@ -149,61 +133,55 @@ type activityState struct {
 	expanded bool
 }
 
-// routerState is the new-request form.
+// routerState is the new-request form and its action and recent lists.
 type routerState struct {
+	editor
 	open           bool
-	draft          string
-	cursor         int
-	scroll         int
 	focus          int
 	selected       int
-	recentSelected int // selected row in the recent list
+	recentSelected int
 }
 
-// noticeState is the transient notice line above the footer.
+// noticeState is the notice line above the footer. text expires; service is a
+// standing condition such as a failed save, replaced on every refresh.
 type noticeState struct {
-	text  string
-	ticks int
-	shown string
-	// service is a standing condition reported by the service, such as a
-	// failed state save or a startup warning. refreshTasks replaces it on
-	// every tick, and it never expires or hides a transient notice.
+	text    string
+	ticks   int
+	shown   string
 	service string
 }
 
-// helpState is the help overlay's open flag and scroll position.
 type helpState struct {
 	open   bool
 	page   int
 	scroll int
 }
 
-// loginState is the provider login menu and API-key prompt.
+// loginState is the provider menu and the API-key prompt, armed while
+// provider is set. The key is never rendered.
 type loginState struct {
-	provider string // non-empty while entering an API key
-	key      string // the key being typed (never rendered in full)
-	menu     bool   // the provider menu is open
-	index    int    // selected row in the provider menu
+	provider string
+	key      string
+	menu     bool
+	index    int
 }
 
-// modelMenuState is the agent -> provider -> model menu.
 type modelMenuState struct {
-	menu         bool      // the menu is open
-	step         modelStep // current step; see modelStepClass
-	index        int       // selected row in the current step
-	class        string    // class chosen in the first step
-	provider     string    // provider chosen in the second step
-	customInput  string    // model ID typed in the custom-model step
-	list         []string  // fetched models for provider
-	listProvider string    // provider list belongs to
-	loading      bool      // a model fetch is in flight for provider
-	fetchFailed  bool      // the fetch for provider failed; the built-in list is shown
+	menu         bool
+	step         modelStep
+	index        int
+	class        string
+	provider     string
+	customInput  string
+	list         []string // fetched models for listProvider
+	listProvider string
+	loading      bool
+	fetchFailed  bool // the built-in list is shown instead
 }
 
-// agentClassState is the per-agent big/small model menu.
 type agentClassState struct {
-	menu  bool // the menu is open
-	index int  // selected row
+	menu  bool
+	index int
 }
 
 // Run starts the terminal interface. The service owns task execution.
@@ -239,14 +217,8 @@ func newModel(service Service, workspace string) model {
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 
-// serviceNotice reports a standing condition the operator should see. A failed
-// background save is more urgent than a startup warning, which already records
-// a problem the service handled (for example a corrupt state file it preserved
-// and skipped). The board refresh calls this once a second.
+// serviceNotice reports a failed background save before a startup warning.
 func serviceNotice(service Service) string {
-	if service == nil {
-		return ""
-	}
 	if err := service.PersistenceError(); err != nil {
 		return "State save failed: " + err.Error()
 	}
@@ -260,8 +232,8 @@ func (m model) Init() tea.Cmd {
 	return tick()
 }
 
-// hasLiveWork reports whether any task can still change output or scheduling
-// state without operator input. The spinner only needs to run then.
+// hasLiveWork reports whether any task can change without operator input; the
+// spinner only runs then.
 func (m model) hasLiveWork() bool {
 	for _, task := range m.tasks {
 		if task.Status == orchestrator.Running || task.MergeStatus == orchestrator.MergeWaiting ||
@@ -275,123 +247,36 @@ func (m model) hasLiveWork() bool {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case actionResultMsg:
-		if msg.err != nil {
-			m.notice.text = msg.err.Error()
-		} else {
-			m.notice.text = msg.notice
-		}
-		m.refreshTasks()
-		m.clampScroll()
-		return m, nil
+		m.finish(msg)
 	case composerResultMsg:
-		if msg.err != nil {
-			m.notice.text = msg.err.Error()
-			if msg.notice != "" {
-				m.notice.text = msg.notice + " · " + msg.err.Error()
-			}
-		} else {
-			m.notice.text = msg.notice
+		if msg.err == nil {
 			m.input = composer{}
 		}
-		m.refreshTasks()
-		m.clampScroll()
-		return m, nil
-	case routerResultMsg:
-		if msg.err != nil {
-			m.notice.text = msg.err.Error()
-		} else {
-			m.notice.text = routeNotice(msg.task)
-		}
-		if msg.task.ID == "" {
-			return m, nil
-		}
-		m.refreshTasks()
-		m.router.draft = ""
-		m.router.cursor = 0
-		m.router.scroll = 0
-		m.router.selected = 0
-		m.router.recentSelected = 0
-		for i, current := range m.tasks {
-			if current.ID == msg.task.ID {
-				m.selected = i
-				break
-			}
-		}
-		m.clamp()
-		m.clampScroll()
-		return m, nil
-	case cleanupResultMsg:
-		m.cleanupBusy = false
-		m.notice.text = string(msg)
-		m.refreshTasks()
-		m.clampScroll()
-		m.selection = textSelection{}
-		return m, nil
-	case fetchModelsMsg:
-		if msg.provider != m.models.provider {
-			return m, nil
-		}
-		m.models.loading = false
-		if msg.err == nil && len(msg.models) > 0 {
-			m.models.list = msg.models
-			m.models.listProvider = msg.provider
-			m.models.fetchFailed = false
-		} else {
-			m.models.list = nil
-			m.models.listProvider = ""
-			m.models.fetchFailed = true
-			if msg.err != nil {
-				m.notice.text = "Could not fetch " + msg.provider + " models: " + msg.err.Error()
-			} else {
-				m.notice.text = "Could not fetch " + msg.provider + " models: empty list"
-			}
-		}
-		return m, nil
+		m.finish(actionResultMsg(msg))
 	case isolationResultMsg:
 		m.isolationBusy = false
-		if msg.err != nil {
-			m.notice.text = msg.err.Error()
-		} else if msg.enabled {
-			m.notice.text = "Isolation enabled: starts from committed HEAD; uncommitted files are excluded."
-		} else {
-			m.notice.text = "Isolation off: task uses the source workspace."
-		}
-		m.refreshTasks()
-		m.clampScroll()
-		return m, nil
+		m.finish(actionResultMsg(msg))
+	case cleanupResultMsg:
+		m.cleanupBusy = false
+		m.finish(actionResultMsg{notice: string(msg)})
+		m.selection = textSelection{}
+	case routerResultMsg:
+		m.routerResult(msg)
+	case fetchModelsMsg:
+		m.fetchedModels(msg)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.clampScroll()
 		m.cancelStaleSelection()
 	case tickMsg:
-		oldID := m.selectedID()
-		oldLines := m.detailLineCount()
-		m.refreshTasks()
-		m.clampRouter()
-		if oldID != m.selectedID() {
-			m.resetActivitySelection()
-			m.historyOffset = 0
-			m.selection = textSelection{}
-		} else if m.historyOffset > 0 {
-			m.historyOffset += m.detailLineCount() - oldLines
-		}
-		m.clampScroll()
-		m.cancelStaleSelection()
-		m.expireNotice()
-		cmds := []tea.Cmd{tick()}
-		if m.hasLiveWork() && !m.spinnerActive {
-			m.spinnerActive = true
-			cmds = append(cmds, m.spinner.Tick)
-		}
-		return m, tea.Batch(cmds...)
+		return m, m.tick()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		if !m.hasLiveWork() {
-			m.spinnerActive = false
+		m.spinnerActive = m.hasLiveWork()
+		if !m.spinnerActive {
 			return m, nil
 		}
-		m.spinnerActive = true
 		return m, cmd
 	case selectionCopiedMsg:
 		if msg.err != nil {
@@ -399,76 +284,99 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if msg.lines > 0 {
 			m.notice.text = fmt.Sprintf("Copied %d line(s) to clipboard via OSC 52.", msg.lines)
 		}
-		return m, nil
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
-		m.selection = textSelection{}
-		// The quit confirmation floats above every surface: it is the answer to
-		// an exit request, so it owns the keyboard until it is answered.
-		if m.quitConfirm {
-			return m.quitKey(msg)
-		}
-		// Help floats above every surface, so it takes the key first: esc then
-		// closes help instead of the screen underneath it.
-		if m.help.open {
-			return m.helpKey(msg.String())
-		}
-		if m.helpShortcut(msg) {
-			return m.openHelp(), nil
-		}
-		// Login owns every key while it is armed, whether or not the request
-		// form or the board is showing, so a secret can never reach a draft.
-		if m.login.provider != "" {
-			return m.loginKeyMsg(msg)
-		}
-		if m.login.menu {
-			return m.providerMenuKey(msg.String())
-		}
-		if m.models.menu {
-			return m.modelMenuKey(msg.String())
-		}
-		if m.agentClass.menu {
-			return m.agentClassMenuKey(msg.String())
-		}
-		if m.router.open {
-			return m.routerKey(msg)
-		}
-		if m.cleanup.kind != "" {
-			return m.cleanupKey(msg.String())
-		}
-		if m.profilePicker.target != "" {
-			return m.profilePickerKey(msg.String())
-		}
-		if m.agentPicker.target != "" {
-			return m.agentPickerKey(msg.String())
-		}
-		if m.input.kind != "" {
-			return m.composerKey(msg)
-		}
-		if m.activityKey(msg.String()) {
-			return m, nil
-		}
-		oldTaskID := m.selectedID()
-		if m.vimNavigation(msg.String()) {
-			if oldTaskID != m.selectedID() {
-				m.resetActivitySelection()
-			}
-			return m, nil
-		}
-
-		return m.boardKey(msg, oldTaskID)
+		return m.keyMsg(msg)
 	}
 	return m, nil
 }
-func (m *model) clamp() {
-	if m.selected >= len(m.tasks) {
-		m.selected = len(m.tasks) - 1
-	}
-	if m.selected < 0 {
-		m.selected = 0
-	}
+
+func (m *model) finish(result actionResultMsg) {
+	m.notice.text = result.text()
+	m.refreshTasks()
+	m.clampScroll()
 }
+
+// routerResult selects an accepted request's task. A task with an empty ID
+// means nothing was accepted, so the draft is kept.
+func (m *model) routerResult(msg routerResultMsg) {
+	m.notice.text = resultFor(routeNotice(msg.task), msg.err).text()
+	if msg.task.ID == "" {
+		return
+	}
+	m.refreshTasks()
+	m.router = routerState{open: m.router.open, focus: m.router.focus}
+	m.selectTask(msg.task.ID)
+	m.clampScroll()
+}
+
+func (m *model) tick() tea.Cmd {
+	oldID, oldLines := m.selectedID(), m.detailLineCount()
+	m.refreshTasks()
+	m.clampRouter()
+	if oldID != m.selectedID() {
+		m.resetActivitySelection()
+		m.historyOffset = 0
+		m.selection = textSelection{}
+	} else if m.historyOffset > 0 {
+		m.historyOffset += m.detailLineCount() - oldLines
+	}
+	m.clampScroll()
+	m.cancelStaleSelection()
+	m.expireNotice()
+	if m.hasLiveWork() && !m.spinnerActive {
+		m.spinnerActive = true
+		return tea.Batch(tick(), m.spinner.Tick)
+	}
+	return tick()
+}
+
+// keyMsg routes a key to the surface that owns the keyboard, topmost first.
+func (m model) keyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.selection = textSelection{}
+	key := msg.String()
+	switch {
+	case m.quitConfirm:
+		return m.quitKey(msg)
+	case m.help.open:
+		return m.helpKey(key), nil
+	case m.helpShortcut(msg):
+		return m.openHelp(), nil
+	// Login owns every key while it is armed, so a secret never reaches a draft.
+	case m.login.provider != "":
+		return m.loginKeyMsg(msg), nil
+	case m.login.menu:
+		return m.providerMenuKey(key), nil
+	case m.models.menu:
+		return m.modelMenuKey(key)
+	case m.agentClass.menu:
+		return m.agentClassMenuKey(key), nil
+	case m.router.open:
+		return m.routerKey(msg)
+	case m.cleanup.kind != "":
+		return m.cleanupKey(key)
+	case m.profilePicker.target != "":
+		return m.profilePickerKey(key), nil
+	case m.agentPicker.target != "":
+		return m.agentPickerKey(key), nil
+	case m.input.kind != "":
+		return m.composerKey(msg)
+	case m.activityKey(key):
+		return m, nil
+	}
+	oldID := m.selectedID()
+	var cmd tea.Cmd
+	if !m.vimNavigation(key) {
+		m, cmd = m.boardKey(key)
+	}
+	if oldID != m.selectedID() {
+		m.resetActivitySelection()
+	}
+	return m, cmd
+}
+
+func (m *model) clamp() { m.selected = max(0, min(m.selected, len(m.tasks)-1)) }
 
 // refreshTasks reloads the service snapshot while keeping the operator on the
 // task they were reading. The service sorts newest first, so an inserted task
@@ -481,26 +389,13 @@ func (m *model) refreshTasks() {
 		return
 	}
 	m.tasks = m.service.ListTasks()
-	// The session total is read with the same snapshot on the same tick: the
-	// header and the task list can never describe different moments, and the
-	// update loop still does nothing that can block.
 	m.usage = m.service.SessionUsage()
 	m.notice.service = serviceNotice(m.service)
-	if selected != "" {
-		for i, task := range m.tasks {
-			if task.ID == selected {
-				m.selected = i
-				break
-			}
-		}
-	}
-	m.clamp()
+	m.selectTask(selected)
 	m.anchorRecentSelection(recent)
 }
 
-// expireNotice clears a notice that has stayed unchanged for about five
-// seconds. Comparing against the last seen text avoids touching every site
-// that sets a notice.
+// expireNotice clears a notice that has stayed unchanged for about five ticks.
 func (m *model) expireNotice() {
 	if m.notice.text == "" {
 		m.notice.ticks, m.notice.shown = 0, ""
@@ -516,253 +411,22 @@ func (m *model) expireNotice() {
 	}
 }
 
-func startTaskCmd(service Service, id string) tea.Cmd {
-	return func() tea.Msg {
-		if err := service.Start(context.Background(), id); err != nil {
-			return actionResultMsg{err: err}
+// selectTask moves the board selection to the task with id, if it exists.
+func (m *model) selectTask(id string) {
+	for i, task := range m.tasks {
+		if id != "" && task.ID == id {
+			m.selected = i
+			break
 		}
-		return actionResultMsg{notice: "Execution requested; queued tasks start when capacity frees."}
 	}
-}
-
-func retryTaskCmd(service Service, id string) tea.Cmd {
-	return func() tea.Msg {
-		if err := service.Retry(id); err != nil {
-			return actionResultMsg{err: err}
-		}
-		return actionResultMsg{notice: "Task queued for retry; press r to start."}
-	}
-}
-
-func cancelTaskCmd(service Service, id string) tea.Cmd {
-	return func() tea.Msg {
-		if err := service.Cancel(id); err != nil {
-			return actionResultMsg{err: err}
-		}
-		return actionResultMsg{notice: "Cancellation requested."}
-	}
-}
-
-func approveReviewCmd(service Service, id, commit string) tea.Cmd {
-	return func() tea.Msg {
-		if err := service.ApproveReview(id, commit, ""); err != nil {
-			return actionResultMsg{err: err}
-		}
-		return actionResultMsg{notice: "Review approved for commit " + commit + "; merge scheduled."}
-	}
+	m.clamp()
 }
 
 func (m model) selectedID() string {
-	if m.selected < 0 || m.selected >= len(m.tasks) {
-		return ""
-	}
-	return m.tasks[m.selected].ID
+	t, _ := m.selectedTask()
+	return t.ID
 }
-func (m *model) clampScroll() {
-	if m.historyOffset < 0 {
-		m.historyOffset = 0
-	}
-	if max := m.maxScroll(); m.historyOffset > max {
-		m.historyOffset = max
-	}
-}
-func (m *model) scrollDetail(delta int) { m.historyOffset += delta; m.clampScroll() }
 
-func (m model) boardKey(msg tea.KeyMsg, oldTaskID string) (model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "ctrl+c":
-		return m.requestQuit(), nil
-	case "enter":
-		if m.fullscreen {
-			m.fullscreen = false
-			m.detailFocus = false
-		} else {
-			m.detailFocus = !m.detailFocus
-		}
-		m.clampScroll()
-	case "z":
-		m.fullscreen = !m.fullscreen
-		m.clampScroll()
-	case "esc":
-		m.fullscreen = false
-		m.detailFocus = false
-		m.clampScroll()
-	case "t":
-		m.activity.open = !m.activity.open
-		m.resetActivitySelection()
-		m.historyOffset = 0
-		m.detailFocus = true
-		if m.activity.open {
-			m.historyOffset = m.maxScroll()
-		}
-	case "T":
-		m.thinking = !m.thinking
-		m.clampScroll()
-	case "tab":
-		m.activity.open = false
-		m.activity.expanded = false
-		m.history = !m.history
-		m.historyOffset = 0
-	case "A":
-		if len(m.tasks) > 0 {
-			task := m.tasks[m.selected]
-			if task.Status != orchestrator.Queued || task.ScheduleRequested {
-				m.notice.text = "Choose an agent before starting."
-			} else {
-				m.agentPicker.target = task.ID
-				m.agentPicker.choices = m.service.ListAgents()
-				m.agentPicker.index = 0
-				for i, agent := range m.agentPicker.choices {
-					if agent.Name == task.Agent {
-						m.agentPicker.index = i
-					}
-				}
-				m.notice.text = ""
-			}
-		}
-	case "P":
-		if len(m.tasks) > 0 {
-			task := m.tasks[m.selected]
-			if task.Status != orchestrator.Queued || task.ScheduleRequested {
-				m.notice.text = "Choose a profile before starting."
-			} else {
-				m.profilePicker.target = task.ID
-				m.profilePicker.choices = m.service.ListProfiles()
-				m.profilePicker.index = 0
-				for i, profile := range m.profilePicker.choices {
-					if profile.Name == task.ProfileName {
-						m.profilePicker.index = i
-					}
-				}
-				m.notice.text = ""
-			}
-		}
-	case "!":
-		if m.jumpAttention() {
-			if oldTaskID != m.selectedID() {
-				m.resetActivitySelection()
-			}
-		} else {
-			m.notice.text = "No tasks need action."
-		}
-	case "L":
-		m.login.menu = true
-		m.login.index = 0
-	case "m":
-		m.models.menu = true
-		m.models.step = modelStepClass
-		m.models.index = 0
-		m.models.class, m.models.provider, m.models.customInput = "", "", ""
-	case "/":
-		m.router.open = true
-		m.router.focus = routerFocusComposer
-		m.router.cursor = len(m.router.draft)
-		m.router.scroll = 0
-		m.notice.text = ""
-		m.clampRouter()
-	case "n":
-		m.input = composer{kind: newTaskInput}
-		m.notice.text = ""
-	case "a":
-		if len(m.tasks) > 0 {
-			m.input = composer{kind: relatedTaskInput, target: m.tasks[m.selected].ID}
-			m.notice.text = ""
-		}
-	case "b":
-		if len(m.tasks) > 0 {
-			t := m.tasks[m.selected]
-			if t.Status != orchestrator.Running {
-				m.notice.text = "Spawn subagents only from a running task."
-			} else {
-				m.input = composer{kind: subagentInput, target: t.ID}
-				m.notice.text = "Enter a self-contained mandate for the subagent."
-			}
-		}
-	case "[":
-		m.scrollDetail(1)
-	case "]":
-		m.scrollDetail(-1)
-	case "home":
-		m.historyOffset = m.maxScroll()
-	case "end":
-		m.historyOffset = 0
-	case "f":
-		if len(m.tasks) > 0 {
-			m.input = composer{kind: threadInput, target: m.tasks[m.selected].ID}
-			m.notice.text = ""
-		}
-	case "F":
-		if len(m.tasks) > 0 {
-			t := m.tasks[m.selected]
-			m.input = composer{kind: followUpInput, target: t.ID}
-			m.notice.text = ""
-			if t.Status == orchestrator.Queued || t.Status == orchestrator.Running {
-				m.notice.text = "Context does not expand the mandate."
-			} else {
-				m.notice.text = "Follow-up requeues the task; press r to start."
-			}
-		}
-	case "p":
-		if len(m.tasks) > 0 {
-			m.input = composer{kind: reportInput, target: m.tasks[m.selected].ID}
-			m.notice.text = "Report: kind and message (progress, waiting, blocked, ready, failed)"
-		}
-	case "s":
-		if len(m.tasks) > 0 {
-			t := m.tasks[m.selected]
-			if err := m.service.SetContextSubscription(t.ID, t.ContextPaused); err != nil {
-				m.notice.text = err.Error()
-			} else {
-				m.notice.text = "Context subscription updated."
-			}
-		}
-	case "w":
-		if len(m.tasks) > 0 && !m.isolationBusy {
-			t := m.tasks[m.selected]
-			if t.Status != orchestrator.Queued || t.ScheduleRequested {
-				m.notice.text = "Choose isolation before starting."
-			} else {
-				m.isolationBusy = true
-				m.notice.text = "Checking workspace isolation…"
-				return m, func() tea.Msg { return isolationResultMsg{m.service.SetTaskIsolation(t.ID, !t.Isolated), !t.Isolated} }
-			}
-		}
-	case "r":
-		if len(m.tasks) > 0 {
-			return m, startTaskCmd(m.service, m.tasks[m.selected].ID)
-		}
-	case "R":
-		if len(m.tasks) > 0 {
-			return m, retryTaskCmd(m.service, m.tasks[m.selected].ID)
-		}
-	case "v":
-		if len(m.tasks) > 0 {
-			t := m.tasks[m.selected]
-			if !t.AwaitingReview() {
-				m.notice.text = "No worktree commit awaits review."
-			} else {
-				return m, approveReviewCmd(m.service, t.ID, t.ReviewCommit)
-			}
-		}
-	case "V":
-		if len(m.tasks) > 0 {
-			t := m.tasks[m.selected]
-			if !t.AwaitingReview() {
-				m.notice.text = "No worktree commit awaits review."
-			} else {
-				m.input = composer{kind: rejectReviewInput, target: t.ID, reviewCommit: t.ReviewCommit}
-				m.notice.text = "Enter a reason to reject; the worktree is kept for F follow-up."
-			}
-		}
-	case "d", "D", "x", "X":
-		m.prepareCleanup(msg.String())
-	case "c":
-		if len(m.tasks) > 0 {
-			return m, cancelTaskCmd(m.service, m.tasks[m.selected].ID)
-		}
-	}
-	m.refreshTasks()
-	m.clamp()
-	m.clampScroll()
-	return m, nil
-}
+func (m *model) clampScroll() { m.historyOffset = max(0, min(m.historyOffset, m.maxScroll())) }
+
+func (m *model) scrollDetail(delta int) { m.historyOffset += delta; m.clampScroll() }

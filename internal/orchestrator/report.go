@@ -60,22 +60,12 @@ func (s *Service) RecordReport(taskID, kind, message string) error {
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != taskID {
-			continue
-		}
+	return s.withTask(taskID, func(t *Task) error {
 		if t.Status == Canceled {
 			return errors.New("cannot report on canceled task")
 		}
 		return s.appendReportLocked(t, kind, message, "operator", "", truncated)
-	}
-	return errors.New("task not found")
+	})
 }
 
 // appendReportLocked persists one report and its history event. The caller
@@ -109,7 +99,7 @@ func (w outputWriter) RecordReport(kind, message string) error {
 	w.s.mu.Lock()
 	defer w.s.mu.Unlock()
 	if w.s.closing {
-		return errors.New("service is shutting down")
+		return errShuttingDown
 	}
 	t, err := w.taskLocked()
 	if err != nil {

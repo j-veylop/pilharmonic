@@ -58,16 +58,12 @@ func menuView(background string, w, h int, title, subtitle string, body []string
 	return overlay(background, modal, w, h, mw, mh)
 }
 
-// moveMenuIndex applies the shared j/k/up/down movement to a menu selection and
-// reports whether the key was consumed.
-func moveMenuIndex(key string, index *int, count int) bool {
+// moveMenuIndex applies j/k/up/down to a list selection.
+func moveMenuIndex(key string, index *int, count int) {
 	switch key {
 	case "up", "k":
 		*index = max(0, min(count-1, *index-1))
-		return true
 	case "down", "j":
 		*index = max(0, min(count-1, *index+1))
-		return true
 	}
-	return false
 }

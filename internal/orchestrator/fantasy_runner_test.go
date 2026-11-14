@@ -100,9 +100,7 @@ func TestFantasyRunnerStreamsAssistantText(t *testing.T) {
 	runner.ModelFactory = fakeFactory(model, "fake/model")
 
 	sink := &fantasyTestSink{}
-	if err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, sink); err != nil {
-		t.Fatal(err)
-	}
+	must(t, runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, sink))
 	if !strings.Contains(sink.String(), "Working on it") {
 		t.Fatalf("assistant text missing from output: %q", sink.String())
 	}
@@ -139,9 +137,7 @@ func TestFantasyRunnerLiveFollowUp(t *testing.T) {
 
 func TestFantasyRunnerRecordsToolActivity(t *testing.T) {
 	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "note.txt"), []byte("workspace contents"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(workspace, "note.txt"), []byte("workspace contents"), 0o644))
 	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{
 		{
 			{Type: fantasy.StreamPartTypeToolCall, ID: "call-1", ToolCallName: "read", ToolCallInput: `{"path":"note.txt"}`},
@@ -153,9 +149,7 @@ func TestFantasyRunnerRecordsToolActivity(t *testing.T) {
 	runner.ModelFactory = fakeFactory(model, "fake/model")
 
 	sink := &fantasyTestSink{}
-	if err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: workspace}, sink); err != nil {
-		t.Fatal(err)
-	}
+	must(t, runner.Run(context.Background(), Task{Prompt: "do work", Workspace: workspace}, sink))
 	var running, finished *ToolActivity
 	for i := range sink.activities {
 		switch sink.activities[i].Status {
@@ -186,42 +180,30 @@ func TestFantasyRunnerRecordsToolActivity(t *testing.T) {
 	}
 }
 
-func TestFantasyRunnerReportsFailureFinishReason(t *testing.T) {
-	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{{
-		{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonError},
-	}}}
-	runner := FantasyRunner{model: "fake/model"}
-	runner.ModelFactory = fakeFactory(model, "")
-
-	sink := &fantasyTestSink{}
-	err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, sink)
-	if err == nil || !strings.Contains(err.Error(), "finish reason") {
-		t.Fatalf("expected finish-reason failure, got %v", err)
+func TestFantasyRunnerFailures(t *testing.T) {
+	script := func(reason fantasy.FinishReason) ModelFactory {
+		return fakeFactory(&fakeFantasyModel{scripts: [][]fantasy.StreamPart{{{Type: fantasy.StreamPartTypeFinish, FinishReason: reason}}}}, "")
 	}
-	if len(sink.reports) == 0 || !strings.HasPrefix(sink.reports[len(sink.reports)-1], "failed: ") {
-		t.Fatalf("failed report missing: %v", sink.reports)
-	}
-}
-
-func TestFantasyRunnerFailsWithoutAssistantText(t *testing.T) {
-	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{{
-		{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonStop},
-	}}}
-	runner := FantasyRunner{model: "fake/model"}
-	runner.ModelFactory = fakeFactory(model, "")
-
-	sink := &fantasyTestSink{}
-	err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, sink)
-	if err == nil || !strings.Contains(err.Error(), "no assistant response") {
-		t.Fatalf("expected empty-response failure, got %v", err)
-	}
-}
-
-func TestFantasyRunnerRejectsEmptyModel(t *testing.T) {
-	runner := FantasyRunner{}
-	err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, &fantasyTestSink{})
-	if err == nil || !strings.Contains(err.Error(), "provider/model") {
-		t.Fatalf("expected a model-selector error, got %v", err)
+	for _, tc := range []struct {
+		name, want string
+		runner     FantasyRunner
+		reported   bool
+	}{
+		{"failure finish reason", "finish reason", FantasyRunner{model: "fake/model", ModelFactory: script(fantasy.FinishReasonError)}, true},
+		{"no assistant text", "no assistant response", FantasyRunner{model: "fake/model", ModelFactory: script(fantasy.FinishReasonStop)}, true},
+		{"empty model", "provider/model", FantasyRunner{}, false},
+		{"factory error", "no credentials", FantasyRunner{model: "fake/model", ModelFactory: func(context.Context, string) (fantasy.LanguageModel, error) {
+			return nil, errors.New("no credentials")
+		}}, false},
+	} {
+		sink := &fantasyTestSink{}
+		err := tc.runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, sink)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: got %v, want %q", tc.name, err, tc.want)
+		}
+		if tc.reported && (len(sink.reports) == 0 || !strings.HasPrefix(sink.reports[len(sink.reports)-1], "failed: ")) {
+			t.Fatalf("%s: failed report missing: %v", tc.name, sink.reports)
+		}
 	}
 }
 
@@ -269,7 +251,7 @@ func TestFantasyRunnerCapabilities(t *testing.T) {
 func TestFantasyRunnerSystemPrompt(t *testing.T) {
 	runner := FantasyRunner{instructions: "Be careful."}
 	got := runner.systemPrompt(&Profile{Name: "reviewer", Instructions: "Review only."})
-	for _, want := range []string{piToolGuidance, "Be careful.", "Orchestrator role reviewer (adds no authority beyond the mandate):\nReview only."} {
+	for _, want := range []string{toolGuidance, "Be careful.", "Orchestrator role reviewer (adds no authority beyond the mandate):\nReview only."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("system prompt missing %q: %q", want, got)
 		}
@@ -286,17 +268,6 @@ func TestFantasyRunnerToolPalette(t *testing.T) {
 	}
 	if got := runner.toolPalette(&Profile{Tools: []string{"grep"}}); len(got) != 1 || got[0] != "grep" {
 		t.Fatalf("profile palette should win: %v", got)
-	}
-}
-
-func TestFantasyRunnerFactoryErrorPropagates(t *testing.T) {
-	runner := FantasyRunner{model: "fake/model"}
-	runner.ModelFactory = func(context.Context, string) (fantasy.LanguageModel, error) {
-		return nil, errors.New("no credentials")
-	}
-	err := runner.Run(context.Background(), Task{Prompt: "do work", Workspace: t.TempDir()}, &fantasyTestSink{})
-	if err == nil || !strings.Contains(err.Error(), "no credentials") {
-		t.Fatalf("factory error not returned: %v", err)
 	}
 }
 
@@ -358,9 +329,7 @@ func TestFantasyToolsCoverThePalette(t *testing.T) {
 
 func TestFantasyToolsFileOperations(t *testing.T) {
 	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("alpha beta\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("alpha beta\n"), 0o644))
 
 	read := runFantasyTool(t, workspace, "read", `{"path":"a.txt"}`)
 	if read.IsError || !strings.Contains(read.Content, "alpha beta") {
@@ -398,9 +367,7 @@ func TestFantasyToolsFileOperations(t *testing.T) {
 
 func TestFantasyToolsCommands(t *testing.T) {
 	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("needle in a haystack\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("needle in a haystack\n"), 0o644))
 
 	if got := runFantasyTool(t, workspace, "grep", `{"pattern":"needle","path":"notes.md"}`); got.IsError || !strings.Contains(got.Content, "notes.md:1:needle") {
 		t.Fatalf("grep: %+v", got)
@@ -487,12 +454,8 @@ func TestFantasyGrepToolSearchesWorkspace(t *testing.T) {
 func writeWorkspaceFile(t *testing.T, workspace, rel, content string) {
 	t.Helper()
 	path := filepath.Join(workspace, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	must(t, os.WriteFile(path, []byte(content), 0o644))
 }
 
 func TestFantasyBashToolHonorsContext(t *testing.T) {

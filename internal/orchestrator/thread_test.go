@@ -10,32 +10,16 @@ import (
 
 func TestThreadFanoutAndIdempotency(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
 	workspace := t.TempDir()
-	first, err := s.CreateTask("one", "first mandate", workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := s.CreateRelatedTask(first.ID, "two", "second mandate", workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := createTask(t, s, "one", "first mandate", workspace)
+	second := mustGet(s.CreateRelatedTask(first.ID, "two", "second mandate", workspace))(t)
 	if first.ThreadID != second.ThreadID {
 		t.Fatal("related task has different thread")
 	}
-	if err := s.SendThreadContext(first.ID, "id-1", "shared context"); err != nil {
-		t.Fatal(err)
-	}
-	third, err := s.CreateRelatedTask(first.ID, "three", "third mandate", workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SendThreadContext(first.ID, "id-1", "shared context"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SendThreadContext(first.ID, "id-1", "shared context"))
+	third := mustGet(s.CreateRelatedTask(first.ID, "three", "third mandate", workspace))(t)
+	must(t, s.SendThreadContext(first.ID, "id-1", "shared context"))
 	if err := s.SendThreadContext(first.ID, "id-1", "conflict"); err == nil {
 		t.Fatal("accepted conflicting trigger")
 	}
@@ -51,39 +35,27 @@ func TestThreadFanoutAndIdempotency(t *testing.T) {
 	if len(a.Context) != 1 || len(b.Context) != 1 || len(c.Context) != 0 || a.Prompt != "first mandate" || b.Prompt != "second mandate" {
 		t.Fatalf("wrong recipients or mandates: %+v %+v %+v", a, b, c)
 	}
-	reloaded, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reloaded := mustGet(Open(path))(t)
 	b, _ = reloaded.GetTask(second.ID)
 	if len(b.Context) != 1 || b.Context[0].Delivery != "at_start" {
 		t.Fatalf("not persisted: %+v", b.Context)
 	}
-	if err := reloaded.AddContext(first.ID, "direct", "for first task"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, reloaded.AddContext(first.ID, "direct", "for first task"))
 	if err := reloaded.AddContext(second.ID, "direct", "for first task"); err == nil {
 		t.Fatal("accepted another task's trigger as a retry")
 	}
 }
 
 func TestThreadFanoutUnavailableRunnerAndRollback(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
 	workspace := t.TempDir()
 	first, _ := s.CreateTask("one", "first", workspace)
 	second, _ := s.CreateRelatedTask(first.ID, "two", "second", workspace)
 	started := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
-	if err := s.Start(context.Background(), first.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), first.ID))
 	<-started
-	if err := s.SendThreadContext(first.ID, "id-2", "ctx"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SendThreadContext(first.ID, "id-2", "ctx"))
 	a, _ := s.GetTask(first.ID)
 	b, _ := s.GetTask(second.ID)
 	if a.Context[0].Delivery != "rejected" || b.Context[0].Delivery != "at_start" {
@@ -105,37 +77,24 @@ func TestThreadFanoutUnavailableRunnerAndRollback(t *testing.T) {
 	if len(a.Context) != 1 || len(b.Context) != 1 {
 		t.Fatal("failed write changed context")
 	}
-	if err := s.Cancel(first.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(first.ID))
 	await(t, s, first.ID, Canceled)
-	if err := s.Cancel(second.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(second.ID))
 	if err := s.SendThreadContext(first.ID, "id-4", "no subscribers"); err == nil {
 		t.Fatal("accepted without recipients")
 	}
-	if err := s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Shutdown())
 }
 
 func TestThreadFanoutRunningDelivery(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
 	first, _ := s.CreateTask("one", "first", t.TempDir())
 	started := make(chan struct{})
 	received := make(chan Trigger, 1)
 	s.RegisterRunner("general", testThreadRunner{started: started, received: received})
-	if err := s.Start(context.Background(), first.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), first.ID))
 	<-started
-	if err := s.SendThreadContext(first.ID, "live-1", "ctx"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SendThreadContext(first.ID, "live-1", "ctx"))
 	select {
 	case got := <-received:
 		if got.ID != "live-1" {
@@ -171,45 +130,23 @@ func (r testThreadRunner) RunLive(ctx context.Context, _ Task, _ io.Writer, foll
 
 func TestExplicitContextSubscription(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := s.CreateTask("first", "first mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := s.CreateRelatedTask(first.ID, "second", "second mandate", first.Workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetContextSubscription(second.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SendThreadContext(first.ID, "while-paused", "context"); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
+	first := createTask(t, s, "first", "first mandate", t.TempDir())
+	second := mustGet(s.CreateRelatedTask(first.ID, "second", "second mandate", first.Workspace))(t)
+	must(t, s.SetContextSubscription(second.ID, false))
+	must(t, s.SendThreadContext(first.ID, "while-paused", "context"))
+	restored := mustGet(Open(path))(t)
 	second, _ = restored.GetTask(second.ID)
 	if !second.ContextPaused || len(second.Context) != 0 {
 		t.Fatalf("paused subscriber received input: %+v", second)
 	}
-	if err := restored.SetContextSubscription(second.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := restored.SendThreadContext(first.ID, "while-paused", "context"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restored.SetContextSubscription(second.ID, true))
+	must(t, restored.SendThreadContext(first.ID, "while-paused", "context"))
 	second, _ = restored.GetTask(second.ID)
 	if len(second.Context) != 0 {
 		t.Fatal("duplicate replayed to resumed subscriber")
 	}
-	if err := restored.SendThreadContext(first.ID, "after-resume", "new context"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restored.SendThreadContext(first.ID, "after-resume", "new context"))
 	second, _ = restored.GetTask(second.ID)
 	if len(second.Context) != 1 || second.Prompt != "second mandate" {
 		t.Fatalf("invalid resumed context: %+v", second)
@@ -225,21 +162,12 @@ func TestExplicitContextSubscription(t *testing.T) {
 }
 
 func TestFollowUpRunningTaskUsesLiveContext(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	task, err := s.CreateTask("work", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	task := createTask(t, s, "work", "original mandate", t.TempDir())
 	started := make(chan struct{})
 	received := make(chan Trigger, 1)
 	s.RegisterRunner("general", testThreadRunner{started: started, received: received})
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	<-started
 	requeued, err := s.FollowUp(task.ID, "adjust the implementation")
 	if err != nil || requeued {
@@ -262,19 +190,10 @@ func TestFollowUpRunningTaskUsesLiveContext(t *testing.T) {
 
 func TestFollowUpRequeuesTerminalTaskWithoutChangingMandate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-	task, err := s.CreateTask("work", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "work", "original mandate", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Completed)
 
 	requeued, err := s.FollowUp(task.ID, "please also update the documentation")
@@ -292,19 +211,14 @@ func TestFollowUpRequeuesTerminalTaskWithoutChangingMandate(t *testing.T) {
 		t.Fatalf("follow-up rewrote attempts: %+v", got.Attempts)
 	}
 
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Completed)
 	got, _ = s.GetTask(task.ID)
 	if len(got.Attempts) != 2 || got.Context[0].Text != "please also update the documentation" {
 		t.Fatalf("new attempt did not receive follow-up: %+v", got)
 	}
 
-	reloaded, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reloaded := mustGet(Open(path))(t)
 	defer func() { _ = reloaded.Shutdown() }()
 	got, _ = reloaded.GetTask(task.ID)
 	if len(got.Context) != 1 || got.Context[0].Text != "please also update the documentation" {
@@ -313,18 +227,9 @@ func TestFollowUpRequeuesTerminalTaskWithoutChangingMandate(t *testing.T) {
 }
 
 func TestAddManualThreadContextReachesSubscribers(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	task, err := s.CreateTask("thread", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.AddManualThreadContext(task.ID, "shared context"); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	task := createTask(t, s, "thread", "original mandate", t.TempDir())
+	must(t, s.AddManualThreadContext(task.ID, "shared context"))
 	updated, ok := s.GetTask(task.ID)
 	if !ok || len(updated.Context) != 1 || updated.Context[0].Text != "shared context" {
 		t.Fatalf("thread context not recorded: %+v", updated.Context)

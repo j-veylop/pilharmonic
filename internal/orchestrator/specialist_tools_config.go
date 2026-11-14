@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
+	"slices"
 )
 
 // LoadSpecialistTools replaces the specialist tool overrides with the contents
-// of a JSON object mapping bundled specialist names to Pi tool lists. It walks
+// of a JSON object mapping bundled specialist names to tool lists. It walks
 // the tokens rather than decoding into a map so a duplicated name is an error
 // instead of a silent overwrite.
 func (s *Service) LoadSpecialistTools(path string) error {
@@ -61,7 +61,7 @@ func (s *Service) LoadSpecialistTools(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
-		return errors.New("service is shutting down")
+		return errShuttingDown
 	}
 	for name := range loaded {
 		runner, ok := s.runners[name].(FantasyRunner)
@@ -73,15 +73,6 @@ func (s *Service) LoadSpecialistTools(path string) error {
 	return nil
 }
 
-func isSupportedPiTool(tool string) bool {
-	for _, supported := range strings.Split(piTools, ",") {
-		if tool == supported {
-			return true
-		}
-	}
-	return false
-}
-
 func validateSpecialistTools(name string, tools []string) error {
 	if len(tools) == 0 {
 		return fmt.Errorf("specialist %q must have a nonempty tool list", name)
@@ -90,8 +81,8 @@ func validateSpecialistTools(name string, tools []string) error {
 		return err
 	}
 	for _, tool := range tools {
-		if !isSupportedPiTool(tool) {
-			return fmt.Errorf("specialist %q uses unsupported Pi tool %q", name, tool)
+		if !slices.Contains(fantasyToolNames, tool) {
+			return fmt.Errorf("specialist %q uses unsupported tool %q", name, tool)
 		}
 	}
 	return nil

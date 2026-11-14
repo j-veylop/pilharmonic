@@ -13,35 +13,21 @@ import (
 func writeAgentConfig(t *testing.T, text string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agents.json")
-	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, []byte(text), 0600))
 	return path
 }
 func TestAgentConfigurationAndSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
 	b, _ := json.Marshal(map[string]any{"agents": []AgentConfig{{Name: "echo", Command: "cat"}}})
-	if err := s.LoadAgents(writeAgentConfig(t, string(b))); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.LoadAgents(writeAgentConfig(t, string(b))))
 	agents := s.ListAgents()
 	if len(agents) != 2 || agents[0].Name != "echo" || agents[0].Capabilities.LiveContext || !agents[1].Capabilities.LiveContext {
 		t.Fatalf("bad capabilities: %+v", agents)
 	}
-	task, err := s.CreateTask("task", "literal $(touch forbidden)", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetTaskAgent(task.ID, "echo"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "task", "literal $(touch forbidden)", t.TempDir())
+	must(t, s.SetTaskAgent(task.ID, "echo"))
+	must(t, s.Start(context.Background(), task.ID))
 	got := await(t, s, task.ID, Completed)
 	if !strings.Contains(got.Output, "literal $(touch forbidden)") || got.Attempts[0].Agent != "echo" {
 		t.Fatalf("bad run: %+v", got)
@@ -49,10 +35,7 @@ func TestAgentConfigurationAndSelection(t *testing.T) {
 	if err := s.SetTaskAgent(task.ID, "general"); err == nil {
 		t.Fatal("changed terminal task")
 	}
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustGet(Open(path))(t)
 	got, _ = restored.GetTask(task.ID)
 	if got.Agent != "echo" {
 		t.Fatal("agent not persisted")
@@ -92,10 +75,7 @@ func TestCommandRunnerPassesContextOnStdin(t *testing.T) {
 }
 
 func TestAgentCapabilityRegistry(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
 	agents := s.ListAgents()
 	if len(agents) != 1 || agents[0].Name != "general" || !agents[0].Capabilities.LiveContext || !agents[0].Capabilities.ToolActivity || !agents[0].Capabilities.StructuredReports {
 		t.Fatalf("bad general capabilities: %+v", agents)
@@ -114,10 +94,8 @@ func TestAgentCapabilityRegistry(t *testing.T) {
 }
 
 func TestBuiltinSpecialistsRespectConfiguredExecutor(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"tester","command":"cat","description":"Custom test runner"}]}`)); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"tester","command":"cat","description":"Custom test runner"}]}`)))
 	s.LoadBuiltinSpecialists()
 	reviewer, ok := s.runners["reviewer"].(FantasyRunner)
 	if !ok || reviewer.instructions == "" || !strings.Contains(reviewer.systemPrompt(nil), reviewer.instructions) {
@@ -129,7 +107,7 @@ func TestBuiltinSpecialistsRespectConfiguredExecutor(t *testing.T) {
 }
 
 func TestBuiltinSpecialistCatalog(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
 	for _, name := range []string{"debugger", "explorer", "implementer", "gitter", "reviewer", "tester"} {
 		runner, ok := s.runners[name].(FantasyRunner)
@@ -140,7 +118,7 @@ func TestBuiltinSpecialistCatalog(t *testing.T) {
 }
 
 func TestBuiltinSpecialistsUseLeastPrivilegeTools(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
 	for name, want := range map[string]string{
 		"reviewer":    "read,grep,find,ls",
@@ -162,11 +140,9 @@ func TestBuiltinSpecialistsUseLeastPrivilegeTools(t *testing.T) {
 }
 
 func TestSpecialistSelectionAndModel(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
-	if err := s.LoadProfiles(writeProfileConfig(t, `{"default_profile":"coordinator","profiles":[{"name":"coordinator","model":"provider/parent"}],"specialists":[{"name":"tester","model":"provider/example","tools":["read"]}]}`)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.LoadProfiles(writeProfileConfig(t, `{"default_profile":"coordinator","profiles":[{"name":"coordinator","model":"provider/parent"}],"specialists":[{"name":"tester","model":"provider/example","tools":["read"]}]}`)))
 	for request, want := range map[string]string{
 		"@tester Please add tests for the parser": "tester", "@general add a parser": "general",
 		"@reviewer Review the diff": "reviewer", "@explorer Trace the call": "explorer", "@debugger Diagnose the timeout": "debugger",

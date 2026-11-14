@@ -12,10 +12,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// markdownCache keeps only the most recent output so repeated layout/scroll
-// calculations do not rebuild the Markdown renderer, without retaining prior
-// task transcripts. It belongs to the model so no process-wide state is shared
-// between terminals or tests.
+// markdownCache keeps only the most recent transcript so layout and scroll
+// queries do not re-run Glamour. It belongs to the model, not the process.
 type markdownCache struct {
 	text     string
 	width    int
@@ -23,8 +21,6 @@ type markdownCache struct {
 	lines    []string
 }
 
-// toolMarkerStatuses are the activity statuses an adapter writes into the
-// inline markers the transcript parser recognises.
 var toolMarkerStatuses = []string{
 	orchestrator.ActivityRunning,
 	orchestrator.ActivityFinished,
@@ -32,10 +28,9 @@ var toolMarkerStatuses = []string{
 	orchestrator.ActivityInterrupted,
 }
 
-// toolMarkerPattern matches the inline tool markers written by the Pi adapter.
-// It is a display hint only: agent text that happens to look like a marker is
-// still untrusted data, and the structured activity retained on the task
-// remains authoritative.
+// toolMarkerPattern matches inline tool markers. Like the thinking markers,
+// they are display hints only: the transcript is untrusted and the structured
+// activity on the task stays authoritative.
 var toolMarkerPattern = regexp.MustCompile(`^\[(` + strings.Join(toolMarkerStatuses, "|") + `)\] ?(.*)$`)
 
 type transcriptToolCall struct {
@@ -51,9 +46,7 @@ func parseToolMarker(line string) (transcriptToolCall, bool) {
 	return transcriptToolCall{status: match[1], summary: strings.TrimSpace(terminalText(match[2]))}, true
 }
 
-// parseThinkingMarker recognizes the display-only boundaries written by the Pi
-// adapter. Like tool markers, these are hints: agent text that happens to look
-// like a marker is still untrusted data.
+// parseThinkingMarker recognizes the block thinking boundaries.
 func parseThinkingMarker(line string) (open, closing bool) {
 	switch strings.TrimSpace(strings.TrimRight(line, "\r")) {
 	case "[thinking]", "[thinking start]", "[thinking_start]":
@@ -64,9 +57,7 @@ func parseThinkingMarker(line string) (open, closing bool) {
 	return false, false
 }
 
-// parseInlineThinking accepts the compact "[thinking] text" form as well as the
-// line-delimited block form. It is a convenience for adapters that annotate each
-// delta instead of writing explicit start and end boundaries.
+// parseInlineThinking accepts the per-line "[thinking] text" form.
 func parseInlineThinking(line string) (string, bool) {
 	trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
 	if !strings.HasPrefix(trimmed, "[thinking]") {
@@ -93,8 +84,7 @@ func appendThinking(out []string, block string, width int, showThinking bool) []
 	return append(out, "")
 }
 
-// renderedOutputFor renders through the model's cache so a view pass reuses the
-// last transcript instead of re-running Glamour for every geometry query.
+// renderedOutputFor renders through the model's cache.
 func (m model) renderedOutputFor(text string, width int, glyph string, showThinking bool) []string {
 	cache := m.markdown
 	if cache == nil {
@@ -126,88 +116,43 @@ func (c *markdownCache) render(text string, width int, glyph string, showThinkin
 // become compact status rows, and thinking is either collapsed or shown.
 func renderTranscriptWithThinking(text string, width int, showThinking bool) []string {
 	raw := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	isClosing := func(line string) bool { _, closing := parseThinkingMarker(line); return closing }
+	isInline := func(line string) bool { _, ok := parseInlineThinking(line); return ok }
+	isTool := func(line string) bool { _, ok := parseToolMarker(line); return ok }
+	startsBlock := func(line string) bool {
+		open, closing := parseThinkingMarker(line)
+		return open || closing || isInline(line) || isTool(line)
+	}
+	safe := func(lines []string) string { return strings.Trim(terminalText(strings.Join(lines, "\n")), "\n") }
 	var out []string
 	for i := 0; i < len(raw); {
-		if open, closing := parseThinkingMarker(raw[i]); open || closing {
-			if closing {
-				// A retained tail can start after the opening marker was trimmed.
-				i++
-				continue
-			}
+		open, closing := parseThinkingMarker(raw[i])
+		switch {
+		case closing:
+			// A retained tail can start after the opening marker was trimmed.
 			i++
-			start := i
-			for i < len(raw) {
-				if _, closing := parseThinkingMarker(raw[i]); closing {
-					break
-				}
-				i++
-			}
-			block := strings.Trim(terminalText(strings.Join(raw[start:i], "\n")), "\n")
-			if i < len(raw) {
-				i++
-			}
-			out = appendThinking(out, block, width, showThinking)
-			continue
-		}
-		if _, ok := parseInlineThinking(raw[i]); ok {
+		case open:
+			end := indexFrom(raw, i+1, isClosing)
+			out = appendThinking(out, safe(raw[i+1:end]), width, showThinking)
+			i = min(end+1, len(raw))
+		case isInline(raw[i]):
 			var parts []string
-			for i < len(raw) {
-				part, ok := parseInlineThinking(raw[i])
-				if !ok {
-					break
-				}
+			for ; i < len(raw) && isInline(raw[i]); i++ {
+				part, _ := parseInlineThinking(raw[i])
 				parts = append(parts, part)
-				i++
 			}
 			out = appendThinking(out, terminalText(strings.Join(parts, "\n")), width, showThinking)
-			continue
-		}
-		if _, ok := parseToolMarker(raw[i]); !ok {
-			start := i
-			for i < len(raw) {
-				if _, ok := parseToolMarker(raw[i]); ok {
-					break
-				}
-				if open, closing := parseThinkingMarker(raw[i]); open || closing {
-					break
-				}
-				if _, ok := parseInlineThinking(raw[i]); ok {
-					break
-				}
-				i++
-			}
-			chunk := strings.Trim(terminalText(strings.Join(raw[start:i], "\n")), "\n")
-			if strings.TrimSpace(chunk) != "" {
+		case isTool(raw[i]):
+			var calls []transcriptToolCall
+			calls, i = toolBlock(raw, i)
+			out = appendToolCalls(out, collapseToolCalls(calls), width)
+		default:
+			end := indexFrom(raw, i, startsBlock)
+			if chunk := safe(raw[i:end]); strings.TrimSpace(chunk) != "" {
 				out = append(out, renderMarkdown(chunk, width)...)
 			}
-			continue
+			i = end
 		}
-		var calls []transcriptToolCall
-		for i < len(raw) {
-			call, ok := parseToolMarker(raw[i])
-			if ok {
-				calls = append(calls, call)
-				i++
-				continue
-			}
-			// The Pi adapter writes a newline before each marker, which can
-			// leave an empty line between a start and its completion. Keep the
-			// markers in one block so the completion updates the running row.
-			if strings.TrimSpace(raw[i]) == "" {
-				j := i
-				for j < len(raw) && strings.TrimSpace(raw[j]) == "" {
-					j++
-				}
-				if j < len(raw) {
-					if _, next := parseToolMarker(raw[j]); next {
-						i = j
-						continue
-					}
-				}
-			}
-			break
-		}
-		out = appendToolCalls(out, collapseToolCalls(calls), width)
 	}
 	for len(out) > 0 && strings.TrimSpace(out[0]) == "" {
 		out = out[1:]
@@ -218,9 +163,39 @@ func renderTranscriptWithThinking(text string, width int, showThinking bool) []s
 	return out
 }
 
-// transcriptStyle keeps assistant Markdown in the same palette as the task
-// board. Headings use a slim coloured rail; text stays on the terminal's own
-// background instead of the brighter default Glamour theme.
+// indexFrom is the first index at or after from whose line matches, or len(lines).
+func indexFrom(lines []string, from int, match func(string) bool) int {
+	for i := from; i < len(lines); i++ {
+		if match(lines[i]) {
+			return i
+		}
+	}
+	return len(lines)
+}
+
+// toolBlock collects consecutive tool markers from i. Blank lines between
+// markers stay in the block so a completion still updates its running row.
+func toolBlock(raw []string, i int) ([]transcriptToolCall, int) {
+	var calls []transcriptToolCall
+	for i < len(raw) {
+		if call, ok := parseToolMarker(raw[i]); ok {
+			calls = append(calls, call)
+			i++
+			continue
+		}
+		next := indexFrom(raw, i, func(line string) bool { return strings.TrimSpace(line) != "" })
+		if next == i || next == len(raw) {
+			break
+		}
+		if _, ok := parseToolMarker(raw[next]); !ok {
+			break
+		}
+		i = next
+	}
+	return calls, i
+}
+
+// transcriptStyle keeps assistant Markdown in the board's palette.
 func transcriptStyle() glamouransi.StyleConfig {
 	stringPtr := func(value string) *string { return &value }
 	boolPtr := func(value bool) *bool { return &value }
@@ -282,17 +257,12 @@ func renderMarkdown(safe string, width int) []string {
 	return strings.Split(ansi.Hardwrap(rendered, width, true), "\n")
 }
 
-// collapseToolCalls folds each completion into the matching running row, even
-// when another tool started in between. A call is rendered once, with its
-// glyph changing from the running spinner to the final status icon. Successful
-// completions carry only the tool name, so they are paired with the earliest
-// unfinished call of the same tool; the running summary is kept rather than
-// dropping the arguments the start marker already displayed. A completion that
-// carries no tool name of its own, such as a bare failure message, is paired
-// with the only unfinished call, so its row keeps the tool and the message
-// instead of showing the message alone. A completion that does name a tool the
-// block has no call for keeps its own row: it already shows that tool, and
-// folding it into another call would mislabel the failure.
+// collapseToolCalls folds each completion into its running row, so a call
+// renders once with its glyph changing to the result. A completion pairs with
+// the running call repeating its summary, else the earliest running call of
+// the same tool; an unnamed or empty completion pairs only when exactly one
+// call is running. A completion naming a tool the block has not shown keeps
+// its own row rather than mislabel another call.
 func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 	result := make([]transcriptToolCall, 0, len(calls))
 	for _, call := range calls {
@@ -327,8 +297,7 @@ func collapseToolCalls(calls []transcriptToolCall) []transcriptToolCall {
 	return result
 }
 
-// lastRunningWithSummary finds the most recent unfinished call with exactly this
-// summary, which is the usual repeat of a start marker's arguments.
+// lastRunningWithSummary finds the latest running call with this summary.
 func lastRunningWithSummary(calls []transcriptToolCall, summary string) int {
 	for i := len(calls) - 1; i >= 0; i-- {
 		if calls[i].status == orchestrator.ActivityRunning && calls[i].summary == summary {
@@ -351,9 +320,7 @@ func firstRunningNamed(calls []transcriptToolCall, name string) int {
 	return -1
 }
 
-// namesTool reports whether the block already shows a call of the named tool, so
-// a completion that repeats a tool name the block recorded keeps that meaning
-// instead of being read as a message about another call.
+// namesTool reports whether the block already shows a call of the named tool.
 func namesTool(calls []transcriptToolCall, name string) bool {
 	if name == "" {
 		return false
@@ -366,10 +333,7 @@ func namesTool(calls []transcriptToolCall, name string) bool {
 	return false
 }
 
-// onlyUnfinishedCall returns the index of the single running call, or -1 when
-// none or several are running. The adapter runs tools one at a time, so an
-// unnamed failure belongs to that call; with several candidates the pairing
-// would be a guess and is left to the named matches above.
+// onlyUnfinishedCall is the single running call, or -1 for none or several.
 func onlyUnfinishedCall(calls []transcriptToolCall) int {
 	index := -1
 	for i := range calls {
@@ -384,11 +348,8 @@ func onlyUnfinishedCall(calls []transcriptToolCall) int {
 	return index
 }
 
-// mergeToolSummary keeps the arguments established by a running marker when a
-// completion only repeats the tool name. A completion that carries its own
-// detail, such as a failure explanation, replaces the arguments but never
-// hides the tool: a completion that names no tool keeps the started name in
-// front of its message.
+// mergeToolSummary keeps the start's arguments when a completion only repeats
+// the tool name, and keeps the tool name in front of a completion's message.
 func mergeToolSummary(started, completed string) string {
 	startedName, _ := splitToolSummary(started)
 	name, detail := splitToolSummary(completed)
@@ -420,11 +381,8 @@ func appendToolCalls(out []string, calls []transcriptToolCall, width int) []stri
 	return append(out, "")
 }
 
-// toolCallLines renders one tool call as a status-coloured rail and glyph,
-// followed by the tool name and a muted summary. The glyph alone carries the
-// status, so the row stays compact; the rail and indentation keep tool activity
-// distinct from assistant prose at a glance. A failure keeps the tool name in
-// front of its message, so the row never shows the explanation alone.
+// toolCallLines renders one call as a status-coloured rail and glyph, the tool
+// name and a muted summary, indented apart from assistant prose.
 func toolCallLines(call transcriptToolCall, width int) []string {
 	style, glyph := toolStatusStyle(call.status)
 	body := style.Bold(true).Render(glyph)

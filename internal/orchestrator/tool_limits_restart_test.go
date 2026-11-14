@@ -12,13 +12,8 @@ func TestAcceptedSpecialistCeilingSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, path)
 	s.LoadBuiltinSpecialists()
-	if err := s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read"]}`)); err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.CreateTask("review", "@reviewer review the parser", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read"]}`)))
+	task := createTask(t, s, "review", "@reviewer review the parser", t.TempDir())
 	if task.Agent != "reviewer" || !slices.Equal(task.SpecialistTools, []string{"read"}) {
 		t.Fatalf("unexpected accepted limits: %+v", task)
 	}
@@ -31,9 +26,7 @@ func TestAcceptedSpecialistCeilingSurvivesRestart(t *testing.T) {
 		started <- task
 		return nil
 	})})
-	if err := restarted.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restarted.Start(context.Background(), task.ID))
 	run := <-started
 	if !slices.Equal(run.ProfileSpec.Tools, []string{"read"}) {
 		t.Fatalf("restarted worker received %v", run.ProfileSpec.Tools)

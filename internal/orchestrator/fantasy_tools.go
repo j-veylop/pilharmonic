@@ -29,8 +29,8 @@ const (
 var fantasyToolNames = []string{"read", "bash", "write", "edit", "grep", "find", "ls"}
 
 // fantasyTools builds the agent-side tool set for one attempt. The palette
-// selects a subset of fantasyToolNames; unknown names are ignored so a Pi
-// profile that mentions a tool this adapter lacks still runs with the rest.
+// selects a subset of fantasyToolNames; unknown names are ignored so a profile
+// that mentions a tool this adapter lacks still runs with the rest.
 // Every tool is confined to workspace: file paths are resolved inside it and
 // commands run with it as their working directory.
 func fantasyTools(workspace string, palette []string, env []string) []fantasy.AgentTool {
@@ -95,7 +95,7 @@ func runWorkspaceCommand(ctx context.Context, workspace string, env []string, na
 	if len(env) > 0 {
 		cmd.Env = env
 	}
-	output := newCappedBuffer(maxToolOutputBytes / 2)
+	output := &cappedBuffer{max: maxToolOutputBytes / 2}
 	cmd.Stdout = output
 	cmd.Stderr = output
 	err := cmd.Run()
@@ -187,7 +187,7 @@ func fantasyReadTool(workspace string) fantasy.AgentTool {
 func fantasyBashTool(workspace string, env []string) fantasy.AgentTool {
 	return fantasy.NewAgentTool("bash", "Run a shell command with the workspace as its working directory and return its combined output.",
 		func(ctx context.Context, in bashToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			// This is the adapter's only shell path, mirroring Pi's bash tool:
+			// This is the adapter's only shell path:
 			// the command is the model's own, and it runs in the workspace the
 			// orchestrator prepared. It is never composed from task or trigger
 			// text by the orchestrator itself.

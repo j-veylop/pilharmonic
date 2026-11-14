@@ -11,19 +11,12 @@ import (
 func TestSubmitRequestAcceptsAssignsAndStarts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		_, err := io.WriteString(out, "done")
 		return err
 	}))
-	task, err := s.SubmitRequest("Fix the login bug\nPlease add coverage.", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := mustGet(s.SubmitRequest("Fix the login bug\nPlease add coverage.", dir))(t)
 	done := await(t, s, task.ID, Completed)
 	if done.Title != "Fix the login bug" || done.Prompt != "Fix the login bug\nPlease add coverage." {
 		t.Fatalf("unexpected mandate: %+v", done)
@@ -43,10 +36,7 @@ func TestSubmitRequestAcceptsAssignsAndStarts(t *testing.T) {
 	if !routed {
 		t.Fatalf("routed event missing: %+v", done.Events)
 	}
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustGet(Open(path))(t)
 	defer func() { _ = restored.Shutdown() }()
 	reloaded, _ := restored.GetTask(task.ID)
 	if reloaded.Decision.PolicyVersion != LocalPolicyVersion || reloaded.Status != Completed {
@@ -56,7 +46,7 @@ func TestSubmitRequestAcceptsAssignsAndStarts(t *testing.T) {
 
 func TestTopLevelRoutingDefaultsToGeneral(t *testing.T) {
 	dir := t.TempDir()
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	runs := make(chan Task, 4)
 	fake := runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		runs <- task
@@ -66,10 +56,7 @@ func TestTopLevelRoutingDefaultsToGeneral(t *testing.T) {
 		s.RegisterRunner(agent, fake)
 	}
 
-	task, err := s.SubmitRequest("add a parser", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := mustGet(s.SubmitRequest("add a parser", dir))(t)
 	if task.Agent != DefaultRouteAgent {
 		t.Fatalf("top-level request without a mention selected %q, want %q", task.Agent, DefaultRouteAgent)
 	}
@@ -78,27 +65,17 @@ func TestTopLevelRoutingDefaultsToGeneral(t *testing.T) {
 		t.Fatalf("top-level executor %q for task %q, want %q", run.Agent, run.ID, DefaultRouteAgent)
 	}
 
-	related, err := s.CreateRelatedTask(task.ID, "change", "fix the parser", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	related := mustGet(s.CreateRelatedTask(task.ID, "change", "fix the parser", dir))(t)
 	if related.Agent != DefaultRouteAgent {
 		t.Fatalf("related request without a mention selected %q, want %q", related.Agent, DefaultRouteAgent)
 	}
 
-	explicit, err := s.CreateTask("explicit", "add a parser", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	explicit := createTask(t, s, "explicit", "add a parser", dir)
 	if explicit.Agent != DefaultRouteAgent {
 		t.Fatalf("draft without a mention selected %q, want %q", explicit.Agent, DefaultRouteAgent)
 	}
-	if err = s.SetTaskAgent(explicit.ID, "implementer"); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), explicit.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskAgent(explicit.ID, "implementer"))
+	must(t, s.Start(context.Background(), explicit.ID))
 	await(t, s, explicit.ID, Completed)
 	if run := <-runs; run.ID != explicit.ID || run.Agent != "implementer" {
 		t.Fatalf("explicit executor %q for task %q, want implementer", run.Agent, run.ID)
@@ -107,14 +84,8 @@ func TestTopLevelRoutingDefaultsToGeneral(t *testing.T) {
 
 func TestSubmitRequestSchedulesAtCapacity(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	if err = s.SetConcurrencyLimit(1); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetConcurrencyLimit(1))
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
@@ -126,15 +97,9 @@ func TestSubmitRequestSchedulesAtCapacity(t *testing.T) {
 			return ctx.Err()
 		}
 	}))
-	first, err := s.SubmitRequest("first request", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := mustGet(s.SubmitRequest("first request", dir))(t)
 	<-started
-	second, err := s.SubmitRequest("second request", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	second := mustGet(s.SubmitRequest("second request", dir))(t)
 	if second.Status != Queued || !second.ScheduleRequested || second.Decision.PolicyVersion != LocalPolicyVersion {
 		t.Fatalf("second request was not routed into the waiting queue: %+v", second)
 	}
@@ -144,11 +109,7 @@ func TestSubmitRequestSchedulesAtCapacity(t *testing.T) {
 }
 
 func TestSubmitRequestRejectsEmptyOrInvalid(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	dir := t.TempDir()
 	if _, err := s.SubmitRequest("  \n ", dir); err == nil {
 		t.Fatal("empty request accepted")
@@ -178,77 +139,9 @@ func TestRequestTitle(t *testing.T) {
 	}
 }
 
-func TestSubmitRequestDefaultsToSharedWorkspace(t *testing.T) {
-	repo := committedRepo(t)
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	seen := make(chan Task, 1)
-	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
-		seen <- task
-		return nil
-	}))
-	task, err := s.SubmitRequest("do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := await(t, s, task.ID, Completed)
-	if task.Isolated || done.Isolated || !task.IsolationAuto {
-		t.Fatalf("ambiguous routed request selected isolation: task=%+v done=%+v", task, done)
-	}
-	routed := false
-	for _, event := range done.Events {
-		if event.Kind == "routed" && strings.Contains(event.Message, "shared workspace") {
-			routed = true
-		}
-	}
-	if !routed {
-		t.Fatalf("routed assignment did not record the shared workspace: %+v", done.Events)
-	}
-	if run := <-seen; run.Workspace != repo {
-		t.Fatalf("routed request ran in %q instead of the source workspace", run.Workspace)
-	}
-}
-
-func TestSubmitRequestIsolatesChangeRequest(t *testing.T) {
-	repo := committedRepo(t)
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	seen := make(chan Task, 1)
-	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
-		seen <- task
-		return nil
-	}))
-	task, err := s.SubmitRequest("fix the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := await(t, s, task.ID, Completed)
-	if !task.Isolated || !done.Isolated {
-		t.Fatalf("routed change request did not select isolation: task=%+v done=%+v", task, done)
-	}
-	routed := false
-	for _, event := range done.Events {
-		if event.Kind == "routed" && strings.Contains(event.Message, "isolated committed-HEAD worktree") {
-			routed = true
-		}
-	}
-	if !routed {
-		t.Fatalf("routed assignment did not record isolation: %+v", done.Events)
-	}
-	if run := <-seen; run.Workspace == repo || !strings.Contains(run.Workspace, filepath.Join("workspaces", task.ID, "tree")) {
-		t.Fatalf("routed change request ran in %q instead of a worktree", run.Workspace)
-	}
-}
-
 func TestSubmitRequestUsesExplicitAgentMention(t *testing.T) {
 	dir := t.TempDir()
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	runs := make(chan Task, 4)
 	for _, name := range []string{DefaultRouteAgent, "reviewer"} {
 		s.RegisterRunner(name, runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
@@ -256,10 +149,7 @@ func TestSubmitRequestUsesExplicitAgentMention(t *testing.T) {
 			return nil
 		}))
 	}
-	task, err := s.SubmitRequest("@reviewer review the parser", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := mustGet(s.SubmitRequest("@reviewer review the parser", dir))(t)
 	if task.Agent != "reviewer" || task.Prompt != "review the parser" || task.Title != "review the parser" {
 		t.Fatalf("explicit mention was not selected and removed from the mandate: %+v", task)
 	}
@@ -268,10 +158,7 @@ func TestSubmitRequestUsesExplicitAgentMention(t *testing.T) {
 		t.Fatalf("mentioned executor did not receive the request: %+v", run)
 	}
 
-	fallback, err := s.SubmitRequest("review the parser", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fallback := mustGet(s.SubmitRequest("review the parser", dir))(t)
 	if fallback.Agent != DefaultRouteAgent || fallback.Prompt != "review the parser" {
 		t.Fatalf("request without a mention did not use general: %+v", fallback)
 	}
@@ -282,7 +169,7 @@ func TestSubmitRequestUsesExplicitAgentMention(t *testing.T) {
 }
 
 func TestSubmitRequestRejectsInvalidAgentMention(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	dir := t.TempDir()
 	for _, text := range []string{"@missing do work", "@reviewer", "@"} {
 		if _, err := s.SubmitRequest(text, dir); err == nil {
@@ -295,27 +182,18 @@ func TestSubmitRequestRejectsInvalidAgentMention(t *testing.T) {
 }
 
 func TestDraftAndRelatedRequestsUseAgentMention(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
 	dir := t.TempDir()
-	parent, err := s.CreateTask("parent", "write a parser", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "write a parser", dir)
 	if parent.Agent != DefaultRouteAgent {
 		t.Fatalf("unmentioned draft selected %q, want %q", parent.Agent, DefaultRouteAgent)
 	}
-	draft, err := s.CreateTask("draft", "@tester add regression tests", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	draft := createTask(t, s, "draft", "@tester add regression tests", dir)
 	if draft.Agent != "tester" || draft.Prompt != "add regression tests" {
 		t.Fatalf("draft mention was not applied: %+v", draft)
 	}
-	related, err := s.CreateRelatedTask(parent.ID, "related", "@explorer trace the parser", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	related := mustGet(s.CreateRelatedTask(parent.ID, "related", "@explorer trace the parser", dir))(t)
 	if related.Agent != "explorer" || related.Prompt != "trace the parser" {
 		t.Fatalf("related mention was not applied: %+v", related)
 	}

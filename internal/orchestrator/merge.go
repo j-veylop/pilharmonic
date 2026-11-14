@@ -7,90 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
-
-// Merge outcomes are recorded separately from the execution attempt. A merge
-// failure does not rewrite a successful process exit into a failed attempt.
-const (
-	MergeMerged   = "merged"
-	MergeUpToDate = "up_to_date"
-	MergeFailed   = "failed"
-	MergeWaiting  = "waiting_for_subagents"
-)
-
-const mergeTimeout = 30 * time.Second
-
-// blockerMergeError prefixes a merge failure caused by an unsuccessful
-// descendant subagent rather than by Git. It marks a failure an operator can
-// clear by resolving the child task instead of re-running the agent.
-const blockerMergeError = "Inspect inherited worktree and resolve unsuccessful subagent "
-
-type mergeOutcome struct {
-	Status         string
-	WorktreeCommit string
-	MergeCommit    string
-	Error          string
-	// Warning records a successful merge that still left the source checkout
-	// needing attention, such as uncommitted source edits Git stashed but could
-	// not reapply. It never turns a merge into a failure.
-	Warning string
-}
-
-// preparationOutcome records the commit prepared for review. UpToDate means the
-// worktree has nothing the source does not already contain.
-type preparationOutcome struct {
-	WorktreeCommit string
-	SourceCommit   string
-	UpToDate       bool
-}
-
-// integrationBlockerLocked reports worktree state that prevents preparing or
-// merging an isolated task. Caller holds mu. An active descendant still uses the
-// inherited worktree, so integration waits; an unsuccessful descendant may have
-// left partial edits that need inspection first.
-func (s *Service) integrationBlockerLocked(owner Task) (mergeOutcome, bool) {
-	if s.hasInheritedWorkspaceLocked(owner, true) {
-		return mergeOutcome{Status: MergeWaiting}, true
-	}
-	for _, child := range s.data.Tasks {
-		if child.ParentID == "" || child.Workspace != owner.ExecutionWorkspace {
-			continue
-		}
-		if child.Status == Failed || child.Status == Interrupted || child.Status == Canceled || child.MergeStatus == MergeFailed {
-			return mergeOutcome{Status: MergeFailed, Error: blockerMergeError + child.ID + " before retrying integration"}, true
-		}
-	}
-	return mergeOutcome{}, false
-}
-
-// prepareIsolatedCommit commits worktree changes and records the resulting
-// commit as reviewable work. It never changes the source checkout. Git
-// operations never run while holding the service mutex.
-func (s *Service) prepareIsolatedCommit(t Task) (preparationOutcome, error) {
-	s.mergeMu.Lock()
-	defer s.mergeMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
-	defer cancel()
-	return prepareWorkspaceCommit(ctx, s.path, t)
-}
-
-// mergeApprovedCommit integrates exactly the reviewed commit. It deliberately
-// does not commit or stage worktree changes, so content that appeared after
-// review cannot ride along with the operator's approval. Merges are serialized
-// because several worktrees may point at the same source checkout.
-func (s *Service) mergeApprovedCommit(t Task) mergeOutcome {
-	s.mergeMu.Lock()
-	defer s.mergeMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
-	defer cancel()
-	outcome, err := mergeReviewedWorkspace(ctx, s.path, t, t.ReviewCommit)
-	if err != nil {
-		outcome.Status = MergeFailed
-		outcome.Error = err.Error()
-	}
-	return outcome
-}
 
 // prepareWorkspaceCommit commits all worktree changes and reports whether the
 // resulting commit already exists in the source checkout. It validates that the
@@ -287,81 +204,55 @@ func describeMergeFailure(err error) error {
 // the worktree was prepared. Merging is destructive to the source checkout, so
 // it must not trust the persisted execution path alone.
 func validateMergeWorkspace(ctx context.Context, statePath string, t Task) (workspaceOwner, string, error) {
-	var owner workspaceOwner
-	if statePath == "" || !validTaskID(t.ID) {
-		return owner, "", errors.New("invalid task identity for merge")
-	}
-	base, err := filepath.Abs(filepath.Join(filepath.Dir(statePath), "workspaces"))
+	fail := func(err error) (workspaceOwner, string, error) { return workspaceOwner{}, "", err }
+	reservation, err := reservationPath(statePath, t.ID)
 	if err != nil {
-		return owner, "", err
+		return fail(err)
 	}
-	reservation := filepath.Join(base, t.ID)
-	info, err := os.Lstat(reservation)
+	if err = realDir(reservation, "merge workspace reservation"); err != nil {
+		return fail(err)
+	}
+	owner, err := readWorkspaceOwner(reservation, t.ID)
 	if err != nil {
-		return owner, "", fmt.Errorf("merge workspace reservation: %w", err)
+		return fail(err)
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return owner, "", errors.New("merge workspace reservation is not a regular directory")
-	}
-	owner, err = readWorkspaceOwner(reservation, t.ID)
-	if err != nil {
-		return owner, "", err
-	}
-
 	tree := filepath.Join(reservation, "tree")
-	treeInfo, err := os.Lstat(tree)
-	if err != nil {
-		return owner, "", fmt.Errorf("merge worktree: %w", err)
+	if err = realDir(tree, "merge worktree"); err != nil {
+		return fail(err)
 	}
-	if !treeInfo.IsDir() || treeInfo.Mode()&os.ModeSymlink != 0 {
-		return owner, "", errors.New("merge worktree is not a regular directory")
+	if t.ExecutionWorkspace == "" {
+		return fail(errors.New("task has no prepared execution workspace"))
 	}
 	treeAbs, err := filepath.EvalSymlinks(tree)
 	if err != nil {
-		return owner, "", err
+		return fail(err)
 	}
-	execution := t.ExecutionWorkspace
-	if execution == "" {
-		return owner, "", errors.New("task has no prepared execution workspace")
-	}
-	executionAbs, err := filepath.EvalSymlinks(execution)
+	executionAbs, err := filepath.EvalSymlinks(t.ExecutionWorkspace)
 	if err != nil {
-		return owner, "", err
+		return fail(err)
 	}
 	if executionAbs != treeAbs && !strings.HasPrefix(executionAbs, treeAbs+string(os.PathSeparator)) {
-		return owner, "", errors.New("execution workspace is not inside the reserved worktree")
+		return fail(errors.New("execution workspace is not inside the reserved worktree"))
 	}
-
-	common, err := gitPath(ctx, tree, "--git-common-dir")
-	if err != nil {
-		return owner, "", err
-	}
-	if common != owner.CommonDir {
-		return owner, "", errors.New("worktree belongs to a different repository")
+	if err = checkReservedWorktree(ctx, tree, owner.CommonDir); err != nil {
+		return fail(err)
 	}
 	sourceRoot, err := gitPath(ctx, owner.Source, "--show-toplevel")
-	if err != nil {
-		return owner, "", err
+	if err == nil && sourceRoot != owner.Source {
+		err = errors.New("source repository no longer matches the workspace reservation")
 	}
-	if sourceRoot != owner.Source {
-		return owner, "", errors.New("source repository no longer matches the workspace reservation")
+	if err != nil {
+		return fail(err)
 	}
 	sourceCommon, err := gitPath(ctx, owner.Source, "--git-common-dir")
+	if err == nil && sourceCommon != owner.CommonDir {
+		err = errors.New("source repository no longer matches the worktree")
+	}
 	if err != nil {
-		return owner, "", err
-	}
-	if sourceCommon != owner.CommonDir {
-		return owner, "", errors.New("source repository no longer matches the worktree")
-	}
-	root, err := gitPath(ctx, tree, "--show-toplevel")
-	if err != nil {
-		return owner, "", err
-	}
-	if root != treeAbs {
-		return owner, "", errors.New("merge path is not the reserved worktree")
+		return fail(err)
 	}
 	if _, err = gitOutput(ctx, tree, "merge-base", "--is-ancestor", owner.Commit, "HEAD"); err != nil {
-		return owner, "", errors.New("worktree history no longer descends from the isolation commit")
+		return fail(errors.New("worktree history no longer descends from the isolation commit"))
 	}
 	return owner, tree, nil
 }
@@ -399,206 +290,4 @@ func gitIdentityArgs(ctx context.Context, dir string) []string {
 		args = append(args, "-c", "user.email=orchestrator@localhost")
 	}
 	return args
-}
-
-// A subagent inherits an exact execution directory. Descendants which continue
-// to share that directory also retain it after restart, including between
-// attempts. An isolated child integrates back into its inherited directory.
-func (s *Service) hasInheritedWorkspaceLocked(owner Task, activeOnly bool) bool {
-	if owner.ExecutionWorkspace == "" {
-		return false
-	}
-	for _, t := range s.data.Tasks {
-		if t.ParentID == "" || t.Workspace != owner.ExecutionWorkspace {
-			continue
-		}
-		if !activeOnly || t.Status == Queued || t.Status == Running || t.MergeStatus == MergeWaiting {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Service) checkRequeueIntegrationLocked(t Task) error {
-	if t.integrating || t.MergeStatus == MergeWaiting {
-		return errors.New("wait for worktree integration before requeueing this task")
-	}
-	if t.ParentID != "" {
-		for _, owner := range s.data.Tasks {
-			if owner.integrating && owner.ExecutionWorkspace == t.Workspace {
-				return errors.New("inherited worktree is being integrated")
-			}
-		}
-	}
-	return nil
-}
-
-// The owner's successful attempt releases its execution slot even when a
-// queued subagent needs that slot. Its durable integration intent is reconciled
-// after configuration at startup and after tracked workers become idle. A
-// waiting task prepares a reviewable commit; an approved task merges exactly the
-// commit the operator reviewed.
-func (s *Service) resumeMergesLocked() {
-	if s.closing {
-		return
-	}
-	for i := range s.data.Tasks {
-		owner := &s.data.Tasks[i]
-		if owner.integrating || s.hasInheritedWorkspaceLocked(*owner, true) {
-			continue
-		}
-		if owner.ReviewStatus == ReviewApproved && owner.ReviewCommit != "" &&
-			owner.MergeStatus != MergeFailed && owner.MergeStatus != MergeMerged && owner.MergeStatus != MergeUpToDate {
-			owner.integrating = true
-			s.wg.Add(1)
-			go s.finishReviewedMerge(clone(*owner))
-			continue
-		}
-		if owner.MergeStatus == MergeWaiting && owner.ReviewStatus == "" {
-			owner.integrating = true
-			s.wg.Add(1)
-			go s.finishDeferredPreparation(clone(*owner))
-			continue
-		}
-		// A deferred preparation that stopped for an unsuccessful descendant is
-		// re-entered once that descendant is gone, so deleting the child lets the
-		// operator prepare the retained worktree without re-running the agent. A
-		// Git failure keeps MergeFailed and is deliberately left for the operator.
-		if mergeBlockedByDescendant(*owner) {
-			if _, blocked := s.integrationBlockerLocked(*owner); blocked {
-				continue
-			}
-			owner.integrating = true
-			s.wg.Add(1)
-			go s.finishDeferredPreparation(clone(*owner))
-		}
-	}
-}
-
-// mergeBlockedByDescendant reports a deferred preparation that failed only
-// because an unsuccessful descendant still held the inherited worktree.
-func mergeBlockedByDescendant(t Task) bool {
-	return t.MergeStatus == MergeFailed && t.ReviewStatus == "" && strings.HasPrefix(t.MergeError, blockerMergeError)
-}
-
-func (s *Service) finishDeferredPreparation(owner Task) {
-	defer s.wg.Done()
-	s.mu.Lock()
-	blocker, blocked := s.integrationBlockerLocked(owner)
-	s.mu.Unlock()
-	if blocked {
-		s.finalizeIntegration(owner.ID, &blocker, nil)
-		return
-	}
-	preparation, err := s.prepareIsolatedCommit(owner)
-	if err != nil {
-		outcome := mergeOutcome{Status: MergeFailed, Error: err.Error(), WorktreeCommit: preparation.WorktreeCommit}
-		s.finalizeIntegration(owner.ID, &outcome, nil)
-		return
-	}
-	s.finalizeIntegration(owner.ID, nil, &preparation)
-}
-
-func (s *Service) finishReviewedMerge(owner Task) {
-	defer s.wg.Done()
-	s.mu.Lock()
-	blocker, blocked := s.integrationBlockerLocked(owner)
-	s.mu.Unlock()
-	if blocked {
-		s.finalizeIntegration(owner.ID, &blocker, nil)
-		return
-	}
-	outcome := s.mergeApprovedCommit(owner)
-	s.finalizeIntegration(owner.ID, &outcome, nil)
-}
-
-// finalizeIntegration records one asynchronous integration result and resumes
-// any other integration intent that became eligible.
-func (s *Service) finalizeIntegration(id string, merge *mergeOutcome, preparation *preparationOutcome) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != id {
-			continue
-		}
-		t.integrating = false
-		t.UpdatedAt = time.Now().UTC()
-		if merge != nil {
-			t.recordMerge(*merge)
-		}
-		if preparation != nil {
-			t.recordPreparation(*preparation)
-		}
-		if err := s.save(); err != nil {
-			s.persistErr = err
-		}
-		// The in-memory task is already advanced, so resuming is safe even when
-		// the write failed: it only schedules work for other tasks and never
-		// re-enters this one while integrating is cleared above.
-		s.resumeMergesLocked()
-		return
-	}
-}
-
-func (task *Task) recordMerge(merge mergeOutcome) {
-	task.MergeStatus = merge.Status
-	task.MergeError = merge.Error
-	task.MergeWarning = merge.Warning
-	task.MergeCommit = merge.MergeCommit
-	if merge.WorktreeCommit != "" {
-		task.WorktreeCommit = merge.WorktreeCommit
-	}
-	task.MergedAt = time.Time{}
-	eventKind, message := "merge_"+merge.Status, ""
-	switch merge.Status {
-	case MergeMerged:
-		eventKind = "merged"
-		task.MergedAt = task.UpdatedAt
-		message = "Merged worktree commit " + task.WorktreeCommit + " into source (merge commit " + merge.MergeCommit + ")"
-	case MergeUpToDate:
-		eventKind = "merge_up_to_date"
-		task.MergedAt = task.UpdatedAt
-		message = "No unmerged isolated worktree changes"
-	case MergeWaiting:
-		message = "Integration waits for subagents using this worktree"
-	case MergeFailed:
-		eventKind = "merge_failed"
-		message = "Isolated workspace merge failed: " + merge.Error
-	}
-	task.Events = append(task.Events, Event{task.UpdatedAt, eventKind, message})
-	if merge.Status == MergeMerged && merge.Warning != "" {
-		task.Events = append(task.Events, Event{task.UpdatedAt, "merge_warning", "Merge succeeded with a warning: " + merge.Warning})
-	}
-}
-
-// recordPreparation records a commit prepared by an isolated attempt. A new
-// commit opens review instead of merging; an up-to-date completion has nothing
-// to review.
-func (task *Task) recordPreparation(preparation preparationOutcome) {
-	task.WorktreeCommit = preparation.WorktreeCommit
-	task.MergeError = ""
-	task.MergeWarning = ""
-	task.MergeCommit = ""
-	task.MergedAt = time.Time{}
-	if preparation.UpToDate {
-		task.MergeStatus = MergeUpToDate
-		task.MergeCommit = preparation.SourceCommit
-		task.MergedAt = task.UpdatedAt
-		task.Events = append(task.Events, Event{task.UpdatedAt, "merge_up_to_date", "No unmerged isolated worktree changes"})
-		return
-	}
-	task.MergeStatus = ""
-	if !task.Isolated || preparation.WorktreeCommit == "" {
-		return
-	}
-	if err := task.beginReview(preparation.WorktreeCommit); err != nil {
-		// Leaving MergeStatus empty would hide a completed task that never
-		// reached review, so surface it as a merge failure for the operator.
-		task.MergeStatus = MergeFailed
-		task.MergeError = "could not open review: " + err.Error()
-		task.Events = append(task.Events, Event{task.UpdatedAt, "review_error", "Could not open review: " + err.Error()})
-		return
-	}
-	task.Events = append(task.Events, Event{task.UpdatedAt, "review_pending", "Prepared worktree commit " + preparation.WorktreeCommit + " awaits review"})
 }

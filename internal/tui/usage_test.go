@@ -121,197 +121,6 @@ func TestHeaderOmitsUsageWithoutTokens(t *testing.T) {
 	}
 }
 
-// A session that counted an unpriced model reports tokens without a dollar
-// figure: the terminal never prints a cost it cannot support.
-func TestHeaderShowsTokensWithoutCostWhenUnpriced(t *testing.T) {
-	m, _ := usedBoard(t, orchestrator.SessionUsage{
-		InputTokens: 12_300, OutputTokens: 4_500, TotalTokens: 16_800,
-		CostUSD: 0.9, Priced: false, Tasks: 1, Unpriced: []string{"openrouter/mystery"},
-	})
-	top := ansi.Strip(strings.Split(m.View(), "\n")[0])
-	if !strings.Contains(top, "Σ 12.3k in · 4.5k out") {
-		t.Fatalf("header missing the unpriced usage segment: %q", top)
-	}
-	if strings.Contains(top, "$") {
-		t.Fatalf("header printed a cost for an unpriced session: %q", top)
-	}
-}
-
-// The usage segment gives way as the terminal narrows, and adding it never
-// changes the frame's shape or pushes the wordmark and badge out.
-func TestHeaderUsageFitsNarrowTerminals(t *testing.T) {
-	total := orchestrator.SessionUsage{
-		InputTokens: 1_234_567, OutputTokens: 987_654, TotalTokens: 2_222_221,
-		CostUSD: 4.21, Priced: true, Tasks: 3,
-	}
-	for _, width := range []int{40, 60, 76, 80, 120} {
-		idle, _ := usedBoard(t, orchestrator.SessionUsage{})
-		idle.width, idle.height = width, 24
-		used, _ := usedBoard(t, total)
-		used.width, used.height = width, 24
-		view := used.View()
-		assertFits(t, view, width, 24)
-		if got, want := lipgloss.Height(view), lipgloss.Height(idle.View()); got != want {
-			t.Fatalf("width %d: usage changed the frame height from %d to %d rows", width, want, got)
-		}
-		top := ansi.Strip(strings.Split(view, "\n")[0])
-		for _, want := range []string{"PILHARMONIC", "TASKS"} {
-			if !strings.Contains(top, want) {
-				t.Fatalf("width %d: header lost %q: %q", width, want, top)
-			}
-		}
-		if strings.Contains(top, "…") {
-			t.Fatalf("width %d: header truncated instead of dropping the segment: %q", width, top)
-		}
-	}
-}
-
-// The usage segment shortens, and then leaves, before the counters lose their
-// wording: naming what needs action matters more than the session total.
-func TestHeaderUsageShortensBeforeTheCounters(t *testing.T) {
-	total := orchestrator.SessionUsage{
-		InputTokens: 1_234_567, OutputTokens: 987_654, TotalTokens: 2_222_221,
-		CostUSD: 4.21, Priced: true, Tasks: 1,
-	}
-	cases := []struct {
-		width      int
-		wantUsage  string
-		wantAction string
-	}{
-		// The whole segment fits, tokens and estimate.
-		{120, "Σ 1.2M in · 987.7k out · $4.21", "◆ 0 need action"},
-		// Only the compact form fits beside the full counters.
-		{100, "Σ 1.2M/987.7k · $4.21", "◆ 0 need action"},
-		// Nothing but the estimate fits, and the counters have already
-		// shortened, so the segment still gets a chance.
-		{60, "Σ $4.21", "◆0"},
-		// The wording of the counters is worth more than the total here.
-		{80, "", "◆ 0 need action"},
-		{76, "", "◆ 0 need action"},
-		{40, "", "◆0"},
-	}
-	for _, tc := range cases {
-		m, _ := usedBoard(t, total)
-		m.width, m.height = tc.width, 24
-		top := ansi.Strip(strings.Split(m.View(), "\n")[0])
-		if got := strings.Contains(top, "Σ"); got != (tc.wantUsage != "") {
-			t.Fatalf("width %d: usage present = %v, want %v: %q", tc.width, got, tc.wantUsage != "", top)
-		}
-		if tc.wantUsage != "" && !strings.Contains(top, tc.wantUsage) {
-			t.Fatalf("width %d: header missing %q: %q", tc.width, tc.wantUsage, top)
-		}
-		if !strings.Contains(top, tc.wantAction) {
-			t.Fatalf("width %d: header lost %q: %q", tc.width, tc.wantAction, top)
-		}
-	}
-}
-
-// The detail panel prices the model a task last used at the rate in force now,
-// and labels a time-of-day model with the provider and the current window.
-func TestDetailShowsUsageAndPrice(t *testing.T) {
-	const selector = "deepseek/deepseek-chat"
-	task := orchestrator.Task{
-		ID: "task", Title: "work", Prompt: "do the work", Agent: "general",
-		Attempts: []orchestrator.Attempt{{
-			ID: "attempt", RequestedModel: selector,
-			Usage: &orchestrator.AttemptUsage{Model: selector, InputTokens: 12_300, OutputTokens: 4_500, CostUSD: 0.0043, Priced: true},
-		}},
-	}
-	m := model{width: 120, height: 40, tasks: []orchestrator.Task{task}}
-	detail := ansi.Strip(strings.Join(m.detailContent(100), "\n"))
-	if want := "Usage: 12.3k in · 4.5k out · $0.0043"; !strings.Contains(detail, want) {
-		t.Fatalf("detail missing %q: %s", want, detail)
-	}
-	if strings.Index(detail, "Usage:") < strings.Index(detail, "Last attempt model:") {
-		t.Fatalf("usage line moved above the model line: %s", detail)
-	}
-
-	// PriceFor reads the clock, so the expected label is derived rather than
-	// hardcoded: DeepSeek charges list price at peak and the discount off-peak.
-	now := time.Now()
-	price, known := orchestrator.PriceFor(selector, now)
-	if !known {
-		t.Fatalf("%s has no curated price", selector)
-	}
-	when := price.Rate(now)
-	if after := price.Rate(time.Now()); after != when {
-		t.Skipf("pricing window closed while rendering: %s then %s", when, after)
-	}
-	want := "Price: $0.28/M in · $0.42/M out · deepseek peak"
-	if when == orchestrator.RateOffPeak {
-		want = "Price: $0.14/M in · $0.21/M out · deepseek off-peak"
-	}
-	if !strings.Contains(detail, want) {
-		t.Fatalf("detail missing %q (rate %q): %s", want, when, detail)
-	}
-}
-
-// An attempt that straddled the discount window is labelled with both rates
-// instead of the one in force now.
-func TestDetailLabelsMixedRateAsBothWindows(t *testing.T) {
-	const selector = "deepseek/deepseek-chat"
-	task := orchestrator.Task{
-		ID: "task", Title: "work", Prompt: "do the work", Agent: "general",
-		Attempts: []orchestrator.Attempt{{
-			ID: "attempt", RequestedModel: selector,
-			Usage: &orchestrator.AttemptUsage{Model: selector, InputTokens: 12_300, OutputTokens: 4_500, CostUSD: 0.0043, Priced: true, Rate: orchestrator.RateMixed},
-		}},
-	}
-	m := model{width: 120, height: 40, tasks: []orchestrator.Task{task}}
-	detail := ansi.Strip(strings.Join(m.detailContent(100), "\n"))
-	if !strings.Contains(detail, "· deepseek peak/off-peak") {
-		t.Fatalf("mixed rate is not labelled with both windows: %s", detail)
-	}
-}
-
-// An all-day model carries no window suffix, and an unpriced one prints no
-// price and no cost.
-func TestDetailPriceSuffixDependsOnTheModel(t *testing.T) {
-	allDay := orchestrator.Task{
-		ID: "all-day", Title: "work", Prompt: "do the work", Agent: "general",
-		Attempts: []orchestrator.Attempt{{
-			ID: "attempt", RequestedModel: "openai/gpt-4.1",
-			Usage: &orchestrator.AttemptUsage{Model: "openai/gpt-4.1", InputTokens: 2_000, OutputTokens: 1_000, CostUSD: 0.012, Priced: true},
-		}},
-	}
-	m := model{width: 120, height: 40, tasks: []orchestrator.Task{allDay}}
-	detail := ansi.Strip(strings.Join(m.detailContent(100), "\n"))
-	if want := "Price: $2/M in · $8/M out"; !strings.Contains(detail, want) {
-		t.Fatalf("detail missing %q: %s", want, detail)
-	}
-	if strings.Contains(detail, "peak") || strings.Contains(detail, "openai ") {
-		t.Fatalf("all-day model carries a window suffix: %s", detail)
-	}
-
-	unpriced := allDay
-	unpriced.ID, unpriced.Title = "unpriced", "reseller"
-	unpriced.Attempts = []orchestrator.Attempt{{
-		ID: "attempt", RequestedModel: "openrouter/mystery",
-		Usage: &orchestrator.AttemptUsage{Model: "openrouter/mystery", InputTokens: 2_000, OutputTokens: 1_000},
-	}}
-	m = model{width: 120, height: 40, tasks: []orchestrator.Task{unpriced}}
-	detail = ansi.Strip(strings.Join(m.detailContent(100), "\n"))
-	if want := "Usage: 2k in · 1k out · cost unknown"; !strings.Contains(detail, want) {
-		t.Fatalf("detail missing %q: %s", want, detail)
-	}
-	if strings.Contains(detail, "Price:") || strings.Contains(detail, "$") {
-		t.Fatalf("unpriced task printed a price: %s", detail)
-	}
-}
-
-// A task that recorded nothing shows no usage line at all.
-func TestDetailOmitsUsageWhenNothingWasRecorded(t *testing.T) {
-	task := orchestrator.Task{
-		ID: "task", Title: "work", Prompt: "do the work", Agent: "general",
-		Attempts: []orchestrator.Attempt{{ID: "attempt", RequestedModel: "openai/gpt-4.1"}},
-	}
-	m := model{width: 120, height: 40, tasks: []orchestrator.Task{task}}
-	detail := ansi.Strip(strings.Join(m.detailContent(100), "\n"))
-	if strings.Contains(detail, "Usage:") || strings.Contains(detail, "Price:") {
-		t.Fatalf("detail invented usage for an attempt without it: %s", detail)
-	}
-}
-
 // The history tab appends each attempt's own usage, dropping detail rather than
 // wrapping the row.
 func TestHistoryAttemptsShowRecordedUsage(t *testing.T) {
@@ -362,5 +171,80 @@ func TestHistoryAttemptsShowRecordedUsage(t *testing.T) {
 	// row keeps.
 	if !strings.HasSuffix(row, " · $0.0043") {
 		t.Fatalf("narrow attempt row did not shorten to the cost: %q", row)
+	}
+}
+
+// The session total shortens, then leaves, before the counters lose their
+// wording, and never truncates the header or changes the frame's height.
+func TestHeaderUsageGivesWayAsTheTerminalNarrows(t *testing.T) {
+	big := orchestrator.SessionUsage{InputTokens: 1_234_567, OutputTokens: 987_654, TotalTokens: 2_222_221, CostUSD: 4.21, Priced: true, Tasks: 1}
+	unpriced := orchestrator.SessionUsage{InputTokens: 12_300, OutputTokens: 4_500, TotalTokens: 16_800, CostUSD: 0.9, Tasks: 1}
+	cases := []struct {
+		total        orchestrator.SessionUsage
+		width        int
+		usage, count string
+	}{
+		{big, 120, "Σ 1.2M in · 987.7k out · $4.21", "◆ 0 need action"},
+		{big, 100, "Σ 1.2M/987.7k · $4.21", "◆ 0 need action"},
+		{big, 80, "", "◆ 0 need action"},
+		{big, 76, "", "◆ 0 need action"},
+		{big, 60, "Σ $4.21", "◆0"},
+		{big, 40, "", "◆0"},
+		{unpriced, 120, "Σ 12.3k in · 4.5k out", "◆ 0 need action"},
+	}
+	for _, tc := range cases {
+		m, _ := usedBoard(t, tc.total)
+		m.width, m.height = tc.width, 24
+		idle, _ := usedBoard(t, orchestrator.SessionUsage{})
+		idle.width, idle.height = tc.width, 24
+		view := m.View()
+		assertFits(t, view, tc.width, 24)
+		top := ansi.Strip(strings.Split(view, "\n")[0])
+		if strings.Contains(top, "Σ") != (tc.usage != "") || !strings.Contains(top, tc.usage) || !strings.Contains(top, tc.count) ||
+			!strings.Contains(top, "PILHARMONIC") || !strings.Contains(top, "TASKS") || strings.Contains(top, "…") || !tc.total.Priced && strings.Contains(top, "$") {
+			t.Fatalf("width %d: header %q, want %q and %q", tc.width, top, tc.usage, tc.count)
+		}
+		if lipgloss.Height(view) != lipgloss.Height(idle.View()) {
+			t.Fatalf("width %d: usage changed the frame height", tc.width)
+		}
+	}
+}
+
+// The detail panel shows a task's recorded usage and the price in force now
+// for the model it last used.
+func TestDetailShowsUsageAndCurrentPrice(t *testing.T) {
+	usage := func(selector string, priced bool, rate string) []orchestrator.Attempt {
+		return []orchestrator.Attempt{{ID: "attempt", RequestedModel: selector,
+			Usage: &orchestrator.AttemptUsage{Model: selector, InputTokens: 12_300, OutputTokens: 4_500, CostUSD: 0.0043, Priced: priced, Rate: rate}}}
+	}
+	peak := "Price: $0.28/M in · $0.42/M out · deepseek peak"
+	if price, _ := orchestrator.PriceFor("deepseek/deepseek-chat", time.Now()); price.Rate(time.Now()) == orchestrator.RateOffPeak {
+		peak = "Price: $0.14/M in · $0.21/M out · deepseek off-peak"
+	}
+	cases := []struct {
+		name     string
+		attempts []orchestrator.Attempt
+		want     []string
+		unwanted []string
+	}{
+		{"time of day", usage("deepseek/deepseek-chat", true, ""), []string{"Last attempt model:", "Usage: 12.3k in · 4.5k out · $0.0043", peak}, nil},
+		{"mixed rate", usage("deepseek/deepseek-chat", true, orchestrator.RateMixed), []string{"· deepseek peak/off-peak"}, nil},
+		{"all day", usage("openai/gpt-4.1", true, ""), []string{"Price: $2/M in · $8/M out"}, []string{"peak", "openai "}},
+		{"unpriced", usage("openrouter/mystery", false, ""), []string{"Usage: 12.3k in · 4.5k out · cost unknown"}, []string{"Price:", "$"}},
+		{"nothing recorded", []orchestrator.Attempt{{ID: "attempt", RequestedModel: "openai/gpt-4.1"}}, nil, []string{"Usage:", "Price:"}},
+	}
+	for _, tc := range cases {
+		m := model{width: 120, height: 40, tasks: []orchestrator.Task{{ID: "task", Title: "work", Prompt: "do the work", Agent: "general", Attempts: tc.attempts}}}
+		detail := ansi.Strip(strings.Join(m.detailContent(100), "\n"))
+		for _, want := range tc.want {
+			if !strings.Contains(detail, want) {
+				t.Fatalf("%s: detail missing %q: %s", tc.name, want, detail)
+			}
+		}
+		for _, unwanted := range tc.unwanted {
+			if strings.Contains(detail, unwanted) {
+				t.Fatalf("%s: detail shows %q: %s", tc.name, unwanted, detail)
+			}
+		}
 	}
 }

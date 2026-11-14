@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"pilharmonic/internal/orchestrator"
 )
 
@@ -35,13 +34,6 @@ func windowRows(selected, n, slots int) (start, end int) {
 		start = min(selected-slots+1, max(0, n-slots))
 	}
 	return start, min(n, start+slots)
-}
-
-func modeBadge(label string, color lipgloss.Color) string {
-	return lipgloss.NewStyle().
-		Foreground(color).
-		Bold(true).
-		Render(label)
 }
 
 func selectionRow(text string, width int) string {
@@ -87,12 +79,6 @@ func (m model) taskPanel(width, height int) string {
 	return focusedPanel(strings.Join(lines, "\n"), width, height, !m.detailFocus && !m.fullscreen)
 }
 
-// sidebarVisible reports whether View renders the task sidebar. The selected
-// task position is only needed when the sidebar is hidden.
-func (m model) sidebarVisible() bool {
-	return m.layout().sidebar
-}
-
 // selectedPosition returns the selected task's one-based position in grouped
 // display order, which is the order the sidebar and navigation use.
 func (m model) selectedPosition() (position, total int, ok bool) {
@@ -123,64 +109,59 @@ func profileLabel(p orchestrator.Profile) string {
 	return p.Name
 }
 
-func (m model) profilePanel(width, height int) string {
-	lines := []string{titleStyle.Render("SELECT PROFILE"), mutedStyle.Render("Queued task only"), ""}
-	start, end := windowRows(m.profilePicker.index, len(m.profilePicker.choices), (height-7)/2)
+// pickerPanel lists a picker's choices, each as a label row and a muted detail
+// row, in place of the task details.
+func pickerPanel[T any](p pickerState[T], title, empty string, describe func(T) (label, detail string), width, height int) string {
+	lines := []string{titleStyle.Render(title), mutedStyle.Render("Queued task only"), ""}
+	start, end := windowRows(p.index, len(p.choices), (height-7)/2)
 	for i := start; i < end; i++ {
-		profile := m.profilePicker.choices[i]
-		label := terminalText(profileLabel(profile))
+		label, detail := describe(p.choices[i])
 		row := titleStyle.Render("  " + label)
-		if i == m.profilePicker.index {
+		if i == p.index {
 			row = selectionRow(label, width-4)
 		}
-		details := profile.Description
-		if profile.Model != "" {
-			details += " · model " + profile.Model
-		}
-		if profile.NoIntegrate {
-			details += " · no auto-integration"
-		}
-		if profile.NoSubagents {
-			details += " · no delegation"
-		}
-		if len(profile.Tools) > 0 {
-			details += " · tools " + strings.Join(profile.Tools, ",")
-		}
-		lines = append(lines, row, mutedStyle.Render("  "+terminalText(strings.TrimPrefix(details, " · "))))
+		lines = append(lines, row, mutedStyle.Render("  "+detail))
 	}
-	if len(m.profilePicker.choices) == 0 {
-		lines = append(lines, mutedStyle.Render("No registered profiles."))
+	if len(p.choices) == 0 {
+		lines = append(lines, mutedStyle.Render(empty))
 	}
 	return panel(strings.Join(lines, "\n"), width, height)
 }
 
-func (m model) agentPanel(width, height int) string {
-	lines := []string{titleStyle.Render("SELECT AGENT"), mutedStyle.Render("Queued task only"), ""}
-	start, end := windowRows(m.agentPicker.index, len(m.agentPicker.choices), (height-7)/2)
-	for i := start; i < end; i++ {
-		agent := m.agentPicker.choices[i]
-		capability := "One-shot · no live context"
-		if agent.Capabilities.LiveContext {
-			capability = "Live follow-up context"
-		}
-		if agent.Capabilities.ToolActivity {
-			capability += " · tool activity"
-		}
-		if agent.Capabilities.StructuredReports {
-			capability += " · structured reports"
-		}
-		label := terminalText(agent.Name)
-		if agent.Description != "" {
-			label += " · " + terminalText(agent.Description)
-		}
-		row := titleStyle.Render("  " + label)
-		if i == m.agentPicker.index {
-			row = selectionRow(label, width-4)
-		}
-		lines = append(lines, row, mutedStyle.Render("  "+capability))
+func describeProfile(profile orchestrator.Profile) (label, detail string) {
+	details := []string{profile.Description}
+	if profile.Model != "" {
+		details = append(details, "model "+profile.Model)
 	}
-	if len(m.agentPicker.choices) == 0 {
-		lines = append(lines, mutedStyle.Render("No registered agents."))
+	if profile.NoIntegrate {
+		details = append(details, "no auto-integration")
 	}
-	return panel(strings.Join(lines, "\n"), width, height)
+	if profile.NoSubagents {
+		details = append(details, "no delegation")
+	}
+	if len(profile.Tools) > 0 {
+		details = append(details, "tools "+strings.Join(profile.Tools, ","))
+	}
+	if details[0] == "" {
+		details = details[1:]
+	}
+	return terminalText(profileLabel(profile)), terminalText(strings.Join(details, " · "))
+}
+
+func describeAgent(agent orchestrator.AgentInfo) (label, detail string) {
+	detail = "One-shot · no live context"
+	if agent.Capabilities.LiveContext {
+		detail = "Live follow-up context"
+	}
+	if agent.Capabilities.ToolActivity {
+		detail += " · tool activity"
+	}
+	if agent.Capabilities.StructuredReports {
+		detail += " · structured reports"
+	}
+	label = terminalText(agent.Name)
+	if agent.Description != "" {
+		label += " · " + terminalText(agent.Description)
+	}
+	return label, detail
 }

@@ -3,24 +3,17 @@ package orchestrator
 import (
 	"context"
 	"io"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
-	if err := s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read","grep","ls"]}`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetConcurrencyLimit(3); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read","grep","ls"]}`)))
+	must(t, s.SetConcurrencyLimit(3))
+	must(t, s.EnableSubagentControl(testSocketPath(t)))
 	const lead = "Delegate repository inspection to explorer."
 	registerProfileForTest(t, s, Profile{Name: "project", CoordinatorInstructions: lead, Tools: []string{"read", "bash", "grep"}})
 	started := make(chan Task, 3)
@@ -52,44 +45,27 @@ func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
 			t.Fatal("worker did not start")
 		}
 	}
-	parent, err := s.CreateTaskWithProfile("parent", "implement a parser", t.TempDir(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	parent := mustGet(s.CreateTaskWithProfile("parent", "implement a parser", t.TempDir(), "project"))(t)
 	if parent.Agent != DefaultRouteAgent {
 		t.Fatalf("top-level request without a mention selected %q, want %q", parent.Agent, DefaultRouteAgent)
 	}
 	// This test exercises implementer limits, so select it explicitly.
-	if err := s.SetTaskAgent(parent.ID, "implementer"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetTaskAgent(parent.ID, "implementer"))
+	must(t, s.Start(context.Background(), parent.ID))
 	check(parent.ID, "implementer", "read,bash,grep")
-	child, err := s.SpawnSubagent(parent.ID, "", "review the parser", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	child := mustGet(s.SpawnSubagent(parent.ID, "", "review the parser", ""))(t)
 	check(child.ID, "reviewer", "read,grep")
-	grandchild, err := s.SpawnSubagent(child.ID, "", "trace the parser", "implementer")
-	if err != nil {
-		t.Fatal(err)
-	}
+	grandchild := mustGet(s.SpawnSubagent(child.ID, "", "trace the parser", "implementer"))(t)
 	check(grandchild.ID, "implementer", "read,grep")
 }
 
 func TestDisjointSpecialistToolsPreventLaunch(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	var err error
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
-	if err := s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read"]}`)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read"]}`)))
 	registerProfileForTest(t, s, Profile{Name: "shell", Tools: []string{"bash"}})
-	task, err := s.CreateTaskWithProfile("review", "@reviewer review the changes", t.TempDir(), "shell")
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := mustGet(s.CreateTaskWithProfile("review", "@reviewer review the changes", t.TempDir(), "shell"))(t)
 	s.RegisterRunner("reviewer", supportingRunner{runnerFunc(func(context.Context, Task, io.Writer) error {
 		t.Error("runner launched with disjoint limits")
 		return nil

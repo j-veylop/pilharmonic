@@ -75,25 +75,19 @@ func (s *Service) SetProviderCredential(provider, key string) error {
 		}
 		return errors.New("API key is required")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	s.creds[provider] = key
-	return saveCredentials(s.credentialsPath, s.creds)
+	return s.whileOpen(func() error {
+		s.creds[provider] = key
+		return saveCredentials(s.credentialsPath, s.creds)
+	})
 }
 
 // RemoveProviderCredential forgets a provider's stored API key.
 func (s *Service) RemoveProviderCredential(provider string) error {
 	provider = strings.TrimSpace(provider)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	delete(s.creds, provider)
-	return saveCredentials(s.credentialsPath, s.creds)
+	return s.whileOpen(func() error {
+		delete(s.creds, provider)
+		return saveCredentials(s.credentialsPath, s.creds)
+	})
 }
 
 // ProviderCredentials lists every known provider in a stable order, marking
@@ -131,12 +125,9 @@ func (s *Service) AnyProviderConfigured() bool {
 	return false
 }
 
-// providerConfiguredLocked applies the one definition of "configured" used by
-// both listing and the forced-login check: a stored key, or a non-empty
-// environment variable for that provider. Bedrock also counts the AWS
-// credential chain, because it needs no stored key on a machine that is already
-// authenticated to AWS; bedrockConfigured carries that result so this function
-// does no I/O. The caller holds s.mu.
+// providerConfiguredLocked is the one definition of "configured": a stored key
+// or the provider's environment variable, and for Bedrock the AWS credential
+// chain, probed by the caller so this does no I/O. Caller holds mu.
 func (s *Service) providerConfiguredLocked(name string, bedrockConfigured bool) bool {
 	if s.creds[name] != "" {
 		return true

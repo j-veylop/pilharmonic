@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"pilharmonic/internal/orchestrator"
 	"pilharmonic/internal/tui"
@@ -44,114 +45,127 @@ func versionString() string {
 	return version + " (" + commit + ")"
 }
 
-func run() (err error) {
-	state := flag.String("state", "", "path to the state file (default: user config directory)")
-	workspace := flag.String("workspace", "", "working directory for new tasks (default: current directory)")
-	specialistTools := flag.String("specialist-tools", "", "path to bundled specialist tool limits (JSON)")
-	model := flag.String("model", "", "model for agents without a specialist model (provider/model); it takes precedence over a profile model")
-	agents := flag.String("agents", "", "path to optional agent command configuration JSON")
-	profiles := flag.String("profiles", "", "profile and specialist settings (default: profiles.json beside the state file)")
-	profile := flag.String("profile", "", "default profile for routed and unchosen tasks (built-in profile uses executor defaults)")
-	maxConcurrent := flag.Int("max-concurrent", orchestrator.DefaultConcurrency, "maximum simultaneous agent processes")
-	idleTimeout := flag.Duration("idle-timeout", 0, "cancel an agent that produces no output for this long (0 disables)")
-	isolation := flag.Bool("isolation", true, "allow automatic Git worktrees for mandates that request changes")
-	subagents := flag.Bool("subagents", true, "allow running agents to spawn child tasks")
-	subagentSocket := flag.String("subagent-socket", "", "path to the local subagent control socket (default: beside the state file)")
-	maxSubagentDepth := flag.Int("max-subagent-depth", orchestrator.DefaultMaxSubagentDepth, "maximum subagent delegation depth")
-	maxSubagents := flag.Int("max-subagents", orchestrator.DefaultMaxSubagents, "maximum child tasks one task may spawn")
-	attemptRetention := flag.Int("attempt-retention", orchestrator.DefaultAttemptRetention, "attempt outputs kept in full per task (0 keeps every attempt)")
-	showVersion := flag.Bool("version", false, "print the build version and exit")
+type options struct {
+	state, workspace, specialistTools, model, agents, profiles, profile, subagentSocket string
+	maxConcurrent, maxSubagentDepth, maxSubagents, attemptRetention                     int
+	idleTimeout                                                                         time.Duration
+	isolation, subagents, showVersion                                                   bool
+}
+
+func parseFlags() options {
+	var o options
+	flag.StringVar(&o.state, "state", "", "path to the state file (default: user config directory)")
+	flag.StringVar(&o.workspace, "workspace", "", "working directory for new tasks (default: current directory)")
+	flag.StringVar(&o.specialistTools, "specialist-tools", "", "path to bundled specialist tool limits (JSON)")
+	flag.StringVar(&o.model, "model", "", "model for agents without a specialist model (provider/model); it takes precedence over a profile model")
+	flag.StringVar(&o.agents, "agents", "", "path to optional agent command configuration JSON")
+	flag.StringVar(&o.profiles, "profiles", "", "profile and specialist settings (default: profiles.json beside the state file)")
+	flag.StringVar(&o.profile, "profile", "", "default profile for routed and unchosen tasks (built-in profile uses executor defaults)")
+	flag.IntVar(&o.maxConcurrent, "max-concurrent", orchestrator.DefaultConcurrency, "maximum simultaneous agent processes")
+	flag.DurationVar(&o.idleTimeout, "idle-timeout", 0, "cancel an agent that produces no output for this long (0 disables)")
+	flag.BoolVar(&o.isolation, "isolation", true, "allow automatic Git worktrees for mandates that request changes")
+	flag.BoolVar(&o.subagents, "subagents", true, "allow running agents to spawn child tasks")
+	flag.StringVar(&o.subagentSocket, "subagent-socket", "", "path to the local subagent control socket (default: beside the state file)")
+	flag.IntVar(&o.maxSubagentDepth, "max-subagent-depth", orchestrator.DefaultMaxSubagentDepth, "maximum subagent delegation depth")
+	flag.IntVar(&o.maxSubagents, "max-subagents", orchestrator.DefaultMaxSubagents, "maximum child tasks one task may spawn")
+	flag.IntVar(&o.attemptRetention, "attempt-retention", orchestrator.DefaultAttemptRetention, "attempt outputs kept in full per task (0 keeps every attempt)")
+	flag.BoolVar(&o.showVersion, "version", false, "print the build version and exit")
 	flag.Usage = usage
 	flag.Parse()
+	return o
+}
+
+func run() (err error) {
+	o := parseFlags()
 	if flag.NArg() != 0 {
 		return fmt.Errorf("%w: unexpected arguments: %s", errUsage, strings.Join(flag.Args(), " "))
 	}
-	if *showVersion {
+	if o.showVersion {
 		fmt.Println("pilharmonic " + versionString())
 		return nil
 	}
-	if *workspace == "" {
-		*workspace, err = os.Getwd()
-		if err != nil {
+	if o.workspace == "" {
+		if o.workspace, err = os.Getwd(); err != nil {
 			return err
 		}
 	}
-	if *state == "" {
+	if o.state == "" {
 		dir, err := os.UserConfigDir()
 		if err != nil {
 			return err
 		}
-		*state = filepath.Join(dir, "orchestrator", "state.json")
+		o.state = filepath.Join(dir, "orchestrator", "state.json")
 	}
-	release, err := orchestrator.AcquireInstanceLock(*state)
+	release, err := orchestrator.AcquireInstanceLock(o.state)
 	if err != nil {
 		return err
 	}
 	defer release()
-	service, err := orchestrator.Open(*state)
+	service, err := orchestrator.Open(o.state)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, service.Shutdown()) }()
-
-	if err := service.SetDefaultIsolation(*isolation); err != nil {
+	if err = configure(service, o); err != nil {
 		return err
 	}
-	if *agents != "" {
-		if err := service.LoadAgents(*agents); err != nil {
+	return tui.Run(service, o.workspace)
+}
+
+// configure applies the command-line settings to an opened service.
+func configure(service *orchestrator.Service, o options) error {
+	if err := service.SetDefaultIsolation(o.isolation); err != nil {
+		return err
+	}
+	if o.agents != "" {
+		if err := service.LoadAgents(o.agents); err != nil {
 			return err
 		}
 	}
 	service.LoadBuiltinSpecialists()
-	if *specialistTools != "" {
-		if err := service.LoadSpecialistTools(*specialistTools); err != nil {
+	if o.specialistTools != "" {
+		if err := service.LoadSpecialistTools(o.specialistTools); err != nil {
 			return err
 		}
 	}
-	profilesPath := *profiles
-	profilesRequired := *profiles != ""
+	profilesPath := o.profiles
 	if profilesPath == "" {
-		profilesPath = filepath.Join(filepath.Dir(*state), "profiles.json")
+		profilesPath = filepath.Join(filepath.Dir(o.state), "profiles.json")
 	}
-	if err := loadStartupProfiles(service, profilesPath, profilesRequired); err != nil {
+	if err := loadStartupProfiles(service, profilesPath, o.profiles != ""); err != nil {
 		return err
 	}
 	if _, err := os.Stat(profilesPath); err == nil {
 		fmt.Fprintf(os.Stderr, "pilharmonic: loaded profiles from %s\n", profilesPath)
 	}
-	if *model != "" {
-		service.SetDefaultModel(*model)
+	if o.model != "" {
+		service.SetDefaultModel(o.model)
 	}
-	if *profile != "" {
-		if err := service.SetRoutingProfile(*profile); err != nil {
+	if o.profile != "" {
+		if err := service.SetRoutingProfile(o.profile); err != nil {
 			return err
 		}
 	}
-	if !*subagents {
-		*maxSubagentDepth, *maxSubagents = 0, 0
+	return configureExecution(service, o)
+}
+
+func configureExecution(service *orchestrator.Service, o options) error {
+	if !o.subagents {
+		o.maxSubagentDepth, o.maxSubagents = 0, 0
 	}
-	if err := service.SetSubagentLimits(*maxSubagentDepth, *maxSubagents); err != nil {
+	if err := service.SetSubagentLimits(o.maxSubagentDepth, o.maxSubagents); err != nil {
 		return err
 	}
-	if *maxSubagentDepth > 0 && *maxSubagents > 0 {
-		path := *subagentSocket
+	if o.maxSubagentDepth > 0 && o.maxSubagents > 0 {
+		path := o.subagentSocket
 		if path == "" {
-			path = filepath.Join(filepath.Dir(*state), "subagent.sock")
+			path = filepath.Join(filepath.Dir(o.state), "subagent.sock")
 		}
 		if err := service.EnableSubagentControl(path); err != nil {
 			return err
 		}
 	}
-	if err := service.SetConcurrencyLimit(*maxConcurrent); err != nil {
-		return err
-	}
-	if err := service.SetIdleTimeout(*idleTimeout); err != nil {
-		return err
-	}
-	if err := service.SetAttemptRetention(*attemptRetention); err != nil {
-		return err
-	}
-	return tui.Run(service, *workspace)
+	return errors.Join(service.SetConcurrencyLimit(o.maxConcurrent), service.SetIdleTimeout(o.idleTimeout), service.SetAttemptRetention(o.attemptRetention))
 }
 
 // loadStartupProfiles loads an optional profiles file. A missing file is

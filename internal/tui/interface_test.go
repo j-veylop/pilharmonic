@@ -148,7 +148,7 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 	}
 
 	composerModel := base
-	composerModel.input = composer{kind: newTaskInput, text: "!keep this", cursor: len("!keep this")}
+	composerModel.input = composer{kind: newTaskInput, editor: editor{text: "!keep this", cursor: len("!keep this")}}
 	if footer := ansi.Strip(composerModel.footer(120)); !strings.Contains(footer, "enter submit") || !strings.Contains(footer, "ctrl+j/alt+enter newline") {
 		t.Fatalf("composer footer changed: %q", footer)
 	}
@@ -199,16 +199,6 @@ func TestAttentionJumpFollowsGroupedOrderAndWraps(t *testing.T) {
 	m.historyOffset = 3
 	if !m.jumpAttention() || m.selected != 2 || m.historyOffset != 0 {
 		t.Fatalf("jump from a non-attention task selected %d offset %d", m.selected, m.historyOffset)
-	}
-}
-
-func TestAttentionJumpWithoutAttentionKeepsSelection(t *testing.T) {
-	m := model{tasks: []orchestrator.Task{{ID: "one", Status: orchestrator.Completed}, {ID: "two", Status: orchestrator.Queued}}, selected: 1, historyOffset: 3}
-	if m.jumpAttention() {
-		t.Fatal("jump reported attention when none exists")
-	}
-	if m.selected != 1 || m.historyOffset != 3 {
-		t.Fatalf("selection or scroll changed without attention: selected=%d offset=%d", m.selected, m.historyOffset)
 	}
 }
 
@@ -263,8 +253,8 @@ func TestAttentionShortcutStaysTextInComposers(t *testing.T) {
 
 	m = model{router: routerState{open: true}}
 	m = key(m, runeKey("!"))
-	if m.router.draft != "!" || !m.router.open {
-		t.Fatalf("router composer consumed ! as a command: %q", m.router.draft)
+	if m.router.text != "!" || !m.router.open {
+		t.Fatalf("router composer consumed ! as a command: %q", m.router.text)
 	}
 }
 

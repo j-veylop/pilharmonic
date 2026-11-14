@@ -29,3 +29,12 @@ func overlay(background, modal string, w, h, mw, mh int) string {
 	}
 	return fit(strings.Join(result, "\n"), w, h)
 }
+
+// modalView draws content in a focused frame over background, or just the
+// background when the terminal is too small for the frame.
+func modalView(background string, w, h, mw, mh int, content []string) string {
+	if content == nil {
+		return fit(background, w, h)
+	}
+	return overlay(background, focusedPanel(strings.Join(content, "\n"), mw, mh, true), w, h, mw, mh)
+}

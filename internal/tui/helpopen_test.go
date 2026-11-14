@@ -1,11 +1,11 @@
 package tui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
@@ -43,8 +43,8 @@ func helpSurfaces() map[string]model {
 
 	s = base
 	s.router.open = true
-	s.router.draft = "do work"
-	s.router.cursor = len(s.router.draft)
+	s.router.text = "do work"
+	s.router.cursor = len(s.router.text)
 	surfaces["request form"] = s
 
 	s = base
@@ -53,11 +53,11 @@ func helpSurfaces() map[string]model {
 	surfaces["request form recent list"] = s
 
 	s = base
-	s.input = composer{kind: newTaskInput, text: "draft"}
+	s.input = composer{kind: newTaskInput, editor: editor{text: "draft"}}
 	surfaces["new task composer"] = s
 
 	s = base
-	s.input = composer{kind: reportInput, target: "task", text: "blocked need access"}
+	s.input = composer{kind: reportInput, target: "task", editor: editor{text: "blocked need access"}}
 	surfaces["report composer"] = s
 
 	s = base
@@ -100,117 +100,6 @@ func helpSurfaces() map[string]model {
 	return surfaces
 }
 
-func TestF1OpensHelpFromEverySurface(t *testing.T) {
-	for name, m := range helpSurfaces() {
-		t.Run(name, func(t *testing.T) {
-			m = key(m, f1Key())
-			if !m.help.open {
-				t.Fatalf("F1 did not open help on the %s", name)
-			}
-			if view := ansi.Strip(m.View()); !strings.Contains(view, "HELP") {
-				t.Fatalf("help is not rendered on the %s: %q", name, view)
-			}
-			m = key(m, f1Key())
-			if m.help.open {
-				t.Fatalf("F1 did not close help on the %s", name)
-			}
-		})
-	}
-}
-
-func TestHelpCoversEverySurfaceWithoutBreakingLayout(t *testing.T) {
-	for name, base := range helpSurfaces() {
-		for _, size := range [][2]int{{30, 10}, {50, 20}, {80, 24}, {120, 40}} {
-			m := base
-			m.width, m.height = size[0], size[1]
-			m = key(m, f1Key())
-			if !m.help.open {
-				t.Fatalf("%s at %v: F1 did not open help", name, size)
-			}
-			view := m.View()
-			if lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
-				t.Fatalf("%s at %v: rendered %dx%d", name, size, lipgloss.Width(view), lipgloss.Height(view))
-			}
-		}
-	}
-}
-
-func TestHelpReturnsToTheSurfaceItCovered(t *testing.T) {
-	m := boardWithTask()
-	m.input = composer{kind: newTaskInput, target: "task", text: "keep this draft"}
-	m = key(m, f1Key())
-	if m.input.text != "keep this draft" {
-		t.Fatalf("help lost the draft: %q", m.input.text)
-	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.help.open {
-		t.Fatal("escape did not close help")
-	}
-	if m.input.kind != newTaskInput || m.input.text != "keep this draft" {
-		t.Fatalf("composer did not survive help: %+v", m.input)
-	}
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "keep this draft") || !strings.Contains(view, "NEW TASK") {
-		t.Fatalf("composer did not return: %q", view)
-	}
-}
-
-// Help floats above a menu instead of replacing it, and closing help brings the
-// menu back with its selection intact.
-func TestHelpStacksAboveMenus(t *testing.T) {
-	cases := []struct {
-		name     string
-		setup    func(m *model)
-		marker   string
-		restored func(m model) bool
-	}{
-		{
-			name:   "login menu",
-			setup:  func(m *model) { m.login.menu = true },
-			marker: "LOGIN",
-			restored: func(m model) bool {
-				return m.login.menu
-			},
-		},
-		{
-			name:   "model menu",
-			setup:  func(m *model) { m.models.menu = true; m.models.step = modelStepClass },
-			marker: "MODEL",
-			restored: func(m model) bool {
-				return m.models.menu && m.models.step == modelStepClass
-			},
-		},
-		{
-			name:   "agent class menu",
-			setup:  func(m *model) { m.agentClass.menu = true },
-			marker: "AGENT",
-			restored: func(m model) bool {
-				return m.agentClass.menu
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := boardWithTask()
-			tc.setup(&m)
-			m = key(m, f1Key())
-			view := ansi.Strip(m.View())
-			if !strings.Contains(view, "HELP") {
-				t.Fatalf("help did not cover the %s: %q", tc.name, view)
-			}
-			if strings.Contains(view, tc.marker) {
-				t.Fatalf("the %s shows through help: %q", tc.name, view)
-			}
-			m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
-			if m.help.open {
-				t.Fatalf("escape did not close help over the %s", tc.name)
-			}
-			if !tc.restored(m) {
-				t.Fatalf("closing help did not restore the %s", tc.name)
-			}
-		})
-	}
-}
-
 // The question mark is a normal character in a draft, so it only opens help
 // where the operator is not typing text.
 func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
@@ -240,12 +129,12 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 
 	s = base
 	s.router.open = true
-	s.router.draft = "keep"
+	s.router.text = "keep"
 	s.router.cursor = len("keep")
 	typing["request form"] = s
 
 	s = base
-	s.input = composer{kind: threadInput, target: "task", text: "keep", cursor: len("keep")}
+	s.input = composer{kind: threadInput, target: "task", editor: editor{text: "keep", cursor: len("keep")}}
 	typing["composer"] = s
 
 	s = base
@@ -273,7 +162,7 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 			}
 			switch {
 			case next.input.text == "keep?":
-			case next.router.draft == "keep?":
+			case next.router.text == "keep?":
 			case next.models.customInput == "?":
 			case next.login.key == "?":
 			default:
@@ -285,7 +174,7 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 
 func TestPastedQuestionMarkIsNotAShortcut(t *testing.T) {
 	m := boardWithTask()
-	m.input = composer{kind: newTaskInput, text: "keep", cursor: len("keep")}
+	m.input = composer{kind: newTaskInput, editor: editor{text: "keep", cursor: len("keep")}}
 	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?"), Paste: true}
 	m = key(m, paste)
 	if m.help.open {
@@ -293,15 +182,6 @@ func TestPastedQuestionMarkIsNotAShortcut(t *testing.T) {
 	}
 	if m.input.text != "keep?" {
 		t.Fatalf("pasted text was dropped: %q", m.input.text)
-	}
-}
-
-func TestHelpHintIsVisibleOnEverySurface(t *testing.T) {
-	for name, m := range helpSurfaces() {
-		footer := ansi.Strip(m.footer(m.width))
-		if !strings.Contains(footer, "help") {
-			t.Fatalf("%s footer does not advertise help: %q", name, footer)
-		}
 	}
 }
 
@@ -320,25 +200,29 @@ func TestClicksBehindHelpDoNotStartASelection(t *testing.T) {
 	}
 }
 
-// Help must never confirm a destructive prompt: the overlay owns the key, and
-// closing it leaves the confirmation exactly as it was.
-func TestHelpDoesNotConfirmAPendingCleanup(t *testing.T) {
-	m := boardWithTask()
-	m.cleanup = cleanupRequest{kind: deleteTask, ids: []string{"task"}, title: "work"}
-	m = key(m, f1Key())
-	if !m.help.open {
-		t.Fatal("help did not open over the confirmation")
-	}
-	if next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
-		t.Fatalf("help ran a cleanup command: %T", cmd())
-	} else if typed := next.(model); typed.cleanup.kind != deleteTask || typed.cleanupBusy {
-		t.Fatalf("help confirmed the deletion: %+v", typed.cleanup)
-	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.cleanup.kind != deleteTask {
-		t.Fatalf("closing help dropped the confirmation: %+v", m.cleanup)
-	}
-	if !strings.Contains(ansi.Strip(m.View()), "DELETE TASK") {
-		t.Fatal("the confirmation did not come back")
+// F1 opens help over every surface at every size, help owns the keys while it
+// is open, and closing it returns the surface exactly as it was.
+func TestF1HelpCoversEverySurfaceAndRestoresIt(t *testing.T) {
+	for name, base := range helpSurfaces() {
+		if footer := ansi.Strip(base.footer(base.width)); !strings.Contains(footer, "help") {
+			t.Fatalf("%s footer does not advertise help: %q", name, footer)
+		}
+		for _, size := range [][2]int{{30, 10}, {50, 20}, {80, 24}, {120, 40}} {
+			m := base
+			m.width, m.height = size[0], size[1]
+			opened := key(m, f1Key())
+			view := opened.View()
+			assertFits(t, view, size[0], size[1])
+			if !opened.help.open || !strings.Contains(ansi.Strip(view), "HELP") {
+				t.Fatalf("%s at %v: F1 did not draw help", name, size)
+			}
+			next, cmd := opened.Update(runeKey("y"))
+			if cmd != nil {
+				t.Fatalf("%s: a key under help ran a command", name)
+			}
+			if closed := key(next.(model), f1Key()); !reflect.DeepEqual(closed, m) {
+				t.Fatalf("%s at %v: closing help did not restore the surface:\n%+v\n%+v", name, size, closed, m)
+			}
+		}
 	}
 }

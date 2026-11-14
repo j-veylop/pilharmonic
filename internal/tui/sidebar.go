@@ -8,6 +8,9 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
+// taskState gives a task one glyph, status word and colour. The sidebar shows
+// only the glyph; other surfaces pair it with the word so status never relies
+// on colour alone.
 func taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
 	if task.Status == orchestrator.Queued && task.ScheduleRequested {
 		return "◷", "WAITING", statusWaiting
@@ -47,33 +50,17 @@ func statusLabel(status orchestrator.Status) string {
 	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + label)
 }
 
-// taskStateWithPeers derives the displayed state from the task list. A running
-// parent whose child is still queued, running or awaiting workspace integration
-// is waiting for that subagent, even though its own process has not exited.
-func taskStateWithPeers(task orchestrator.Task, tasks []orchestrator.Task) (glyph, label string, color lipgloss.Color) {
-	if task.Status == orchestrator.Running && task.Stage() == orchestrator.StageWorking && hasActiveChild(task, tasks) {
-		return "◷", "WAITING FOR SUBAGENTS", statusWaiting
+// taskState adds the state only the task list knows: a running parent whose
+// child is still queued, running or merging is waiting for that subagent.
+func (m model) taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
+	if task.ID != "" && task.Status == orchestrator.Running && task.Stage() == orchestrator.StageWorking {
+		for _, child := range m.tasks {
+			if child.ParentID == task.ID && (child.Status == orchestrator.Queued || child.Status == orchestrator.Running || child.MergeStatus == orchestrator.MergeWaiting) {
+				return "◷", "WAITING FOR SUBAGENTS", statusWaiting
+			}
+		}
 	}
 	return taskState(task)
-}
-
-func hasActiveChild(task orchestrator.Task, tasks []orchestrator.Task) bool {
-	if task.ID == "" {
-		return false
-	}
-	for _, child := range tasks {
-		if child.ParentID != task.ID {
-			continue
-		}
-		if child.Status == orchestrator.Queued || child.Status == orchestrator.Running || child.MergeStatus == orchestrator.MergeWaiting {
-			return true
-		}
-	}
-	return false
-}
-
-func (m model) taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
-	return taskStateWithPeers(task, m.tasks)
 }
 
 func (m model) taskLabel(task orchestrator.Task) string {
@@ -86,23 +73,18 @@ func (m model) taskStatusIcon(task orchestrator.Task) string {
 	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(glyph)
 }
 
-// taskMetaLine holds the secondary task details. Status is not repeated here:
-// taskTitleRow starts every row with it, so narrow sidebars keep it visible.
-// Child rows omit the redundant "subagent" suffix because indentation and the
-// inherited-workspace badge already communicate ownership.
+// taskMetaLine holds the secondary task details; the title row already shows
+// status. Child rows omit the "subagent" suffix because indentation and the
+// inherited-workspace badge already show ownership.
 func taskMetaLine(task orchestrator.Task, width int) string {
-	return fit("  "+mutedStyle.Render(taskRowExecutorLabel(task))+"  "+workspaceBadgeFor(task).render(), width, 1)
-}
-
-func taskRowExecutorLabel(task orchestrator.Task) string {
+	label := executorLabel(task)
 	if task.ParentID != "" {
-		return task.Agent
+		label = task.Agent
 	}
-	return executorLabel(task)
+	return fit("  "+mutedStyle.Render(label)+"  "+workspaceBadgeFor(task).render(), width, 1)
 }
 
-// taskListRow pairs a task with its snapshot index. Grouping and indentation
-// are display concerns; the service keeps its own ordering.
+// taskListRow pairs a task with its snapshot index.
 type taskListRow struct {
 	index int
 	task  orchestrator.Task
@@ -128,16 +110,12 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 	visited := make([]bool, len(tasks))
 	var walk func(int)
 	walk = func(index int) {
-		if index < 0 || index >= len(tasks) || visited[index] {
+		if visited[index] {
 			return
 		}
 		visited[index] = true
-		task := tasks[index]
-		rows = append(rows, taskListRow{
-			index: index,
-			task:  task,
-		})
-		for _, child := range children[task.ID] {
+		rows = append(rows, taskListRow{index: index, task: tasks[index]})
+		for _, child := range children[tasks[index].ID] {
 			walk(child)
 		}
 	}
@@ -152,22 +130,13 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 	return rows
 }
 
-// taskChildIndent nests a delegated child's status glyph under its parent by
-// depth, capped so deep trees stay readable in a narrow sidebar.
-func taskChildIndent(task orchestrator.Task) string {
-	if task.ParentID == "" {
-		return ""
-	}
-	return strings.Repeat("  ", min(max(1, task.Depth), 3))
-}
-
+// taskTitleRow nests a child's status glyph under its parent by depth, capped
+// so deep trees stay readable in a narrow sidebar.
 func (m model) taskTitleRow(task orchestrator.Task, width int, selected bool) string {
-	return taskTitleRowWithIcon(task, m.taskStatusIcon(task), width, selected)
-}
-
-func taskTitleRowWithIcon(task orchestrator.Task, icon string, width int, selected bool) string {
-	text := singleLine(task.Title)
-	indent := taskChildIndent(task)
+	text, icon, indent := singleLine(task.Title), m.taskStatusIcon(task), ""
+	if task.ParentID != "" {
+		indent = strings.Repeat("  ", min(max(1, task.Depth), 3))
+	}
 	if !selected {
 		return fit("  "+indent+icon+" "+titleStyle.Render(text), width, 1)
 	}

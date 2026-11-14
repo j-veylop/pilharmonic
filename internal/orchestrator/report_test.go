@@ -9,18 +9,11 @@ import (
 )
 
 func TestReportsPersistAndDoNotChangeMandate(t *testing.T) {
+	var err error
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.CreateTask("task", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.RecordReport(task.ID, "blocked", "Need credentials"); err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
+	task := createTask(t, s, "task", "original mandate", t.TempDir())
+	must(t, s.RecordReport(task.ID, "blocked", "Need credentials"))
 	got, _ := s.GetTask(task.ID)
 	if got.Stage() != "blocked" || got.Prompt != "original mandate" {
 		t.Fatalf("bad report: %+v", got)
@@ -30,10 +23,7 @@ func TestReportsPersistAndDoNotChangeMandate(t *testing.T) {
 	if fresh.Reports[0].Message != "Need credentials" {
 		t.Fatal("mutable snapshot")
 	}
-	again, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	again := mustGet(Open(path))(t)
 	restored, _ := again.GetTask(task.ID)
 	if restored.Stage() != "blocked" {
 		t.Fatal("report lost")
@@ -68,12 +58,9 @@ func TestStagesRespectAttemptsAndContext(t *testing.T) {
 }
 
 func TestAdapterReportIsAttemptScoped(t *testing.T) {
+	var err error
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 	release := make(chan struct{})
 	writers := make(chan outputWriter, 1)
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
@@ -85,17 +72,10 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 			return ctx.Err()
 		}
 	}))
-	task, err := s.CreateTask("work", "mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "work", "mandate", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	writer := <-writers
-	if err = writer.RecordReport("progress", "halfway"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, writer.RecordReport("progress", "halfway"))
 	current, _ := s.GetTask(task.ID)
 	if len(current.Reports) != 1 {
 		t.Fatalf("adapter report missing: %+v", current.Reports)
@@ -120,9 +100,7 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	currentWriter := <-writers
 	if err = writer.RecordReport("progress", "stale"); err == nil {
 		t.Fatal("an old adapter reported for the new attempt")
@@ -133,9 +111,7 @@ func TestAdapterReportIsAttemptScoped(t *testing.T) {
 	if err = writer.RecordToolActivity(ToolActivity{ID: "stale"}); err == nil {
 		t.Fatal("an old adapter recorded a tool call for the new attempt")
 	}
-	if err = currentWriter.RecordReport("progress", "second attempt"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, currentWriter.RecordReport("progress", "second attempt"))
 }
 
 func TestCurrentReportIgnoresAnotherAttempt(t *testing.T) {

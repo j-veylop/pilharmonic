@@ -11,21 +11,11 @@ import (
 
 func TestQueuedContextGetsDeliveryRecordAtStart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.CreateTask("work", "mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddContext(task.ID, "context-1", "existing style"); err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
+	task := createTask(t, s, "work", "mandate", t.TempDir())
+	must(t, s.AddContext(task.ID, "context-1", "existing style"))
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if len(done.Deliveries) != 1 {
 		t.Fatalf("expected one delivery record: %+v", done.Deliveries)
@@ -34,10 +24,7 @@ func TestQueuedContextGetsDeliveryRecordAtStart(t *testing.T) {
 	if delivery.TriggerID != "context-1" || delivery.State != DeliveryAtStart || delivery.AttemptID == "" || delivery.AttemptID != done.Attempts[0].ID {
 		t.Fatalf("unexpected delivery record: %+v", delivery)
 	}
-	reloaded, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reloaded := mustGet(Open(path))(t)
 	restored, _ := reloaded.GetTask(task.ID)
 	if len(restored.Deliveries) != 1 || restored.Deliveries[0].State != DeliveryAtStart {
 		t.Fatalf("delivery record not persisted: %+v", restored.Deliveries)
@@ -45,23 +32,13 @@ func TestQueuedContextGetsDeliveryRecordAtStart(t *testing.T) {
 }
 
 func TestLiveDeliveryRecordTracksAcknowledgement(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
 	runner := liveTestRunner{make(chan struct{}), make(chan Trigger, 1), make(chan struct{})}
 	s.RegisterRunner("general", runner)
-	task, err := s.CreateTask("work", "mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "work", "mandate", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	<-runner.started
-	if err := s.AddContext(task.ID, "live-1", "context"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.AddContext(task.ID, "live-1", "context"))
 	<-runner.received
 	close(runner.release)
 	done := await(t, s, task.ID, Completed)
@@ -78,23 +55,13 @@ func TestLiveDeliveryRecordTracksAcknowledgement(t *testing.T) {
 }
 
 func TestUnacknowledgedDeliveryRecordBecomesUnknown(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
 	r := unackedRunner{make(chan struct{}), make(chan struct{})}
 	s.RegisterRunner("general", r)
-	task, err := s.CreateTask("work", "mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "work", "mandate", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	<-r.started
-	if err := s.AddContext(task.ID, "unacked", "context"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.AddContext(task.ID, "unacked", "context"))
 	<-r.received
 	done := await(t, s, task.ID, Completed)
 	if len(done.Deliveries) != 1 || done.Deliveries[0].State != DeliveryUnknown {
@@ -106,10 +73,7 @@ func TestUnacknowledgedDeliveryRecordBecomesUnknown(t *testing.T) {
 }
 
 func TestRetryCreatesNewDeliveryRecordPerAttempt(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
 	runs := 0
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		runs++
@@ -118,23 +82,12 @@ func TestRetryCreatesNewDeliveryRecordPerAttempt(t *testing.T) {
 		}
 		return nil
 	}))
-	task, err := s.CreateTask("work", "mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddContext(task.ID, "context-1", "context"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "work", "mandate", t.TempDir())
+	must(t, s.AddContext(task.ID, "context-1", "context"))
+	must(t, s.Start(context.Background(), task.ID))
 	failed := await(t, s, task.ID, Failed)
-	if err := s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if len(done.Attempts) != 2 || len(done.Deliveries) != 2 {
 		t.Fatalf("expected one delivery per attempt: attempts=%d deliveries=%+v", len(done.Attempts), done.Deliveries)
@@ -172,14 +125,8 @@ func TestStageUsesCurrentAttemptDeliveryRecords(t *testing.T) {
 
 func TestOpeningStateSettlesPendingDeliveryRecords(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.CreateTask("work", "mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
+	task := createTask(t, s, "work", "mandate", t.TempDir())
 	s.mu.Lock()
 	current := &s.data.Tasks[0]
 	current.Attempts = []Attempt{{ID: "attempt-1", Agent: "general", Status: Running, StartedAt: time.Now().UTC()}}
@@ -191,10 +138,7 @@ func TestOpeningStateSettlesPendingDeliveryRecords(t *testing.T) {
 	}
 	s.mu.Unlock()
 
-	reopened, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reopened := mustGet(Open(path))(t)
 	got, _ := reopened.GetTask(task.ID)
 	if len(got.Deliveries) != 1 || got.Deliveries[0].State != DeliveryUnknown {
 		t.Fatalf("pending delivery survived reopen: %+v", got.Deliveries)
@@ -205,18 +149,9 @@ func TestOpeningStateSettlesPendingDeliveryRecords(t *testing.T) {
 }
 
 func TestAddContextRecordsManualTrigger(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	task, err := s.CreateTask("ctx", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.AddContext(task.ID, "manual-trigger", "extra context"); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	task := createTask(t, s, "ctx", "original mandate", t.TempDir())
+	must(t, s.AddContext(task.ID, "manual-trigger", "extra context"))
 	updated, ok := s.GetTask(task.ID)
 	if !ok || len(updated.Context) != 1 || updated.Context[0].Text != "extra context" {
 		t.Fatalf("context not recorded: %+v", updated.Context)

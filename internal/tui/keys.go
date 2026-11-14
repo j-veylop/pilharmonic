@@ -1,60 +1,58 @@
 package tui
 
-import "strconv"
+// vimScrolls scroll details by a count of lines derived from the page height.
+var vimScrolls = map[string]func(page int) int{
+	"ctrl+u": func(page int) int { return max(1, page/2) },
+	"ctrl+d": func(page int) int { return -max(1, page/2) },
+	"ctrl+b": func(page int) int { return page },
+	"pgup":   func(page int) int { return page },
+	"ctrl+f": func(page int) int { return -page },
+	"pgdown": func(page int) int { return -page },
+	"ctrl+y": func(int) int { return 1 },
+	"ctrl+e": func(int) int { return -1 },
+}
 
 // vimNavigation applies normal-mode motions only; composers handle text first.
 func (m *model) vimNavigation(key string) bool {
 	if len(key) == 1 && key[0] >= '0' && key[0] <= '9' && (key != "0" || m.vimCount > 0) {
-		digit, _ := strconv.Atoi(key)
-		m.vimCount = min(999, m.vimCount*10+digit)
+		m.vimCount = min(999, m.vimCount*10+int(key[0]-'0'))
 		m.vimG = false
+		return true
+	}
+	if key == "g" && !m.vimG {
+		m.vimG = true
 		return true
 	}
 	count := max(1, m.vimCount)
-	if key == "g" {
-		if !m.vimG {
-			m.vimG = true
-			return true
-		}
-		m.vimG = false
-		m.vimCount = 0
-		m.jumpVim(false, count)
+	m.vimG, m.vimCount = false, 0
+	if scroll, ok := vimScrolls[key]; ok {
+		m.scrollDetail(scroll(m.detailPage()) * count)
 		return true
 	}
-	m.vimG = false
-	m.vimCount = 0
+	detail := m.detailFocus || m.fullscreen
 	switch key {
+	case "g":
+		m.jumpVim(false, count)
+	case "G":
+		m.jumpVim(true, count)
 	case "h", "ctrl+h":
-		m.detailFocus = false
-		m.fullscreen = false
+		m.detailFocus, m.fullscreen = false, false
 		m.clampScroll()
 	case "l", "ctrl+l":
 		m.detailFocus = true
 		m.clampScroll()
-	case "j", "down", "k", "up":
-		delta := count
-		if key == "k" || key == "up" {
-			delta = -count
-		}
-		if m.detailFocus || m.fullscreen {
-			m.scrollDetail(-delta)
+	case "j", "down":
+		if detail {
+			m.scrollDetail(-count)
 		} else {
-			m.moveTaskSelection(delta)
+			m.moveTaskSelection(count)
 		}
-	case "G":
-		m.jumpVim(true, count)
-	case "ctrl+u":
-		m.scrollDetail(max(1, m.detailPage()/2) * count)
-	case "ctrl+d":
-		m.scrollDetail(-max(1, m.detailPage()/2) * count)
-	case "ctrl+b", "pgup":
-		m.scrollDetail(m.detailPage() * count)
-	case "ctrl+f", "pgdown":
-		m.scrollDetail(-m.detailPage() * count)
-	case "ctrl+y":
-		m.scrollDetail(count)
-	case "ctrl+e":
-		m.scrollDetail(-count)
+	case "k", "up":
+		if detail {
+			m.scrollDetail(count)
+		} else {
+			m.moveTaskSelection(-count)
+		}
 	default:
 		return false
 	}

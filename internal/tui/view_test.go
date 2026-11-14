@@ -30,57 +30,6 @@ func TestTerminalTextDropsFormatAndLineSeparators(t *testing.T) {
 	}
 }
 
-func TestViewFitsTerminal(t *testing.T) {
-	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 10}, {20, 5}} {
-		m := model{width: size[0], height: size[1], workspace: "/a/very/long/path", tasks: []orchestrator.Task{{ID: "123", Title: "A very long task title", Prompt: "the original task", Status: orchestrator.Running, Agent: "general", Output: "working\nmore output"}}}
-		for _, history := range []bool{false, true} {
-			m.history = history
-			view := m.View()
-			assertFits(t, view, size[0], size[1])
-			if !strings.Contains(view, "PILHARMONIC") {
-				t.Fatalf("missing header: %s", view)
-			}
-		}
-	}
-}
-
-func TestViewWithToolOutputFitsTerminal(t *testing.T) {
-	task := orchestrator.Task{ID: "tool", Title: "checks", Prompt: "run checks", Status: orchestrator.Running, Output: "# Update\n\nWorking.\n\n[running] bash: " + strings.Repeat("long-command ", 20) + "\n[finished] bash: go test ./...\n[failed] bash: go vet ./...\n\nDone.\n"}
-	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 10}} {
-		m := model{width: size[0], height: size[1], tasks: []orchestrator.Task{task}}
-		view := m.View()
-		assertFits(t, view, size[0], size[1])
-	}
-}
-
-func TestHistoryShowsContextDelivery(t *testing.T) {
-	m := model{width: 120, height: 35, history: true, tasks: []orchestrator.Task{{ID: "1", Title: "test", Prompt: "do work", Status: orchestrator.Running, Context: []orchestrator.Trigger{{ID: "trigger-1", Delivery: "pending"}, {ID: "trigger-2", Delivery: "rejected", DeliveryError: "not accepted"}}}}}
-	view := m.View()
-	for _, text := range []string{"trigger-1", "pending", "trigger-2", "rejected", "not accepted"} {
-		if !strings.Contains(view, text) {
-			t.Fatalf("missing %q in %s", text, view)
-		}
-	}
-}
-
-func TestHistoryShowsPerAttemptDeliveries(t *testing.T) {
-	task := orchestrator.Task{
-		ID: "1", Title: "test", Prompt: "do work", Status: orchestrator.Running,
-		Context: []orchestrator.Trigger{{ID: "trigger-1", Delivery: orchestrator.DeliveryAccepted}},
-		Deliveries: []orchestrator.Delivery{
-			{TriggerID: "trigger-1", AttemptID: "attempt-old", State: orchestrator.DeliveryRejected, Error: "queue full"},
-			{TriggerID: "trigger-1", AttemptID: "attempt-new", State: orchestrator.DeliveryAccepted},
-		},
-	}
-	m := model{width: 120, height: 35, history: true, tasks: []orchestrator.Task{task}}
-	view := m.View()
-	for _, text := range []string{"DELIVERIES", "attempt-old", "rejected", "queue full", "attempt-new", "accepted"} {
-		if !strings.Contains(view, text) {
-			t.Fatalf("missing %q in %s", text, view)
-		}
-	}
-}
-
 func TestScheduledAndHistoryPagination(t *testing.T) {
 	task := orchestrator.Task{ID: "task", ThreadID: "thread", Title: "example", Prompt: "work", Status: orchestrator.Queued, ScheduleRequested: true}
 	for i := 0; i < 30; i++ {
@@ -95,27 +44,6 @@ func TestScheduledAndHistoryPagination(t *testing.T) {
 	oldest := m.View()
 	if !strings.Contains(oldest, "event-00") {
 		t.Fatalf("cannot inspect oldest event: %s", oldest)
-	}
-}
-
-func TestDetailFitsWithTabsAndTerminalControls(t *testing.T) {
-	task := orchestrator.Task{ID: "task", Title: "title\twide", Prompt: "Please\tinspect", Output: "start\t" + strings.Repeat("\tindented text", 30) + "\n\x1b[999Ccursor-jump\x1b[2J\rEND"}
-	for _, size := range [][2]int{{120, 30}, {80, 24}, {50, 20}, {30, 12}} {
-		m := model{width: size[0], height: size[1], tasks: []orchestrator.Task{task}}
-		for offset := 0; offset <= m.maxScroll(); offset++ {
-			m.historyOffset = offset
-			view := m.View()
-			if strings.Contains(view, "\t") || strings.Contains(view, "\r") || strings.Contains(view, "\x1b[999C") || strings.Contains(view, "\x1b[2J") {
-				t.Fatalf("unsafe terminal characters at %v: %q", size, view)
-			}
-			if lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
-				t.Fatalf("overflow at %v: %dx%d", size, lipgloss.Width(view), lipgloss.Height(view))
-			}
-		}
-		text := strings.Join(m.detailContent(20), "\n")
-		if !strings.Contains(text, "cursor-jump") || !strings.Contains(text, "END") {
-			t.Fatalf("content lost: %s", text)
-		}
 	}
 }
 
@@ -251,5 +179,51 @@ func TestErgonomicLayoutPrioritizesDetails(t *testing.T) {
 	}
 	if strings.Contains(m.View(), "TASKS  01") {
 		t.Fatal("narrow layout wastes space on sidebar")
+	}
+}
+
+// The board fits every size, in output and history, with tool rows, tabs and
+// terminal control sequences in untrusted task text.
+func TestViewFitsTerminalWithUntrustedText(t *testing.T) {
+	tasks := []orchestrator.Task{
+		{ID: "123", Title: "A very long task title\twide", Prompt: "Please\tinspect", Status: orchestrator.Running, Agent: "general",
+			Output: "start\t" + strings.Repeat("\tindented text", 30) + "\n\x1b[999Ccursor-jump\x1b[2J\rEND"},
+		{ID: "tool", Title: "checks", Prompt: "run checks", Status: orchestrator.Running,
+			Output: "# Update\n\n[running] bash: " + strings.Repeat("long-command ", 20) + "\n[finished] bash: go test ./...\n[failed] bash: go vet ./...\n\nDone.\n"},
+	}
+	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 12}, {30, 10}, {20, 5}} {
+		for i := range tasks {
+			for _, history := range []bool{false, true} {
+				m := model{width: size[0], height: size[1], workspace: "/a/very/long/path", tasks: tasks, selected: i, history: history}
+				for offset := 0; offset <= m.maxScroll(); offset += 3 {
+					m.historyOffset = offset
+					view := m.View()
+					assertFits(t, view, size[0], size[1])
+					if !strings.Contains(view, "PILHARMONIC") || strings.ContainsAny(view, "\t\r") || strings.Contains(view, "\x1b[999C") || strings.Contains(view, "\x1b[2J") {
+						t.Fatalf("%v: unsafe or headerless view: %q", size, view)
+					}
+				}
+			}
+		}
+	}
+	if text := strings.Join((model{tasks: tasks}).detailContent(20), "\n"); !strings.Contains(text, "cursor-jump") || !strings.Contains(text, "END") {
+		t.Fatalf("sanitizing lost content: %s", text)
+	}
+}
+
+func TestHistoryShowsContextAndPerAttemptDeliveries(t *testing.T) {
+	task := orchestrator.Task{
+		ID: "1", Title: "test", Prompt: "do work", Status: orchestrator.Running,
+		Context: []orchestrator.Trigger{{ID: "trigger-1", Delivery: "pending"}, {ID: "trigger-2", Delivery: "rejected", DeliveryError: "not accepted"}},
+		Deliveries: []orchestrator.Delivery{
+			{TriggerID: "trigger-1", AttemptID: "attempt-old", State: orchestrator.DeliveryRejected, Error: "queue full"},
+			{TriggerID: "trigger-1", AttemptID: "attempt-new", State: orchestrator.DeliveryAccepted},
+		},
+	}
+	view := (model{width: 120, height: 35, history: true, tasks: []orchestrator.Task{task}}).View()
+	for _, text := range []string{"trigger-1", "pending", "trigger-2", "not accepted", "DELIVERIES", "attempt-old", "queue full", "attempt-new", "accepted"} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("missing %q in %s", text, view)
+		}
 	}
 }

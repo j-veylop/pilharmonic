@@ -6,7 +6,7 @@ import (
 )
 
 // An unspecified list leaves the other list in effect. Reject disjoint lists
-// because the Pi adapter interprets an empty tool list as executor defaults.
+// because an empty tool list means the executor defaults.
 func intersectTools(tools, limit []string) ([]string, error) {
 	if len(limit) == 0 {
 		return tools, nil

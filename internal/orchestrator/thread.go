@@ -3,101 +3,9 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
-
-// CreateRelatedTask accepts a separate local mandate in an existing task's thread.
-// Existing tasks are not given the new mandate as instructions.
-func (s *Service) CreateRelatedTask(parentID, title, prompt, workspace string) (Task, error) {
-	title = strings.TrimSpace(title)
-	prompt = strings.TrimSpace(prompt)
-	if title == "" || prompt == "" {
-		return Task{}, errors.New("title and prompt are required")
-	}
-	abs, err := filepath.Abs(workspace)
-	if err != nil {
-		return Task{}, err
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return Task{}, fmt.Errorf("workspace: %w", err)
-	}
-	if !info.IsDir() {
-		return Task{}, errors.New("workspace must be a directory")
-	}
-	agent, request, err := s.routeTopLevelRequest(prompt)
-	if err != nil {
-		return Task{}, err
-	}
-	plan := s.defaultWorkspacePlan(abs, request)
-	triggerID := newID()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return Task{}, errors.New("service is shutting down")
-	}
-	var threadID string
-	for _, task := range s.data.Tasks {
-		if task.ID == parentID {
-			threadID = task.ThreadID
-			break
-		}
-	}
-	if threadID == "" {
-		return Task{}, errors.New("parent task not found")
-	}
-	for i := range s.data.Threads {
-		thread := &s.data.Threads[i]
-		if thread.ID != threadID {
-			continue
-		}
-		now := time.Now().UTC()
-		trigger := Trigger{ID: triggerID, Source: LocalPolicySource, Text: request, CreatedAt: now}
-		decision, err := s.authorize(AuthorizationRequest{
-			Source:    LocalPolicySource,
-			Actor:     LocalActor,
-			Purpose:   PurposeRelated,
-			TriggerID: triggerID,
-			ThreadID:  threadID,
-			ParentID:  parentID,
-			Text:      request,
-			Workspace: abs,
-		})
-		if err != nil {
-			return Task{}, err
-		}
-		decision.CreatedAt = now
-		task, err := s.newAcceptedTaskLocked(acceptedTaskInput{
-			threadID:        threadID,
-			title:           title,
-			workspace:       abs,
-			isolated:        plan.isolated,
-			isolationAuto:   plan.automatic,
-			agent:           agent,
-			trigger:         trigger,
-			decision:        decision,
-			acceptedMessage: "Manual request accepted in existing thread",
-		})
-		if err != nil {
-			return Task{}, err
-		}
-		task.SpecialistTools = s.specialistTools[task.Agent]
-		s.data.Tasks = append(s.data.Tasks, task)
-		thread.Triggers = append(thread.Triggers, trigger)
-		thread.Decisions = append(thread.Decisions, decision)
-		if err := s.save(); err != nil {
-			s.data.Tasks = s.data.Tasks[:len(s.data.Tasks)-1]
-			thread.Triggers = thread.Triggers[:len(thread.Triggers)-1]
-			thread.Decisions = thread.Decisions[:len(thread.Decisions)-1]
-			return Task{}, err
-		}
-		return clone(task), nil
-	}
-	return Task{}, errors.New("task thread not found")
-}
 
 const threadContextReason = "manual thread follow-up; does not expand mandates"
 
@@ -111,9 +19,97 @@ func (thread Thread) isThreadContext(triggerID string) bool {
 	return false
 }
 
-// SendThreadContext routes one immutable manual trigger to all queued and running
-// tasks subscribed by thread membership. It persists all recipients and outcomes
-// before enqueueing live deliveries. A retried trigger never gains new recipients.
+func (s *Service) findTriggerLocked(id string) (*Thread, Trigger, bool) {
+	for i := range s.data.Threads {
+		for _, trigger := range s.data.Threads[i].Triggers {
+			if trigger.ID == id {
+				return &s.data.Threads[i], trigger, true
+			}
+		}
+	}
+	return nil, Trigger{}, false
+}
+
+// liveChannelLocked returns a running task's live context queue, or why it
+// cannot take input now.
+func (s *Service) liveChannelLocked(taskID string) (chan Trigger, string) {
+	ch := s.live[taskID]
+	switch {
+	case ch == nil:
+		return nil, "agent does not support live context"
+	case len(ch) == cap(ch):
+		return nil, "live context queue is full"
+	}
+	return ch, ""
+}
+
+// AddContext records a manual follow-up for a queued or running task. It does
+// not change the original mandate. The trigger ID makes retries idempotent.
+func (s *Service) AddContext(taskID, triggerID, text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" || triggerID == "" {
+		return errors.New("trigger ID and context are required")
+	}
+	return s.whileOpen(func() error { return s.addContextLocked(taskID, triggerID, text) })
+}
+
+// addContextLocked records one validated context input. Caller holds mu.
+func (s *Service) addContextLocked(taskID, triggerID, text string) error {
+	task := s.taskLocked(taskID)
+	if task == nil {
+		return errTaskNotFound
+	}
+	// A retry must name the same recipient. A mandate or a thread-wide trigger
+	// can have the same text, but came through a different route.
+	if thread, existing, ok := s.findTriggerLocked(triggerID); ok {
+		if thread.ID == task.ThreadID && existing.Text == text && !thread.isThreadContext(triggerID) {
+			for _, c := range task.Context {
+				if c.ID == triggerID {
+					return nil
+				}
+			}
+		}
+		return errors.New("trigger ID already exists")
+	}
+	if task.Status != Queued && task.Status != Running {
+		return fmt.Errorf("context can only be added to queued or running tasks; task is %s", task.Status)
+	}
+	var live chan Trigger
+	if task.Status == Running {
+		var refusal string
+		if live, refusal = s.liveChannelLocked(task.ID); refusal != "" {
+			return errors.New(refusal)
+		}
+	}
+	thread := s.threadLocked(task.ThreadID)
+	if thread == nil {
+		return errors.New("task thread not found")
+	}
+	now := time.Now().UTC()
+	trigger := Trigger{ID: triggerID, Source: "manual", Text: text, CreatedAt: now, Delivery: DeliveryAtStart}
+	snapshot := s.snapshotLocked()
+	if live != nil {
+		trigger.Delivery = DeliveryPending
+		task.appendDelivery(triggerID, task.currentAttemptID(), DeliveryPending, "", now)
+	}
+	task.Context = append(task.Context, trigger)
+	task.UpdatedAt = now
+	task.Events = append(task.Events, Event{now, "context", "Manual context added"})
+	thread.Triggers = append(thread.Triggers, trigger)
+	thread.Decisions = append(thread.Decisions, Decision{TriggerID: triggerID, Outcome: "context", Reason: "manual follow-up; does not expand mandate", CreatedAt: now})
+	if err := s.commitLocked(snapshot); err != nil {
+		return err
+	}
+	if live != nil {
+		live <- trigger
+	}
+	return nil
+}
+
+// SendThreadContext routes one immutable manual trigger to all queued and
+// running tasks subscribed by thread membership. It persists all recipients
+// and outcomes before enqueueing live deliveries. A retried trigger never
+// gains new recipients.
 func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" || triggerID == "" {
@@ -121,40 +117,13 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
+	thread, err := s.contextThreadLocked(taskID, triggerID, text)
+	if thread == nil || err != nil {
+		return err
 	}
-	var threadID string
-	for _, task := range s.data.Tasks {
-		if task.ID == taskID {
-			threadID = task.ThreadID
-			break
-		}
-	}
-	if threadID == "" {
-		return errors.New("task not found")
-	}
-	var thread *Thread
-	for i := range s.data.Threads {
-		t := &s.data.Threads[i]
-		for _, existing := range t.Triggers {
-			if existing.ID == triggerID {
-				if t.ID == threadID && existing.Text == text && t.isThreadContext(triggerID) {
-					return nil
-				}
-				return errors.New("trigger ID already exists")
-			}
-		}
-		if t.ID == threadID {
-			thread = t
-		}
-	}
-	if thread == nil {
-		return errors.New("task thread not found")
-	}
+	threadID := thread.ID
 	now := time.Now().UTC()
 	base := Trigger{ID: triggerID, Source: "manual", Text: text, CreatedAt: now}
-	oldTasks := make(map[int]Task)
 	type delivery struct {
 		ch        chan Trigger
 		trigger   Trigger
@@ -162,182 +131,136 @@ func (s *Service) SendThreadContext(taskID, triggerID, text string) error {
 		attemptID string
 	}
 	var deliveries []delivery
+	recipients := 0
+	snapshot := s.snapshotLocked()
 	for i := range s.data.Tasks {
 		task := &s.data.Tasks[i]
 		if task.ContextPaused || task.ThreadID != threadID || (task.Status != Queued && task.Status != Running) {
 			continue
 		}
-		oldTasks[i] = clone(*task)
+		recipients++
 		trigger := base
-		if task.Status == Queued {
-			trigger.Delivery = DeliveryAtStart
-		} else {
+		trigger.Delivery = DeliveryAtStart
+		if task.Status == Running {
 			attemptID := task.currentAttemptID()
-			ch := s.live[task.ID]
-			switch {
-			case ch == nil:
-				trigger.Delivery = DeliveryRejected
-				trigger.DeliveryError = "agent does not support live context"
-				task.appendDelivery(trigger.ID, attemptID, DeliveryRejected, trigger.DeliveryError, now)
-			case len(ch) == cap(ch):
-				trigger.Delivery = DeliveryRejected
-				trigger.DeliveryError = "live context queue is full"
-				task.appendDelivery(trigger.ID, attemptID, DeliveryRejected, trigger.DeliveryError, now)
-			default:
+			ch, refusal := s.liveChannelLocked(task.ID)
+			if refusal != "" {
+				trigger.Delivery, trigger.DeliveryError = DeliveryRejected, refusal
+			} else {
 				trigger.Delivery = DeliveryPending
-				task.appendDelivery(trigger.ID, attemptID, DeliveryPending, "", now)
 				deliveries = append(deliveries, delivery{ch: ch, trigger: trigger, taskID: task.ID, attemptID: attemptID})
 			}
+			task.appendDelivery(trigger.ID, attemptID, trigger.Delivery, trigger.DeliveryError, now)
 		}
 		task.Context = append(task.Context, trigger)
 		task.UpdatedAt = now
 		task.Events = append(task.Events, Event{now, "context", "Thread context added (" + trigger.Delivery + ")"})
 	}
-	if len(oldTasks) == 0 {
+	if recipients == 0 {
 		return errors.New("thread has no subscribed queued or running tasks")
 	}
 	thread.Triggers = append(thread.Triggers, base)
 	thread.Decisions = append(thread.Decisions, Decision{TriggerID: triggerID, Outcome: "context", Reason: threadContextReason, CreatedAt: now})
-	if err := s.save(); err != nil {
-		for i, old := range oldTasks {
-			s.data.Tasks[i] = old
-		}
-		thread.Triggers = thread.Triggers[:len(thread.Triggers)-1]
-		thread.Decisions = thread.Decisions[:len(thread.Decisions)-1]
+	if err = s.commitLocked(snapshot); err != nil {
 		return err
 	}
-	// Deliver without blocking on a runner. Capacity was checked above, so a
-	// full buffer means the live reader is gone; the durable record must then
-	// report the hand-off as rejected instead of claiming it was queued.
+	// Capacity was checked above, so a full buffer means the live reader is
+	// gone; the durable record must then report the hand-off as rejected.
 	for _, d := range deliveries {
 		select {
 		case d.ch <- d.trigger:
 		default:
-			s.rejectLiveDeliveryLocked(d.taskID, d.attemptID, d.trigger.ID, "live context queue is full", now)
+			const reason = "live context queue is full"
+			if err := s.settleDeliveryLocked(s.taskLocked(d.taskID), d.attemptID, d.trigger.ID, DeliveryRejected, reason, reason, now); err != nil {
+				s.persistErr = err
+			}
 		}
 	}
 	return nil
 }
 
-// rejectLiveDeliveryLocked corrects a pending live hand-off that could not be
-// queued after all. Caller holds mu.
-func (s *Service) rejectLiveDeliveryLocked(taskID, attemptID, triggerID, reason string, now time.Time) {
-	for i := range s.data.Tasks {
-		task := &s.data.Tasks[i]
-		if task.ID != taskID {
-			continue
-		}
-		for j := range task.Context {
-			trigger := &task.Context[j]
-			if trigger.ID != triggerID || trigger.Delivery != DeliveryPending {
-				continue
-			}
-			old := clone(*task)
-			trigger.Delivery, trigger.DeliveryError = DeliveryRejected, reason
-			task.updatePendingDelivery(triggerID, attemptID, DeliveryRejected, reason, now)
-			task.Events = append(task.Events, Event{now, "context_" + DeliveryRejected, "Context " + triggerID + ": " + reason})
-			if err := s.save(); err != nil {
-				*task = old
-				s.persistErr = err
-			}
-			return
-		}
+// contextThreadLocked returns the thread of the task for a new thread-wide
+// trigger, or nil when the trigger was already recorded identically.
+func (s *Service) contextThreadLocked(taskID, triggerID, text string) (*Thread, error) {
+	if s.closing {
+		return nil, errShuttingDown
 	}
+	source := s.taskLocked(taskID)
+	if source == nil || source.ThreadID == "" {
+		return nil, errTaskNotFound
+	}
+	if thread, existing, ok := s.findTriggerLocked(triggerID); ok {
+		if thread.ID == source.ThreadID && existing.Text == text && thread.isThreadContext(triggerID) {
+			return nil, nil
+		}
+		return nil, errors.New("trigger ID already exists")
+	}
+	if thread := s.threadLocked(source.ThreadID); thread != nil {
+		return thread, nil
+	}
+	return nil, errors.New("task thread not found")
 }
 
 func (s *Service) AddManualThreadContext(taskID, text string) error {
 	return s.SendThreadContext(taskID, newID(), text)
 }
 
-// FollowUp records one manual follow-up for a selected task. Queued and running
-// tasks receive it as context. An inactive task is requeued with the follow-up
-// as at-start context and requires a new start; its mandate and attempts are
-// not changed. The bool result reports whether the task was requeued.
+// FollowUp records one manual follow-up for a selected task. Queued and
+// running tasks receive it as context. An inactive task is requeued with the
+// follow-up as at-start context and needs a new start; its mandate and
+// attempts are not changed. The result reports whether it was requeued.
 func (s *Service) FollowUp(taskID, text string) (bool, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return false, errors.New("follow-up text is required")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return false, errors.New("service is shutting down")
-	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != taskID {
-			continue
-		}
+	requeued := false
+	err := s.withTask(taskID, func(t *Task) error {
 		if t.DiscardPending {
-			return false, errors.New("worktree discard is pending; wait before following up")
+			return errors.New("worktree discard is pending; wait before following up")
 		}
 		if t.Status == Queued || t.Status == Running {
-			return false, s.addContextLocked(taskID, newID(), text)
+			return s.addContextLocked(taskID, newID(), text)
 		}
 		if err := s.checkRequeueIntegrationLocked(*t); err != nil {
-			return false, err
+			return err
 		}
 		switch t.Status {
 		case Completed, Failed, Canceled, Interrupted:
 		default:
-			return false, fmt.Errorf("cannot follow up task in %s state", t.Status)
+			return fmt.Errorf("cannot follow up task in %s state", t.Status)
 		}
 		// Requeueing clears the review decision, so a prepared commit awaiting
 		// the operator must be settled first or the approval would be lost.
 		if t.AwaitingReview() {
-			return false, errors.New("task has prepared work awaiting review; approve or reject it first")
+			return errors.New("task has prepared work awaiting review; approve or reject it first")
 		}
-		var thread *Thread
-		for j := range s.data.Threads {
-			if s.data.Threads[j].ID == t.ThreadID {
-				thread = &s.data.Threads[j]
-				break
-			}
-		}
+		thread := s.threadLocked(t.ThreadID)
 		if thread == nil {
-			return false, errors.New("task thread not found")
+			return errors.New("task thread not found")
 		}
 		id := newID()
 		now := time.Now().UTC()
 		trigger := Trigger{ID: id, Source: "manual", Text: text, CreatedAt: now, Delivery: DeliveryAtStart}
-		decision := Decision{TriggerID: id, Outcome: "context", Reason: "manual follow-up; requeues the task without changing its mandate", CreatedAt: now}
-		err := s.mutateTaskLocked(t, func(t *Task) error {
-			t.Context = append(t.Context, trigger)
-			t.Status = Queued
-			t.ScheduleRequested = false
-			t.ScheduledAt = time.Time{}
-			t.UpdatedAt = now
-			t.Error = ""
-			t.clearIntegration()
-			t.resetReview()
-			t.Events = append(t.Events, Event{now, "followup", "Follow-up context recorded"}, Event{now, "requeued", "Task requeued for follow-up"})
-			thread.Triggers = append(thread.Triggers, trigger)
-			thread.Decisions = append(thread.Decisions, decision)
-			return nil
-		})
-		if err != nil {
-			thread.Triggers = thread.Triggers[:len(thread.Triggers)-1]
-			thread.Decisions = thread.Decisions[:len(thread.Decisions)-1]
-			return false, err
+		snapshot := s.snapshotLocked()
+		t.Context = append(t.Context, trigger)
+		t.requeue(now)
+		t.Events = append(t.Events, Event{now, "followup", "Follow-up context recorded"}, Event{now, "requeued", "Task requeued for follow-up"})
+		thread.Triggers = append(thread.Triggers, trigger)
+		thread.Decisions = append(thread.Decisions, Decision{TriggerID: id, Outcome: "context", Reason: "manual follow-up; requeues the task without changing its mandate", CreatedAt: now})
+		if err := s.commitLocked(snapshot); err != nil {
+			return err
 		}
-		return true, nil
-	}
-	return false, errors.New("task not found")
+		requeued = true
+		return nil
+	})
+	return requeued, err
 }
 
-// SetContextSubscription controls future thread follow-ups. Already recorded
-// context and in-flight deliveries remain part of the task history.
+// SetContextSubscription controls future thread follow-ups. Recorded context
+// and in-flight deliveries remain part of the task history.
 func (s *Service) SetContextSubscription(taskID string, enabled bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != taskID {
-			continue
-		}
+	return s.withTask(taskID, func(t *Task) error {
 		if t.ContextPaused == !enabled {
 			return nil
 		}
@@ -351,6 +274,5 @@ func (s *Service) SetContextSubscription(taskID string, enabled bool) error {
 			t.Events = append(t.Events, Event{t.UpdatedAt, "subscription", message})
 			return nil
 		})
-	}
-	return errors.New("task not found")
+	})
 }

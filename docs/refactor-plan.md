@@ -1,7 +1,7 @@
 # Simplification plan
 
-Status: proposal. The current build is green (`go test ./...`, `go vet ./...`),
-so this is about maintainability, not broken behavior.
+Status: Phase 1 done; service.go split (Phase 2) done without the TUI
+interface split; Phase 3 screen stack deferred. Baseline below is pre-cleanup.
 
 ## Baseline
 

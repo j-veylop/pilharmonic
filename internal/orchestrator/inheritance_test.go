@@ -13,9 +13,7 @@ import (
 func TestInheritedWorktreeWaitsForGrandchildAndSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, path)
-	if err := s.SetConcurrencyLimit(1); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetConcurrencyLimit(1))
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
@@ -32,13 +30,8 @@ func TestInheritedWorktreeWaitsForGrandchildAndSurvivesRestart(t *testing.T) {
 		}
 	}))
 	repo := committedRepo(t)
-	owner, err := s.CreateTask("parent", "fix the inherited tree", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), owner.ID); err != nil {
-		t.Fatal(err)
-	}
+	owner := createTask(t, s, "parent", "fix the inherited tree", repo)
+	must(t, s.Start(context.Background(), owner.ID))
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -72,9 +65,7 @@ func TestInheritedWorktreeWaitsForGrandchildAndSurvivesRestart(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "grandchild")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Shutdown())
 	reopened := openTestService(t, path)
 	if err := reopened.DiscardWorktree(owner.ID); err == nil {
 		t.Fatal("discarded worktree with retryable descendants after restart")
@@ -84,8 +75,9 @@ func TestInheritedWorktreeWaitsForGrandchildAndSurvivesRestart(t *testing.T) {
 // Approval waits while a follow-up child is using the inherited worktree and
 // then merges only the reviewed commit, not the child's later dirty content.
 func TestApprovalWaitsForInheritedWorktreeAndMergesReviewedCommit(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		switch task.Depth {
 		case 0:
@@ -102,16 +94,7 @@ func TestApprovalWaitsForInheritedWorktreeAndMergesReviewedCommit(t *testing.T) 
 			return os.WriteFile(filepath.Join(task.Workspace, name), []byte(name), 0600)
 		}
 	}))
-	owner, err := s.CreateTask("parent", "fix the inherited tree", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(owner.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), owner.ID); err != nil {
-		t.Fatal(err)
-	}
+	owner := startIsolated(t, s, "parent", "fix the inherited tree", repo)
 
 	var prepared Task
 	deadline := time.Now().Add(5 * time.Second)
@@ -139,16 +122,11 @@ func TestApprovalWaitsForInheritedWorktreeAndMergesReviewedCommit(t *testing.T) 
 	if child.ID == "" {
 		t.Fatal("child task missing")
 	}
-	requeued, err := s.FollowUp(child.ID, "extend the child work")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requeued := mustGet(s.FollowUp(child.ID, "extend the child work"))(t)
 	if !requeued {
 		t.Fatal("completed child was not requeued")
 	}
-	if err = s.ApproveReview(owner.ID, prepared.ReviewCommit, ""); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.ApproveReview(owner.ID, prepared.ReviewCommit, ""))
 	waiting, _ := s.GetTask(owner.ID)
 	if waiting.ReviewStatus != ReviewApproved || waiting.MergeStatus != MergeWaiting {
 		t.Fatalf("approval did not wait for the inherited worktree: %+v", waiting)
@@ -157,9 +135,7 @@ func TestApprovalWaitsForInheritedWorktreeAndMergesReviewedCommit(t *testing.T) 
 		t.Fatalf("approval merged while a descendant was active: %v", err)
 	}
 
-	if err = s.Start(context.Background(), child.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), child.ID))
 	await(t, s, child.ID, Completed)
 	merged := awaitIntegration(t, s, owner.ID)
 	if merged.MergeStatus != MergeMerged || merged.WorktreeCommit != prepared.ReviewCommit {
@@ -188,10 +164,8 @@ func TestApprovalWaitsForInheritedWorktreeAndMergesReviewedCommit(t *testing.T) 
 // operator prepare the retained worktree again without re-running the agent.
 func TestDeletingFailedChildReopensIntegration(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.SetConcurrencyLimit(1); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetConcurrencyLimit(1))
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if task.Depth > 0 {
 			return errors.New("child failed")
@@ -202,16 +176,7 @@ func TestDeletingFailedChildReopensIntegration(t *testing.T) {
 		_, err := s.SpawnSubagent(task.ID, "child", "child work", "")
 		return err
 	}))
-	parent, err := s.CreateTask("parent", "fix the inherited tree", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(parent.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	parent := startIsolated(t, s, "parent", "fix the inherited tree", repo)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		blocked, _ := s.GetTask(parent.ID)
@@ -233,9 +198,7 @@ func TestDeletingFailedChildReopensIntegration(t *testing.T) {
 	if child.ID == "" {
 		t.Fatal("child task missing")
 	}
-	if err = s.DeleteTask(child.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.DeleteTask(child.ID))
 	for {
 		reopened, _ := s.GetTask(parent.ID)
 		if reopened.AwaitingReview() && reopened.WorktreeCommit != "" {

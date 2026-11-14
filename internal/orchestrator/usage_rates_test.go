@@ -88,7 +88,7 @@ func TestAttemptUsageAddUsageFromEmptyRecord(t *testing.T) {
 // the expected total is exact. Recording twice is how one attempt makes several
 // provider calls.
 func TestRecordUsageSumsTwoCallsOnOneAttempt(t *testing.T) {
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		recorder, err := usageRecorderFor(out)
 		if err != nil {
@@ -99,13 +99,8 @@ func TestRecordUsageSumsTwoCallsOnOneAttempt(t *testing.T) {
 		}
 		return recorder.RecordUsage("openai/gpt-4.1", TokenUsage{InputTokens: 2000, OutputTokens: 300})
 	}))
-	task, err := s.CreateTask("two calls", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "two calls", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if len(done.Attempts) != 1 || done.Attempts[0].Usage == nil {
 		t.Fatalf("attempt usage missing: %+v", done.Attempts)
@@ -144,7 +139,7 @@ func TestRecordUsageTwiceForTimeOfDayModelKeepsOneRate(t *testing.T) {
 	const model = "deepseek/deepseek-reasoner"
 	call := TokenUsage{InputTokens: 12345, OutputTokens: 6789}
 	before := time.Now().UTC()
-	s := openUsageTestService(t)
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		recorder, err := usageRecorderFor(out)
 		if err != nil {
@@ -155,13 +150,8 @@ func TestRecordUsageTwiceForTimeOfDayModelKeepsOneRate(t *testing.T) {
 		}
 		return recorder.RecordUsage(model, call)
 	}))
-	task, err := s.CreateTask("two calls", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "two calls", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	after := time.Now().UTC()
 	price, ok := PriceFor(model, before)
@@ -216,7 +206,7 @@ func TestRecordUsageMarksAttemptUnpricedWhenOneCallIsUnpriced(t *testing.T) {
 	}
 	for _, tc := range cases {
 		calls := tc.calls
-		s := openUsageTestService(t)
+		s := newTestService(t)
 		s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 			recorder, err := usageRecorderFor(out)
 			if err != nil {
@@ -233,9 +223,7 @@ func TestRecordUsageMarksAttemptUnpricedWhenOneCallIsUnpriced(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = s.Start(context.Background(), task.ID); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.Start(context.Background(), task.ID))
 		done := await(t, s, task.ID, Completed)
 		usage := done.Attempts[0].Usage
 		if usage == nil || usage.InputTokens != 1007 || usage.OutputTokens != 503 {

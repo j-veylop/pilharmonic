@@ -9,14 +9,10 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
-// The board and the detail panel print token counts and dollar estimates. Both
-// are long numbers the operator reads at a glance rather than adds up, so one
-// spelling per magnitude is chosen here: the header, the task summary and an
-// attempt row never disagree about the same total.
+// Token and cost formats are shared by the header, the task summary and the
+// attempt rows so they never spell the same total differently.
 
-// formatTokens writes a token count compactly: 950, 12.3k, 1.2M. The single
-// decimal is kept because it separates 12.3k from 12k, and dropped when it is a
-// zero so a round count reads as 12k.
+// formatTokens writes a token count compactly: 950, 12.3k, 12k, 1.2M.
 func formatTokens(tokens int64) string {
 	if tokens < 0 {
 		tokens = 0
@@ -24,21 +20,16 @@ func formatTokens(tokens int64) string {
 	if tokens < 1_000 {
 		return strconv.FormatInt(tokens, 10)
 	}
-	// A count this close to a million would round to "1000k", so that band uses
-	// the next unit instead of printing four digits.
 	if tokens < 999_950 {
 		return trimZero(strconv.FormatFloat(float64(tokens)/1_000, 'f', 1, 64)) + "k"
 	}
 	return trimZero(strconv.FormatFloat(float64(tokens)/1_000_000, 'f', 1, 64)) + "M"
 }
 
-// trimZero removes the decimal point of a one-decimal figure that has no
-// fractional part, so 12.0 becomes 12.
 func trimZero(s string) string { return strings.TrimSuffix(s, ".0") }
 
-// formatCost writes a dollar estimate. Below one cent four decimals are needed
-// to stay meaningful, and a positive cost that would round to zero is shown as
-// an upper bound rather than as a reassuring $0.
+// formatCost writes a dollar estimate, with four decimals below a cent and an
+// upper bound rather than $0 for a cost too small to show.
 func formatCost(usd float64) string {
 	if usd < 0.01 {
 		if usd < 0.00005 {
@@ -49,18 +40,14 @@ func formatCost(usd float64) string {
 	return "$" + strconv.FormatFloat(usd, 'f', 2, 64)
 }
 
-// formatPrice writes a per-1M-token price the way a provider's price list does:
-// at most two decimals with trailing zeros trimmed, so $2, $0.14 and $1.25 all
-// read naturally.
+// formatPrice writes a per-1M-token price like a price list: $2, $0.14, $1.25.
 func formatPrice(usd float64) string {
 	trimmed := strings.TrimRight(strconv.FormatFloat(usd, 'f', 2, 64), "0")
 	return "$" + strings.TrimSuffix(trimmed, ".")
 }
 
-// usageVariants writes one token count and its estimate, richest first and
-// ending with an empty variant so a caller can drop the segment when the space
-// it has will not hold even the shortest form. A cost appears only when it was
-// priced: the terminal never prints a dollar figure it cannot support.
+// usageVariants lists a usage segment richest first, ending with "" so a
+// caller can drop it. A cost appears only when every token was priced.
 func usageVariants(input, output int64, cost float64, priced bool) []string {
 	detailed := formatTokens(input) + " in · " + formatTokens(output) + " out"
 	compact := formatTokens(input) + "/" + formatTokens(output)
@@ -71,19 +58,16 @@ func usageVariants(input, output int64, cost float64, priced bool) []string {
 	return []string{detailed + " · " + amount, compact + " · " + amount, amount, ""}
 }
 
-// taskUsageLine is the detail panel's usage line for one task: the tokens it
-// recorded and, only when every counted token had a price, the estimate.
 func taskUsageLine(usage orchestrator.TaskUsage) string {
-	line := formatTokens(usage.InputTokens) + " in · " + formatTokens(usage.OutputTokens) + " out"
 	if usage.Priced {
-		return line + " · " + formatCost(usage.CostUSD)
+		return usageVariants(usage.InputTokens, usage.OutputTokens, usage.CostUSD, true)[0]
 	}
-	return line + " · cost unknown"
+	return usageVariants(usage.InputTokens, usage.OutputTokens, 0, false)[0] + " · cost unknown"
 }
 
-// priceLine describes the price in force now for the model a task last used.
-// The recorded rate only says what an attempt was charged, so the current rate
-// is what the operator needs when deciding whether to run more work.
+// priceLine describes the price in force now for the model a task last used,
+// which is what matters when deciding whether to run more work. An attempt
+// that straddled a discount window names both rates.
 func priceLine(selector, rate string, now time.Time) (string, bool) {
 	price, known := orchestrator.PriceFor(selector, now)
 	if !known {
@@ -96,26 +80,14 @@ func priceLine(selector, rate string, now time.Time) (string, bool) {
 	}
 	label := price.Rate(now)
 	if rate == orchestrator.RateMixed {
-		// One attempt straddled the window, so naming a single rate would be
-		// wrong about the work that was already charged.
 		label = orchestrator.RatePeak + "/" + orchestrator.RateOffPeak
 	}
-	return line + " · " + providerName(selector) + " " + label, true
+	provider, _, _ := strings.Cut(selector, "/")
+	return line + " · " + provider + " " + label, true
 }
 
-// providerName is the selector prefix a price belongs to, so a time-of-day
-// label names the provider whose window it describes.
-func providerName(selector string) string {
-	if at := strings.Index(selector, "/"); at > 0 {
-		return selector[:at]
-	}
-	return selector
-}
-
-// attemptUsageSuffix appends an attempt's own usage to its history row. The row
-// is one line per run, so the suffix is shortened rather than wrapped: the token
-// counts collapse into one figure, then give way to the cost alone, and a row
-// with no room at all keeps just its time, status and ID.
+// attemptUsageSuffix is the richest usage variant that fits on an attempt's
+// one-line history row, or nothing.
 func attemptUsageSuffix(usage *orchestrator.AttemptUsage, available int) string {
 	if usage == nil || usage.Usage().IsZero() {
 		return ""

@@ -245,14 +245,6 @@ func (e *editor) moveLineEnd() {
 	}
 }
 
-func (e *editor) moveStart() {
-	e.cursor = 0
-}
-
-func (e *editor) moveEnd() {
-	e.cursor = len(e.text)
-}
-
 // moveVertical keeps the display column while moving between visual lines so
 // wrapped paragraphs and hard line breaks both behave like a textarea.
 func (e *editor) moveVertical(delta, width int) {
@@ -282,60 +274,55 @@ func (e *editor) ensureVisible(width, height int) {
 	e.scroll = min(max(0, e.scroll), max(0, len(lines)-height))
 }
 
-// handleKey applies editing and cursor keys. Enter and Esc stay with the
+// editorKeys are the editing and cursor keys. Enter and Esc stay with the
 // surrounding screen because they submit or cancel the draft.
-func (e *editor) handleKey(msg tea.KeyMsg, width, height int) bool {
-	switch msg.String() {
-	case "ctrl+j", "alt+enter", "shift+enter":
-		e.insert("\n")
-	case "backspace", "ctrl+h":
-		e.backspace()
-	case "delete", "ctrl+d":
-		e.delete()
-	case "ctrl+w", "alt+backspace":
-		e.deleteWordBackward()
-	case "alt+d", "alt+delete":
-		e.deleteWordForward()
-	case "ctrl+u":
-		e.deleteLineStart()
-	case "ctrl+k":
-		e.deleteLineEnd()
-	case "left", "ctrl+b":
-		e.moveHorizontal(-1)
-	case "right", "ctrl+f":
-		e.moveHorizontal(1)
-	case "ctrl+left", "alt+left", "alt+b":
-		e.moveWordBackward()
-	case "ctrl+right", "alt+right", "alt+f":
-		e.moveWordForward()
-	case "up", "ctrl+p":
-		e.moveVertical(-1, width)
-	case "down", "ctrl+n":
-		e.moveVertical(1, width)
-	case "pgup":
-		e.moveVertical(-max(1, height), width)
-	case "pgdown":
-		e.moveVertical(max(1, height), width)
-	case "home", "ctrl+a":
-		e.moveLineStart()
-	case "end", "ctrl+e":
-		e.moveLineEnd()
-	case "ctrl+home":
-		e.moveStart()
-	case "ctrl+end":
-		e.moveEnd()
-	default:
-		switch msg.Type {
-		case tea.KeyRunes:
-			e.insert(string(msg.Runes))
-		case tea.KeySpace:
-			e.insert(" ")
-		default:
-			return false
+var editorKeys = func() map[string]func(e *editor, width, height int) {
+	keys := map[string]func(*editor, int, int){}
+	bind := func(action func(*editor, int, int), names ...string) {
+		for _, name := range names {
+			keys[name] = action
 		}
 	}
+	plain := func(action func(*editor)) func(*editor, int, int) {
+		return func(e *editor, _, _ int) { action(e) }
+	}
+	vertical := func(lines int) func(*editor, int, int) {
+		return func(e *editor, width, height int) { e.moveVertical(lines*max(1, height), width) }
+	}
+	bind(func(e *editor, _, _ int) { e.insert("\n") }, "ctrl+j", "alt+enter", "shift+enter")
+	bind(plain((*editor).backspace), "backspace", "ctrl+h")
+	bind(plain((*editor).delete), "delete", "ctrl+d")
+	bind(plain((*editor).deleteWordBackward), "ctrl+w", "alt+backspace")
+	bind(plain((*editor).deleteWordForward), "alt+d", "alt+delete")
+	bind(plain((*editor).deleteLineStart), "ctrl+u")
+	bind(plain((*editor).deleteLineEnd), "ctrl+k")
+	bind(func(e *editor, _, _ int) { e.moveHorizontal(-1) }, "left", "ctrl+b")
+	bind(func(e *editor, _, _ int) { e.moveHorizontal(1) }, "right", "ctrl+f")
+	bind(plain((*editor).moveWordBackward), "ctrl+left", "alt+left", "alt+b")
+	bind(plain((*editor).moveWordForward), "ctrl+right", "alt+right", "alt+f")
+	bind(func(e *editor, width, _ int) { e.moveVertical(-1, width) }, "up", "ctrl+p")
+	bind(func(e *editor, width, _ int) { e.moveVertical(1, width) }, "down", "ctrl+n")
+	bind(vertical(-1), "pgup")
+	bind(vertical(1), "pgdown")
+	bind(plain((*editor).moveLineStart), "home", "ctrl+a")
+	bind(plain((*editor).moveLineEnd), "end", "ctrl+e")
+	bind(func(e *editor, _, _ int) { e.cursor = 0 }, "ctrl+home")
+	bind(func(e *editor, _, _ int) { e.cursor = len(e.text) }, "ctrl+end")
+	return keys
+}()
+
+// handleKey applies an editing key or inserts typed text.
+func (e *editor) handleKey(msg tea.KeyMsg, width, height int) {
+	if action, ok := editorKeys[msg.String()]; ok {
+		action(e, width, height)
+	} else if msg.Type == tea.KeyRunes {
+		e.insert(string(msg.Runes))
+	} else if msg.Type == tea.KeySpace {
+		e.insert(" ")
+	} else {
+		return
+	}
 	e.ensureVisible(width, height)
-	return true
 }
 
 // viewLinesCursor returns at most height wrapped lines, scrolled so the cursor

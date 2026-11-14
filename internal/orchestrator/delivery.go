@@ -26,13 +26,6 @@ type Delivery struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-func (t Task) currentAttemptID() string {
-	if len(t.Attempts) == 0 {
-		return ""
-	}
-	return t.Attempts[len(t.Attempts)-1].ID
-}
-
 func (t *Task) appendDelivery(triggerID, attemptID, state, reason string, now time.Time) {
 	t.Deliveries = append(t.Deliveries, Delivery{
 		TriggerID: triggerID,

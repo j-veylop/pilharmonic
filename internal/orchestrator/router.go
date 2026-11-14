@@ -58,13 +58,6 @@ func (s *Service) routeTopLevelRequest(text string) (string, string, error) {
 	return agent, request, nil
 }
 
-// routingProfile returns the profile name the local router assigns.
-func (s *Service) routingProfile() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.resolveProfileNameLocked("")
-}
-
 // SubmitRequest is the unified entry point for local work. It records one
 // explicit request, accepts it under the deterministic local policy, records
 // the assignment, and requests execution. Acceptance, assignment and start
@@ -74,22 +67,7 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 	if text == "" {
 		return Task{}, errors.New("request text is required")
 	}
-	agent, request, err := s.routeTopLevelRequest(text)
-	if err != nil {
-		return Task{}, err
-	}
-	plan := s.defaultWorkspacePlan(workspace, request)
-	profile, err := s.routingProfile()
-	if err != nil {
-		return Task{}, err
-	}
-	workspaceChoice := "shared workspace"
-	if plan.isolated {
-		workspaceChoice = "isolated committed-HEAD worktree"
-	}
-	assignment := fmt.Sprintf("Router assignment: agent %s, profile %s, %s, execution requested (%s)", agent, profile, workspaceChoice, LocalPolicyVersion)
-	task, err := s.createTaskWithIsolation(requestTitle(request), request, workspace, plan,
-		AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: PurposeRouter}, agent, profile, assignment)
+	task, err := s.acceptLocal(PurposeRouter, "", "", text, workspace, "")
 	if err != nil {
 		return Task{}, err
 	}

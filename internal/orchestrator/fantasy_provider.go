@@ -169,15 +169,10 @@ func bedrockRegion(ctx context.Context) string {
 	return bedrockDefaultRegion
 }
 
-// bedrockAWSConfigured reports whether Bedrock looks able to authenticate
-// without a stored bearer token, so the startup login prompt is not shown to an
-// operator whose machine already has AWS credentials. It accepts the sources
-// the AWS SDK reads without a network probe: a static key pair, a web-identity
-// token, a container credential endpoint, or a shared file that carries
-// credential material. A region-only or empty profile is not enough, and roles
-// reached only through instance metadata are not probed, so such a machine is
-// reported as unconfigured until a bearer token is stored. This only gates the
-// login prompt; model resolution still defers to the AWS SDK.
+// bedrockAWSConfigured reports whether Bedrock can likely authenticate without
+// a stored bearer token, using only sources the AWS SDK reads without a
+// network probe (instance metadata is not probed). It only gates the login
+// prompt; model resolution still defers to the AWS SDK.
 func bedrockAWSConfigured() bool {
 	if os.Getenv("AWS_ACCESS_KEY_ID") != "" && os.Getenv("AWS_SECRET_ACCESS_KEY") != "" {
 		return true

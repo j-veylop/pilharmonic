@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// DefaultConcurrency is the number of agent processes the service runs at once
-// unless the operator sets a different limit. It matches the CLI default so the
-// library and the launcher agree.
+// DefaultConcurrency is the default number of simultaneous agent runs.
 const DefaultConcurrency = 4
 
 type pendingRequest struct {
@@ -30,13 +28,10 @@ func (s *Service) SetConcurrencyLimit(limit int) error {
 	if limit < 1 {
 		return fmt.Errorf("concurrency limit must be at least 1")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	s.limit = limit
-	return s.scheduleLocked()
+	return s.whileOpen(func() error {
+		s.limit = limit
+		return s.scheduleLocked()
+	})
 }
 
 // startLocked persists the assignment before launching a worker. Caller holds mu.
@@ -66,47 +61,18 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 		t.ScheduleRequested = false
 		t.ScheduledAt = time.Time{}
 		t.UpdatedAt = time.Now().UTC()
-		// Reconcile an automatic choice with the immutable mandate before any
-		// workspace is prepared. This also applies to state written by the previous
-		// role-based heuristic. Explicit operator choices are preserved.
-		if t.IsolationAuto && t.ExecutionWorkspace == "" {
-			isolated := taskMakesChanges(t.Prompt)
-			if isolated != t.Isolated {
-				t.Isolated = isolated
-				message := "Shared source workspace selected; no requested change detected"
-				if isolated {
-					message = "Isolated worktree selected for requested change"
-				}
-				t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
-			}
-		}
+		t.reconcileAutoIsolation()
 		t.Output = ""
 		t.Error = ""
 		t.clearIntegration()
 		t.resetReview()
-		// A task accepted before profiles existed has no snapshot yet; record the one
-		// it actually runs with.
+		// A task accepted before profiles existed records the one it runs with.
 		if t.ProfileSpec == nil {
 			t.ProfileName = profile.Name
 			t.ProfileSpec = &profile
 			t.Events = append(t.Events, Event{t.UpdatedAt, "profile", "Profile resolved: " + t.ProfileName})
 		}
-		remainingDepth := s.subagentMaxDepth - t.Depth
-		remainingChildren := 0
-		if remainingDepth > 0 && s.subagentMaxChildren > 0 && !profile.NoSubagents {
-			remainingChildren = s.remainingSubagentChildrenLocked(t.ID)
-		}
-		if s.controlPath != "" && remainingDepth > 0 && remainingChildren > 0 {
-			t.controlSocket = s.controlPath
-			t.controlToken = newID()
-			t.controlGuidance = s.subagentGuidanceLocked(remainingDepth, remainingChildren)
-			if t.ParentID == "" && t.Agent == DefaultRouteAgent &&
-				(len(profile.Tools) == 0 || slices.Contains(profile.Tools, "bash")) {
-				t.controlGuidance += coordinatorGuidance(profile)
-			}
-		} else {
-			t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
-		}
+		s.grantControlLocked(t, profile)
 		t.SpecialistTools = ceiling
 		attempt := Attempt{ID: id, Agent: t.Agent, Tools: profile.Tools, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt}
 		if selector, ok := runner.(interface{ RequestedModel(*Profile) string }); ok {
@@ -135,6 +101,45 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	return nil
 }
 
+// reconcileAutoIsolation re-derives an automatic workspace choice from the
+// immutable mandate before any workspace is prepared, including for state
+// written by an older heuristic. Operator choices are preserved.
+func (t *Task) reconcileAutoIsolation() {
+	if !t.IsolationAuto || t.ExecutionWorkspace != "" {
+		return
+	}
+	isolated := taskMakesChanges(t.Prompt)
+	if isolated == t.Isolated {
+		return
+	}
+	t.Isolated = isolated
+	message := "Shared source workspace selected; no requested change detected"
+	if isolated {
+		message = "Isolated worktree selected for requested change"
+	}
+	t.Events = append(t.Events, Event{t.UpdatedAt, "workspace", message})
+}
+
+// grantControlLocked issues this attempt's delegation credentials when the
+// control socket is enabled and budget remains. Caller holds mu.
+func (s *Service) grantControlLocked(t *Task, profile Profile) {
+	t.controlSocket, t.controlToken, t.controlGuidance = "", "", ""
+	remainingDepth := s.subagentMaxDepth - t.Depth
+	if s.controlPath == "" || remainingDepth <= 0 || s.subagentMaxChildren <= 0 || profile.NoSubagents {
+		return
+	}
+	remainingChildren := s.remainingSubagentChildrenLocked(t.ID)
+	if remainingChildren <= 0 {
+		return
+	}
+	t.controlSocket = s.controlPath
+	t.controlToken = newID()
+	t.controlGuidance = s.subagentGuidanceLocked(remainingDepth, remainingChildren)
+	if t.ParentID == "" && t.Agent == DefaultRouteAgent && (len(profile.Tools) == 0 || slices.Contains(profile.Tools, "bash")) {
+		t.controlGuidance += coordinatorGuidance(profile)
+	}
+}
+
 // scheduleLocked drains explicit requests in submission order while capacity exists.
 func (s *Service) scheduleLocked() error {
 	if s.closing {
@@ -148,57 +153,49 @@ func (s *Service) scheduleLocked() error {
 		return err
 	}
 	for len(s.cancel) < s.limit {
-		next := -1
-		for i := range s.data.Tasks {
-			t := &s.data.Tasks[i]
-			if t.Status != Queued || !t.ScheduleRequested {
-				continue
-			}
-			if _, ok := s.runners[t.Agent]; !ok {
-				// Already diagnosed by failUnavailableAgentsLocked.
-				continue
-			}
-			if next < 0 || t.ScheduledAt.Before(s.data.Tasks[next].ScheduledAt) {
-				next = i
-			}
-		}
-		if next < 0 {
+		task := s.nextScheduledLocked()
+		if task == nil {
 			return nil
 		}
-		task := &s.data.Tasks[next]
 		ctx := context.Background()
 		if request := s.pending[task.ID]; request != nil {
 			ctx = request.ctx
 		}
-		if ctx.Err() != nil {
-			if err := s.cancelQueuedLocked(task, ctx.Err()); err != nil {
-				s.persistErr = err
-				return err
-			}
-			continue
+		err := ctx.Err()
+		if err == nil {
+			err = s.startLocked(ctx, task)
 		}
-		if err := s.startLocked(ctx, task); err != nil {
-			if ctx.Err() != nil {
-				if err := s.cancelQueuedLocked(task, ctx.Err()); err != nil {
-					s.persistErr = err
-					return err
-				}
-				continue
-			}
+		switch {
+		case err == nil:
+			continue
+		case ctx.Err() != nil:
+			err = s.cancelQueuedLocked(task, ctx.Err())
+		case isProfileError(err):
 			// An ineligible profile fails its own task instead of wedging the
 			// queue behind a start that can never succeed.
-			if isProfileError(err) {
-				if failErr := s.failIneligibleLocked(task, err); failErr != nil {
-					s.persistErr = failErr
-					return failErr
-				}
-				continue
-			}
+			err = s.failIneligibleLocked(task, err)
+		}
+		if err != nil {
 			s.persistErr = err
 			return err
 		}
 	}
 	return nil
+}
+
+// nextScheduledLocked returns the oldest start request whose executor exists.
+func (s *Service) nextScheduledLocked() *Task {
+	var next *Task
+	for i := range s.data.Tasks {
+		t := &s.data.Tasks[i]
+		if t.Status != Queued || !t.ScheduleRequested {
+			continue
+		}
+		if _, ok := s.runners[t.Agent]; ok && (next == nil || t.ScheduledAt.Before(next.ScheduledAt)) {
+			next = t
+		}
+	}
+	return next
 }
 
 // failUnavailableAgentsLocked fails scheduled tasks whose executor is not
@@ -232,15 +229,17 @@ func isProfileError(err error) bool {
 	return errors.As(err, &target)
 }
 
-// failIneligibleLocked records a durable failure for a task that cannot start.
-func (s *Service) failIneligibleLocked(t *Task, cause error) error {
+// settleQueuedLocked durably ends a queued request that will not start.
+func (s *Service) settleQueuedLocked(t *Task, status Status, reason, message string) error {
 	if err := s.mutateTaskLocked(t, func(t *Task) error {
-		t.Status = Failed
+		t.Status = status
 		t.ScheduleRequested = false
 		t.ScheduledAt = time.Time{}
 		t.UpdatedAt = time.Now().UTC()
-		t.Error = cause.Error()
-		t.Events = append(t.Events, Event{t.UpdatedAt, "failed", "Execution parameters rejected: " + cause.Error()})
+		if reason != "" {
+			t.Error = reason
+		}
+		t.Events = append(t.Events, Event{t.UpdatedAt, string(status), message})
 		return nil
 	}); err != nil {
 		return err
@@ -249,24 +248,15 @@ func (s *Service) failIneligibleLocked(t *Task, cause error) error {
 	return nil
 }
 
+func (s *Service) failIneligibleLocked(t *Task, cause error) error {
+	return s.settleQueuedLocked(t, Failed, cause.Error(), "Execution parameters rejected: "+cause.Error())
+}
+
 func (s *Service) cancelQueuedLocked(t *Task, cause error) error {
-	if err := s.mutateTaskLocked(t, func(t *Task) error {
-		t.Status = Canceled
-		t.ScheduleRequested = false
-		t.ScheduledAt = time.Time{}
-		t.UpdatedAt = time.Now().UTC()
-		message := "Canceled before start"
-		if cause != nil {
-			t.Error = cause.Error()
-			message = "Scheduled request canceled: " + t.Error
-		}
-		t.Events = append(t.Events, Event{t.UpdatedAt, "canceled", message})
-		return nil
-	}); err != nil {
-		return err
+	if cause == nil {
+		return s.settleQueuedLocked(t, Canceled, "", "Canceled before start")
 	}
-	s.removePendingLocked(t.ID)
-	return nil
+	return s.settleQueuedLocked(t, Canceled, cause.Error(), "Scheduled request canceled: "+cause.Error())
 }
 
 func (s *Service) watchPending(id string, request *pendingRequest) {
@@ -280,25 +270,18 @@ func (s *Service) watchPending(id string, request *pendingRequest) {
 	if s.closing || s.pending[id] != request {
 		return
 	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID == id && t.Status == Queued && t.ScheduleRequested {
-			if err := s.cancelQueuedLocked(t, request.ctx.Err()); err != nil {
-				s.persistErr = err
-			} else if schedErr := s.scheduleLocked(); schedErr != nil {
-				s.persistErr = schedErr
-			}
-			return
+	if t := s.taskLocked(id); t != nil && t.Status == Queued && t.ScheduleRequested {
+		if err := s.cancelQueuedLocked(t, request.ctx.Err()); err != nil {
+			s.persistErr = err
+		} else if schedErr := s.scheduleLocked(); schedErr != nil {
+			s.persistErr = schedErr
 		}
 	}
 }
 
-// DefaultAttemptRetention is how many attempts per task keep their full output.
-// A task that is retried many times would otherwise grow the state file by up
-// to maxOutput for every attempt. Earlier attempt records, statuses, errors and
-// timings remain; only their copied transcript is dropped, and the task records
-// one event when that happens. Zero keeps every attempt output and is the
-// explicit opt-out.
+// DefaultAttemptRetention is how many attempts per task keep their full output,
+// so an often-retried task cannot grow the state file by maxOutput per attempt.
+// Older attempts keep their record, status, error and timing. Zero keeps all.
 const DefaultAttemptRetention = 8
 
 // SetAttemptRetention changes how many attempts per task keep their full
@@ -307,13 +290,7 @@ func (s *Service) SetAttemptRetention(keep int) error {
 	if keep < 0 {
 		return errors.New("attempt retention must not be negative")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	s.attemptRetention = keep
-	return nil
+	return s.whileOpen(func() error { s.attemptRetention = keep; return nil })
 }
 
 // retainAttemptOutputs drops the copied transcript of attempts older than the

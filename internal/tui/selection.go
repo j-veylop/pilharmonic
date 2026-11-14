@@ -29,29 +29,7 @@ type textSelection struct {
 	anchor   textPosition
 	focus    textPosition
 	lines    []string
-	view     selectionView
-}
-
-// selectionView is the detail viewport mapping frozen when a drag starts.
-type selectionView struct {
-	x, y       int
-	width      int
-	start, end int
-}
-
-func (v detailViewport) selectionView() selectionView {
-	return selectionView{x: v.x, y: v.y, width: v.width, start: v.start, end: v.end}
-}
-
-func (v selectionView) viewport() detailViewport {
-	return detailViewport{x: v.x, y: v.y, width: v.width, start: v.start, end: v.end}
-}
-
-// matches reports whether a live viewport still maps the same cells to the
-// same content lines as the frozen one.
-func (v selectionView) matches(other detailViewport) bool {
-	return v.x == other.x && v.y == other.y && v.width == other.width &&
-		v.start == other.start && v.end == other.end
+	view     detailViewport
 }
 
 type selectionCopiedMsg struct {
@@ -177,6 +155,11 @@ type detailViewport struct {
 	content    []string
 }
 
+// equal reports whether two viewports map the same cells to the same lines.
+func (v detailViewport) equal(other detailViewport) bool {
+	return v.x == other.x && v.y == other.y && v.width == other.width && v.start == other.start && v.end == other.end
+}
+
 func (v detailViewport) position(x, y int) (textPosition, bool) {
 	if x < v.x || x >= v.x+v.width || y < v.y || y >= v.y+(v.end-v.start) {
 		return textPosition{}, false
@@ -209,9 +192,7 @@ func (m model) detailViewport() (detailViewport, bool) {
 	if inner < 1 || available < 1 || len(content) == 0 {
 		return detailViewport{}, false
 	}
-	offset := min(max(0, m.historyOffset), max(0, len(content)-available))
-	end := len(content) - offset
-	start := max(0, end-available)
+	start, end := m.detailWindow(len(content), available)
 	x := 0
 	if l.sidebar {
 		x = l.taskWidth + 1
@@ -227,99 +208,79 @@ func (m model) detailViewport() (detailViewport, bool) {
 }
 
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	// The quit confirmation owns the mouse as well as the keyboard: no press,
-	// release or wheel may reach a surface it covers.
+	// The quit confirmation owns the mouse as well as the keyboard.
 	if m.quitConfirm {
 		return m, nil
 	}
-	if tea.MouseEvent(msg).IsWheel() {
-		if m.help.open {
-			if msg.Button == tea.MouseButtonWheelUp {
-				m.scrollHelpBody(-3)
-			}
-			if msg.Button == tea.MouseButtonWheelDown {
-				m.scrollHelpBody(3)
-			}
-			return m, nil
-		}
-		if m.router.open || m.input.kind != "" || m.cleanup.kind != "" ||
-			m.agentPicker.target != "" || m.profilePicker.target != "" {
-			return m, nil
-		}
+	switch {
+	case tea.MouseEvent(msg).IsWheel():
+		m.mouseWheel(msg.Button)
+	case msg.Action == tea.MouseActionRelease:
+		return m.releaseSelection(msg)
+	case msg.Button != tea.MouseButtonLeft || m.help.open:
+		// Help covers the text underneath it; a click must not select it.
+	case msg.Action == tea.MouseActionPress:
 		m.selection = textSelection{}
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			m.scrollDetail(3)
-		case tea.MouseButtonWheelDown:
-			m.scrollDetail(-3)
-		}
-		return m, nil
-	}
-
-	if msg.Action == tea.MouseActionRelease {
-		if !m.selection.dragging || m.selection.button != tea.MouseButtonLeft || msg.Button != tea.MouseButtonLeft {
-			return m, nil
-		}
-		if !m.selectionMappingIntact() {
-			m.selection = textSelection{}
-			return m, nil
-		}
-		m.selection.focus = m.selection.view.viewport().clamp(msg.X, msg.Y)
-		m.selection.dragging = false
-		if !m.selection.hasRange() {
-			m.selection = textSelection{}
-			return m, nil
-		}
-		text := selectedText(m.selection.lines, m.selection)
-		if strings.TrimSpace(text) == "" {
-			m.notice.text = "Copy selection: nothing to copy."
-			return m, nil
-		}
-		return m, copySelectionCmd(text, m.clipboard)
-	}
-
-	if msg.Button != tea.MouseButtonLeft {
-		return m, nil
-	}
-
-	// Help covers the text underneath it; a click must not start a selection
-	// in a pane the operator cannot see.
-	if m.help.open {
-		return m, nil
-	}
-
-	switch msg.Action {
-	case tea.MouseActionPress:
 		viewport, ok := m.detailViewport()
 		if !ok {
-			m.selection = textSelection{}
-			return m, nil
+			break
 		}
-		position, ok := viewport.position(msg.X, msg.Y)
-		if !ok {
-			m.selection = textSelection{}
-			return m, nil
+		if position, ok := viewport.position(msg.X, msg.Y); ok {
+			m.selection = textSelection{
+				active:   true,
+				dragging: true,
+				button:   msg.Button,
+				anchor:   position,
+				focus:    position,
+				lines:    viewport.content,
+				view:     viewport,
+			}
 		}
-		m.selection = textSelection{
-			active:   true,
-			dragging: true,
-			button:   msg.Button,
-			anchor:   position,
-			focus:    position,
-			lines:    append([]string(nil), viewport.content...),
-			view:     viewport.selectionView(),
-		}
-	case tea.MouseActionMotion:
-		if !m.selection.dragging {
-			return m, nil
-		}
+	case msg.Action == tea.MouseActionMotion && m.selection.dragging:
 		if !m.selectionMappingIntact() {
 			m.selection = textSelection{}
-			return m, nil
+			break
 		}
-		m.selection.focus = m.selection.view.viewport().clamp(msg.X, msg.Y)
+		m.selection.focus = m.selection.view.clamp(msg.X, msg.Y)
 	}
 	return m, nil
+}
+
+func (m *model) mouseWheel(button tea.MouseButton) {
+	delta := map[tea.MouseButton]int{tea.MouseButtonWheelUp: 3, tea.MouseButtonWheelDown: -3}[button]
+	if m.help.open {
+		m.scrollHelpBody(-delta)
+		return
+	}
+	if m.router.open || m.input.kind != "" || m.cleanup.kind != "" ||
+		m.agentPicker.target != "" || m.profilePicker.target != "" {
+		return
+	}
+	m.selection = textSelection{}
+	m.scrollDetail(delta)
+}
+
+// releaseSelection copies a finished drag through OSC 52.
+func (m model) releaseSelection(msg tea.MouseMsg) (model, tea.Cmd) {
+	if !m.selection.dragging || m.selection.button != tea.MouseButtonLeft || msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	if !m.selectionMappingIntact() {
+		m.selection = textSelection{}
+		return m, nil
+	}
+	m.selection.focus = m.selection.view.clamp(msg.X, msg.Y)
+	m.selection.dragging = false
+	if !m.selection.hasRange() {
+		m.selection = textSelection{}
+		return m, nil
+	}
+	text := selectedText(m.selection.lines, m.selection)
+	if strings.TrimSpace(text) == "" {
+		m.notice.text = "Copy selection: nothing to copy."
+		return m, nil
+	}
+	return m, copySelectionCmd(text, m.clipboard)
 }
 
 // selectionMappingIntact reports whether the live detail pane still maps the
@@ -329,7 +290,7 @@ func (m model) selectionMappingIntact() bool {
 		return false
 	}
 	viewport, ok := m.detailViewport()
-	return ok && m.selection.view.matches(viewport)
+	return ok && m.selection.view.equal(viewport)
 }
 
 // cancelStaleSelection drops a pending selection once output, scrolling or a

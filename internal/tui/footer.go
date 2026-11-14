@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -77,31 +77,16 @@ func (m model) footer(w int) string {
 	case m.detailFocus || m.fullscreen:
 		footerText = "j/k scroll · T thinking · h tasks · ? help · q quit"
 	}
-	var hints []string
-	for _, line := range strings.Split(footerText, "\n") {
-		var parts []string
-		for _, hint := range strings.Split(line, " · ") {
-			key, desc, _ := strings.Cut(hint, " ")
-			parts = append(parts, keyStyle.Render(key)+mutedStyle.Render(" "+desc))
-		}
-		hints = append(hints, strings.Join(parts, faintStyle.Render("  ·  ")))
-	}
-	footer := strings.Join(hints, "\n")
+	footer := renderHints(strings.Split(footerText, " · ")...)
 	if m.notice.text != "" {
 		footer = accentStyle.Render("› "+singleLine(m.notice.text)) + "\n" + footer
 	}
 	if m.notice.service != "" {
 		footer = warningStyle.Render("› "+singleLine(m.notice.service)) + "\n" + footer
 	}
-	switch m.cleanup.kind {
-	case deleteTask:
-		footer = accentStyle.Render("DELETE TASK + HISTORY  › "+singleLine(m.cleanup.title)) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Removes its worktree; source workspace is untouched.")
-	case deleteCompleted:
-		footer = accentStyle.Render(fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y delete  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Tasks with unfinished children are kept; worktrees are removed.")
-	case discardTask:
-		footer = accentStyle.Render("DISCARD RETAINED WORKTREE  › "+singleLine(m.cleanup.title)) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Refuses uncommitted or unmerged work; task history is kept.")
-	case discardMerged:
-		footer = accentStyle.Render(fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", len(m.cleanup.ids))) + "\n" + mutedStyle.Render("y discard  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render("Skips uncommitted or unmerged work; task history is kept.")
+	if m.cleanup.kind != "" {
+		title, answer, note := m.cleanup.prompt()
+		footer = accentStyle.Render(title) + "\n" + mutedStyle.Render(answer+"  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render(note)
 	}
 	if m.agentPicker.target != "" {
 		footer = mutedStyle.Render("↑↓/j/k choose agent · enter select · f1 help · esc cancel")
@@ -110,4 +95,24 @@ func (m model) footer(w int) string {
 		footer = mutedStyle.Render("↑↓/j/k choose profile · enter select · f1 help · esc cancel")
 	}
 	return ansi.Hardwrap(footer, w, true)
+}
+
+// renderHints styles "key description" hints as one row.
+func renderHints(hints ...string) string {
+	parts := make([]string, len(hints))
+	for i, hint := range hints {
+		key, desc, _ := strings.Cut(hint, " ")
+		parts[i] = keyStyle.Render(key) + mutedStyle.Render(" "+desc)
+	}
+	return strings.Join(parts, faintStyle.Render("  ·  "))
+}
+
+// fitHints drops trailing hints until the row fits width, so a label is never
+// cut in half unless even the first one overflows.
+func fitHints(width int, hints ...string) string {
+	row := renderHints(hints...)
+	for n := len(hints) - 1; n > 0 && lipgloss.Width(row) > width; n-- {
+		row = renderHints(hints[:n]...)
+	}
+	return fit(row, width, 1)
 }

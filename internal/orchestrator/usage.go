@@ -87,7 +87,7 @@ func (w outputWriter) RecordUsage(model string, usage TokenUsage) error {
 	w.s.mu.Lock()
 	defer w.s.mu.Unlock()
 	if w.s.closing {
-		return errors.New("service is shutting down")
+		return errShuttingDown
 	}
 	t, err := w.taskLocked()
 	if err != nil {

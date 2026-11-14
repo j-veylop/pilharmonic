@@ -11,13 +11,18 @@ import (
 	"time"
 )
 
+// testSocketPath returns a socket path short enough for the platform limit on
+// Unix socket names, which a per-test temp directory can exceed on macOS.
+func testSocketPath(t *testing.T) string {
+	dir, err := os.MkdirTemp("", "orch")
+	must(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "c.sock")
+}
+
 func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 	started := make(chan Task, 2)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
@@ -29,21 +34,13 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 		_, err := io.WriteString(out, "child result")
 		return err
 	}))
-	parent, err := s.CreateTask("parent", "parent mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "parent mandate", t.TempDir())
+	must(t, s.Start(context.Background(), parent.ID))
 	parentRun := <-started
 	if parentRun.ID != parent.ID {
 		t.Fatalf("unexpected start: %+v", parentRun)
 	}
-	child, err := s.SpawnSubagent(parent.ID, "child title", "child mandate only", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	child := mustGet(s.SpawnSubagent(parent.ID, "child title", "child mandate only", ""))(t)
 	<-started
 	done := await(t, s, child.ID, Completed)
 	close(release)
@@ -79,10 +76,7 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 		t.Fatalf("parent did not record spawn: %+v", gotParent.Events)
 	}
 
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustGet(Open(path))(t)
 	defer func() { _ = restored.Shutdown() }()
 	reloaded, ok := restored.GetTask(child.ID)
 	if !ok || reloaded.ParentID != parent.ID || reloaded.Depth != 1 || reloaded.Decision.PolicyVersion != SubagentPolicyVersion || reloaded.Prompt != "child mandate only" {
@@ -91,7 +85,7 @@ func TestSpawnSubagentCreatesIndependentTask(t *testing.T) {
 }
 
 func TestSubagentAutomaticSelectionCanChooseImplementer(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	started := make(chan Task, 2)
 	release := make(chan struct{})
 	s.RegisterRunner(DefaultRouteAgent, runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
@@ -108,21 +102,13 @@ func TestSubagentAutomaticSelectionCanChooseImplementer(t *testing.T) {
 		return nil
 	}))
 
-	parent, err := s.CreateTask("parent", "parent mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "parent mandate", t.TempDir())
+	must(t, s.Start(context.Background(), parent.ID))
 	if run := <-started; run.ID != parent.ID || run.Agent != DefaultRouteAgent {
 		t.Fatalf("parent executor %q for task %q, want %q", run.Agent, run.ID, DefaultRouteAgent)
 	}
 
-	child, err := s.SpawnSubagent(parent.ID, "", "add a parser", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	child := mustGet(s.SpawnSubagent(parent.ID, "", "add a parser", ""))(t)
 	if child.Agent != "implementer" {
 		t.Fatalf("delegated automatic route selected %q, want implementer", child.Agent)
 	}
@@ -136,11 +122,7 @@ func TestSubagentAutomaticSelectionCanChooseImplementer(t *testing.T) {
 }
 
 func TestSpawnSubagentDuringWorkspacePreparation(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	// startLocked marks the attempt running before the worker has prepared
 	// the worktree. Reproduce that window without racing a real git process.
 	parent := Task{ID: "parent", Status: Running, Isolated: true, Workspace: t.TempDir(), Agent: DefaultRouteAgent}
@@ -154,11 +136,8 @@ func TestSpawnSubagentDuringWorkspacePreparation(t *testing.T) {
 }
 
 func TestSpawnSubagentRequiresRunningParentAndHonorsLimits(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	var err error
+	s := newTestService(t)
 	started := make(chan Task, 4)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
@@ -170,24 +149,14 @@ func TestSpawnSubagentRequiresRunningParentAndHonorsLimits(t *testing.T) {
 			return ctx.Err()
 		}
 	}))
-	parent, err := s.CreateTask("parent", "parent mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "parent mandate", t.TempDir())
 	if _, err = s.SpawnSubagent(parent.ID, "", "too early", ""); err == nil || !strings.Contains(err.Error(), "not running") {
 		t.Fatalf("spawned from queued parent: %v", err)
 	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), parent.ID))
 	<-started
-	if err = s.SetSubagentLimits(1, 1); err != nil {
-		t.Fatal(err)
-	}
-	child, err := s.SpawnSubagent(parent.ID, "", "first child", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetSubagentLimits(1, 1))
+	child := mustGet(s.SpawnSubagent(parent.ID, "", "first child", ""))(t)
 	<-started
 	if _, err = s.SpawnSubagent(parent.ID, "", "second child", ""); err == nil || !strings.Contains(err.Error(), "subagent limit") {
 		t.Fatalf("child limit not enforced: %v", err)
@@ -204,11 +173,8 @@ func TestSpawnSubagentRequiresRunningParentAndHonorsLimits(t *testing.T) {
 }
 
 func TestSubagentControlRoundTripAndCredentials(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	var err error
+	s := newTestService(t)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
 		if task.ParentID == "" {
@@ -222,29 +188,16 @@ func TestSubagentControlRoundTripAndCredentials(t *testing.T) {
 		_, err := io.WriteString(out, "delegated output")
 		return err
 	}))
-	parent, err := s.CreateTask("parent", "parent mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
-	socket := filepath.Join(t.TempDir(), "control.sock")
-	if err = s.EnableSubagentControl(socket); err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "parent mandate", t.TempDir())
+	must(t, s.Start(context.Background(), parent.ID))
+	socket := testSocketPath(t)
+	must(t, s.EnableSubagentControl(socket))
 	// The parent started before control was enabled, so restart it to receive
 	// credentials in this test.
-	if err = s.Cancel(parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(parent.ID))
 	await(t, s, parent.ID, Canceled)
-	if err = s.Retry(parent.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(parent.ID))
+	must(t, s.Start(context.Background(), parent.ID))
 	deadline := time.Now().Add(time.Second)
 	var token string
 	for time.Now().Before(deadline) {
@@ -400,13 +353,9 @@ func TestSubagentBudgetGuidanceCountsExistingChildrenOnRetry(t *testing.T) {
 // durable children. The returned started channel receives top-level attempts.
 func retryParentWithChildren(t *testing.T, children, maxChildren int) (*Service, chan Task, chan struct{}, Task) {
 	t.Helper()
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.SetSubagentLimits(DefaultMaxSubagentDepth, maxChildren); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetSubagentLimits(DefaultMaxSubagentDepth, maxChildren))
+	must(t, s.EnableSubagentControl(testSocketPath(t)))
 	started := make(chan Task, 4)
 	release := make(chan struct{})
 	s.RegisterRunner(DefaultRouteAgent, runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
@@ -421,13 +370,8 @@ func retryParentWithChildren(t *testing.T, children, maxChildren int) (*Service,
 			return ctx.Err()
 		}
 	}))
-	parent, err := s.CreateTask("parent", "inspect and fix the parser", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "inspect and fix the parser", t.TempDir())
+	must(t, s.Start(context.Background(), parent.ID))
 	<-started
 	for i := 0; i < children; i++ {
 		child, spawnErr := s.SpawnSubagent(parent.ID, "", "child mandate", "")
@@ -436,24 +380,16 @@ func retryParentWithChildren(t *testing.T, children, maxChildren int) (*Service,
 		}
 		await(t, s, child.ID, Completed)
 	}
-	if err = s.Cancel(parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(parent.ID))
 	await(t, s, parent.ID, Canceled)
-	if err = s.Retry(parent.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(parent.ID))
+	must(t, s.Start(context.Background(), parent.ID))
 	return s, started, release, parent
 }
 
 func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.EnableSubagentControl(testSocketPath(t)))
 	started := make(chan Task, 2)
 	release := make(chan struct{})
 	s.RegisterRunner(DefaultRouteAgent, runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
@@ -467,13 +403,8 @@ func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T
 		}
 		return nil
 	}))
-	parent, err := s.CreateTask("parent", "inspect and fix the parser", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), parent.ID); err != nil {
-		t.Fatal(err)
-	}
+	parent := createTask(t, s, "parent", "inspect and fix the parser", t.TempDir())
+	must(t, s.Start(context.Background(), parent.ID))
 	running := <-started
 	prompt := composeInput(running)
 	for _, want := range []string{
@@ -493,10 +424,7 @@ func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T
 			t.Fatalf("missing %q in coordinator prompt", want)
 		}
 	}
-	child, err := s.SpawnSubagent(parent.ID, "", "inspect the parser", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	child := mustGet(s.SpawnSubagent(parent.ID, "", "inspect the parser", ""))(t)
 	childRunning := <-started
 	if strings.Contains(composeInput(childRunning), "Coordinator delegation guidance") {
 		t.Fatal("delegated child received coordinator guidance")
@@ -510,23 +438,16 @@ func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T
 }
 
 func TestCoordinatorGuidanceRequiresShellAccess(t *testing.T) {
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.EnableSubagentControl(testSocketPath(t)))
 	registerProfileForTest(t, s, Profile{Name: "inspect", Tools: []string{"read"}, CoordinatorInstructions: "Use the helper."})
 	started := make(chan Task, 1)
 	s.RegisterRunner(DefaultRouteAgent, supportingRunner{runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		started <- task
 		return nil
 	})})
-	task, err := s.CreateTaskWithProfile("parent", "inspect the parser", t.TempDir(), "inspect")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := mustGet(s.CreateTaskWithProfile("parent", "inspect the parser", t.TempDir(), "inspect"))(t)
+	must(t, s.Start(context.Background(), task.ID))
 	running := <-started
 	if strings.Contains(running.controlGuidance, "Coordinator delegation guidance") || strings.Contains(running.controlGuidance, "Coordinator instructions") {
 		t.Fatalf("coordinator guidance appended without shell access: %q", running.controlGuidance)
@@ -536,17 +457,9 @@ func TestCoordinatorGuidanceRequiresShellAccess(t *testing.T) {
 
 func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	if err = s.EnableSubagentControl(filepath.Join(t.TempDir(), "control.sock")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"reviewer","description":"Review Go concurrency.","command":"cat"}]}`)); err != nil {
-		t.Fatal(err)
-	}
+	s := openTestService(t, path)
+	must(t, s.EnableSubagentControl(testSocketPath(t)))
+	must(t, s.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"reviewer","description":"Review Go concurrency.","command":"cat"}]}`)))
 	seen := make(chan Task, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
@@ -554,17 +467,12 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	}))
 	const instruction = "Delegate repository inspection to explorer."
 	registerProfileForTest(t, s, Profile{Name: "lead", CoordinatorInstructions: instruction})
-	task, err := s.CreateTaskWithProfile("parent", "mandate", t.TempDir(), "lead")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := mustGet(s.CreateTaskWithProfile("parent", "mandate", t.TempDir(), "lead"))(t)
+	must(t, s.Start(context.Background(), task.ID))
 	running := <-seen
 	for _, want := range []string{instruction, "Coordinator delegation guidance:", "delegate multiple focused subtasks"} {
 		if !strings.Contains(composeInput(running), want) {
-			t.Fatalf("missing %q in Pi prompt", want)
+			t.Fatalf("missing %q in prompt", want)
 		}
 	}
 	if !strings.Contains(running.controlGuidance, `"reviewer" — Review Go concurrency.`) || !strings.Contains(running.controlGuidance, "--agent NAME") {
@@ -584,25 +492,15 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	if cleared.controlToken != "" || cleared.controlSocket != "" {
 		t.Fatalf("credentials survived attempt end: %+v", cleared)
 	}
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	contents := mustGet(os.ReadFile(path))(t)
 	if strings.Contains(string(contents), "ORCHESTRATOR_SUBAGENT_TOKEN") || strings.Contains(string(contents), running.controlToken) {
 		t.Fatal("control credential was persisted")
 	}
 }
 
 func TestNoteSubagentStartFailureRecordsEvent(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	task, err := s.CreateTask("child", "do work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	task := createTask(t, s, "child", "do work", t.TempDir())
 	s.noteSubagentStartFailure(task.ID, errors.New("no capacity"))
 	updated, ok := s.GetTask(task.ID)
 	if !ok {

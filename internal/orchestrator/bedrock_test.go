@@ -52,12 +52,8 @@ func isolateProviderEnvironment(t *testing.T) {
 func writeAWSFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	must(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }
 
@@ -66,11 +62,7 @@ func writeAWSFile(t *testing.T, dir, name, content string) string {
 // that a lone or incomplete signal does not.
 func TestBedrockConfiguredThroughAWSCredentialChain(t *testing.T) {
 	isolateProviderEnvironment(t)
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 
 	bedrock := func() bool {
 		for _, c := range s.ProviderCredentials() {
@@ -196,11 +188,7 @@ func TestBedrockSharedFileEnvironmentPaths(t *testing.T) {
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", writeAWSFile(t, dir, "credentials", "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = secret\n"))
 	t.Setenv("AWS_CONFIG_FILE", writeAWSFile(t, dir, "config", "[default]\nregion = eu-central-1\n"))
 
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	if !s.AnyProviderConfigured() {
 		t.Fatal("shared credentials file override did not configure bedrock")
 	}
@@ -217,11 +205,7 @@ func TestBedrockSharedFileEnvironmentPaths(t *testing.T) {
 // without contacting AWS.
 func TestBedrockBearerTokenResolvesModel(t *testing.T) {
 	isolateProviderEnvironment(t)
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 
 	if err := s.SetProviderCredential("bedrock", ""); err == nil {
 		t.Fatal("empty bearer token accepted")
@@ -229,9 +213,7 @@ func TestBedrockBearerTokenResolvesModel(t *testing.T) {
 		t.Fatalf("unexpected error for an empty bearer token: %v", err)
 	}
 
-	if err := s.SetProviderCredential("bedrock", "bedrock-bearer-token"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetProviderCredential("bedrock", "bedrock-bearer-token"))
 	for _, modelID := range []string{
 		"bedrock/us.anthropic.claude-sonnet-4-6-v1:0",
 		// An inference-profile ARN carries its own slashes; only the prefix
@@ -256,18 +238,10 @@ func TestBedrockLogoutKeepsAWSChainConfigured(t *testing.T) {
 	isolateProviderEnvironment(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 
-	if err := s.SetProviderCredential("bedrock", "bedrock-bearer-token"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RemoveProviderCredential("bedrock"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetProviderCredential("bedrock", "bedrock-bearer-token"))
+	must(t, s.RemoveProviderCredential("bedrock"))
 	if !s.AnyProviderConfigured() {
 		t.Fatal("AWS credential chain stopped configuring bedrock after logout")
 	}
@@ -355,19 +329,10 @@ func TestBedrockModelListingUsesAWS(t *testing.T) {
 		return []string{"us.anthropic.live-model-v1:0"}, nil
 	}
 
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	if err := s.SetProviderCredential("bedrock", "bearer-secret"); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetProviderCredential("bedrock", "bearer-secret"))
 
-	models, err := s.FetchModels(t.Context(), "bedrock")
-	if err != nil {
-		t.Fatal(err)
-	}
+	models := mustGet(s.FetchModels(t.Context(), "bedrock"))(t)
 	if len(models) != 1 || models[0] != "us.anthropic.live-model-v1:0" || gotToken != "bearer-secret" {
 		t.Fatalf("unexpected listing: models=%v token=%q", models, gotToken)
 	}

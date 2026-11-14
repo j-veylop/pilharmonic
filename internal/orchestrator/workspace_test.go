@@ -45,9 +45,7 @@ func committedRepo(t *testing.T) string {
 	testGit(t, dir, "config", "user.email", "test@example.com")
 	testGit(t, dir, "config", "user.name", "Test")
 	testGit(t, dir, "config", "commit.gpgsign", "false")
-	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("committed\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("committed\n"), 0600))
 	testGit(t, dir, "add", "tracked.txt")
 	testGit(t, dir, "commit", "-q", "-m", "initial")
 	return dir
@@ -55,20 +53,29 @@ func committedRepo(t *testing.T) string {
 
 func openTestService(t *testing.T, path string) *Service {
 	t.Helper()
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
 	t.Cleanup(func() { _ = s.Shutdown() })
 	return s
+}
+
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	return openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+}
+
+// startIsolated creates a task, selects a dedicated worktree and starts it.
+func startIsolated(t *testing.T, s *Service, title, prompt, workspace string) Task {
+	t.Helper()
+	task := createTask(t, s, title, prompt, workspace)
+	must(t, s.SetTaskIsolation(task.ID, true))
+	must(t, s.Start(context.Background(), task.ID))
+	return task
 }
 
 func TestIsolatedExecutionRunsInCommittedWorktree(t *testing.T) {
 	repo := committedRepo(t)
 	head := testGit(t, repo, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("local only"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("local only"), 0600))
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, statePath)
 	seen := make(chan Task, 1)
@@ -76,16 +83,7 @@ func TestIsolatedExecutionRunsInCommittedWorktree(t *testing.T) {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("isolated", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "isolated", "do work", repo)
 	done := await(t, s, task.ID, Completed)
 	run := <-seen
 	wantCwd := filepath.Join(filepath.Dir(statePath), "workspaces", task.ID, "tree")
@@ -107,13 +105,8 @@ func TestIsolatedExecutionRunsInCommittedWorktree(t *testing.T) {
 	if done.Workspace != repo {
 		t.Fatalf("source workspace changed: %q", done.Workspace)
 	}
-	if err := s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := Open(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Shutdown())
+	restored := mustGet(Open(statePath))(t)
 	defer func() { _ = restored.Shutdown() }()
 	got, ok := restored.GetTask(task.ID)
 	if !ok || !got.Isolated || got.ExecutionWorkspace != run.Workspace || got.IsolationCommit != head {
@@ -145,23 +138,10 @@ func TestIsolatedRetryReusesPreparedWorktree(t *testing.T) {
 		}
 		return nil
 	}))
-	task, err := s.CreateTask("retry", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "retry", "do work", repo)
 	await(t, s, task.ID, Failed)
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	mu.Lock()
 	defer mu.Unlock()
@@ -174,13 +154,11 @@ func TestIsolatedRetryReusesPreparedWorktree(t *testing.T) {
 }
 
 func TestIsolatedExecutionRequiresRepository(t *testing.T) {
+	var err error
 	requireGit(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	dir := t.TempDir()
-	task, err := s.CreateTask("plain", "do work", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "plain", "do work", dir)
 	// Isolation is validated when it is requested, not when the attempt starts.
 	err = s.SetTaskIsolation(task.ID, true)
 	if err == nil || !strings.Contains(err.Error(), "cannot be isolated") {
@@ -205,14 +183,12 @@ func TestIsolatedExecutionRequiresRepository(t *testing.T) {
 }
 
 func TestIsolatedExecutionRequiresCommit(t *testing.T) {
+	var err error
 	requireGit(t)
 	repo := t.TempDir()
 	testGit(t, repo, "init", "-q")
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	task, err := s.CreateTask("unborn", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	task := createTask(t, s, "unborn", "do work", repo)
 	if err = s.SetTaskIsolation(task.ID, true); err == nil || !strings.Contains(err.Error(), "committed HEAD") {
 		t.Fatalf("isolation accepted for an unborn repository: %v", err)
 	}
@@ -224,30 +200,17 @@ func TestIsolatedExecutionRequiresCommit(t *testing.T) {
 func TestIsolatedSubdirectoryWorkspace(t *testing.T) {
 	repo := committedRepo(t)
 	sub := filepath.Join(repo, "sub")
-	if err := os.Mkdir(sub, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sub, "inside.txt"), []byte("inside\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(sub, 0700))
+	must(t, os.WriteFile(filepath.Join(sub, "inside.txt"), []byte("inside\n"), 0600))
 	testGit(t, repo, "add", "sub/inside.txt")
 	testGit(t, repo, "commit", "-q", "-m", "subdirectory")
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	seen := make(chan Task, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("sub", "work in subdirectory", sub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "sub", "work in subdirectory", sub)
 	await(t, s, task.ID, Completed)
 	run := <-seen
 	if filepath.Base(run.Workspace) != "sub" || !strings.Contains(run.Workspace, "tree") {
@@ -265,27 +228,12 @@ func TestIsolatedWorkspaceOwnershipMismatch(t *testing.T) {
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		return errors.New("attempt failed")
 	}))
-	task, err := s.CreateTask("owner", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "owner", "do work", repo)
 	await(t, s, task.ID, Failed)
 	ownerPath := filepath.Join(filepath.Dir(statePath), "workspaces", task.ID, "owner.json")
-	if err := os.WriteFile(ownerPath, []byte(`{"task_id":"someone-else"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(ownerPath, []byte(`{"task_id":"someone-else"}`), 0600))
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Failed)
 	if !strings.Contains(done.Error, "ownership") {
 		t.Fatalf("tampered reservation was accepted: %q", done.Error)
@@ -299,30 +247,13 @@ func TestIsolatedWorkspaceRejectsSymlinkReservation(t *testing.T) {
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		return errors.New("attempt failed")
 	}))
-	task, err := s.CreateTask("symlink", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "symlink", "do work", repo)
 	await(t, s, task.ID, Failed)
 	reservation := filepath.Join(filepath.Dir(statePath), "workspaces", task.ID)
-	if err := os.RemoveAll(reservation); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(t.TempDir(), reservation); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.RemoveAll(reservation))
+	must(t, os.Symlink(t.TempDir(), reservation))
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Failed)
 	if !strings.Contains(done.Error, "regular directory") {
 		t.Fatalf("symlink reservation was accepted: %q", done.Error)
@@ -331,18 +262,9 @@ func TestIsolatedWorkspaceRejectsSymlinkReservation(t *testing.T) {
 
 func TestIsolatedWorkspaceIsCleanedUpWithTaskDeletion(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-	task, err := s.CreateTask("delete", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "delete", "do work", repo)
 	done := await(t, s, task.ID, Completed)
 	if done.ExecutionWorkspace == "" {
 		t.Fatal("no execution workspace recorded")
@@ -351,9 +273,7 @@ func TestIsolatedWorkspaceIsCleanedUpWithTaskDeletion(t *testing.T) {
 	if _, err := os.Stat(reservation); err != nil {
 		t.Fatalf("worktree reservation missing before deletion: %v", err)
 	}
-	if err = s.DeleteTask(task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.DeleteTask(task.ID))
 	if _, err := os.Stat(done.ExecutionWorkspace); !os.IsNotExist(err) {
 		t.Fatalf("worktree was retained after deletion: %v", err)
 	}
@@ -370,7 +290,7 @@ func TestIsolatedWorkspaceIsCleanedUpWithTaskDeletion(t *testing.T) {
 
 func TestCanceledIsolatedWorkspaceIsRetainedUntilDeletion(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	started := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
 		if err := os.WriteFile(filepath.Join(task.Workspace, "canceled.txt"), []byte("partial work"), 0600); err != nil {
@@ -380,27 +300,14 @@ func TestCanceledIsolatedWorkspaceIsRetainedUntilDeletion(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	task, err := s.CreateTask("canceled", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "canceled", "do work", repo)
 	<-started
-	if err = s.Cancel(task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(task.ID))
 	done := await(t, s, task.ID, Canceled)
 	if _, err := os.Stat(filepath.Join(done.ExecutionWorkspace, "canceled.txt")); err != nil {
 		t.Fatalf("canceled worktree was cleaned up before deletion: %v", err)
 	}
-	if err = s.DeleteTask(task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.DeleteTask(task.ID))
 	reservation := filepath.Join(filepath.Dir(s.path), "workspaces", task.ID)
 	if _, err := os.Stat(reservation); !os.IsNotExist(err) {
 		t.Fatalf("canceled worktree reservation was retained after deletion: %v", err)
@@ -409,7 +316,7 @@ func TestCanceledIsolatedWorkspaceIsRetainedUntilDeletion(t *testing.T) {
 
 func TestDeleteCompletedTasksCleansUpWorktrees(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
 	var tasks []Task
 	for _, title := range []string{"first", "second"} {
@@ -420,9 +327,7 @@ func TestDeleteCompletedTasksCleansUpWorktrees(t *testing.T) {
 		tasks = append(tasks, task)
 	}
 	for _, task := range tasks {
-		if err := s.Start(context.Background(), task.ID); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.Start(context.Background(), task.ID))
 	}
 	var reservations []string
 	for _, task := range tasks {
@@ -447,44 +352,31 @@ func TestDeleteCompletedTasksCleansUpWorktrees(t *testing.T) {
 }
 
 func TestIsolationToggleRules(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.SetConcurrencyLimit(1); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetConcurrencyLimit(1))
 	started := make(chan struct{}, 1)
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
 		started <- struct{}{}
 		<-ctx.Done()
 		return ctx.Err()
 	}))
-	first, err := s.CreateTask("first", "one", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(first.ID, true); err != nil {
-		t.Fatal(err)
-	}
+	first := createTask(t, s, "first", "one", repo)
+	must(t, s.SetTaskIsolation(first.ID, true))
 	if err = s.SetTaskIsolation(first.ID, true); err != nil {
 		t.Fatalf("repeated toggle failed: %v", err)
 	}
 	if err = s.SetTaskIsolation("missing", true); err == nil {
 		t.Fatal("unknown task accepted")
 	}
-	if err = s.Start(context.Background(), first.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), first.ID))
 	<-started
 	if err = s.SetTaskIsolation(first.ID, false); err == nil || !strings.Contains(err.Error(), "unscheduled queued") {
 		t.Fatalf("running task toggle error: %v", err)
 	}
-	second, err := s.CreateTask("second", "two", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), second.ID); err != nil {
-		t.Fatal(err)
-	}
+	second := createTask(t, s, "second", "two", repo)
+	must(t, s.Start(context.Background(), second.ID))
 	scheduled, _ := s.GetTask(second.ID)
 	if !scheduled.ScheduleRequested {
 		t.Fatal("second task was not scheduled")
@@ -492,39 +384,25 @@ func TestIsolationToggleRules(t *testing.T) {
 	if err = s.SetTaskIsolation(second.ID, true); err == nil || !strings.Contains(err.Error(), "unscheduled queued") {
 		t.Fatalf("scheduled task toggle error: %v", err)
 	}
-	if err = s.Cancel(first.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Cancel(second.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(first.ID))
+	must(t, s.Cancel(second.ID))
 	await(t, s, first.ID, Canceled)
 	await(t, s, second.ID, Canceled)
 }
 
 func TestPreparedIsolatedWorkspaceCannotBeToggled(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
 		return errors.New("attempt failed")
 	}))
-	task, err := s.CreateTask("prepared", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "prepared", "do work", repo)
 	done := await(t, s, task.ID, Failed)
 	if done.ExecutionWorkspace == "" {
 		t.Fatal("workspace was not prepared")
 	}
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(task.ID))
 	if err = s.SetTaskIsolation(task.ID, false); err == nil || !strings.Contains(err.Error(), "retained for retries") {
 		t.Fatalf("prepared workspace toggle error: %v", err)
 	}
@@ -532,16 +410,13 @@ func TestPreparedIsolatedWorkspaceCannotBeToggled(t *testing.T) {
 
 func TestNewChangeTasksDefaultToIsolationInCommittedRepository(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	seen := make(chan Task, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("default isolated", "fix the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "default isolated", "fix the parser", repo)
 	if !task.Isolated {
 		t.Fatal("new change task did not default to isolation")
 	}
@@ -554,9 +429,7 @@ func TestNewChangeTasksDefaultToIsolationInCommittedRepository(t *testing.T) {
 	if !foundEvent {
 		t.Fatalf("default isolation was not recorded: %+v", task.Events)
 	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	run := <-seen
 	wantCwd := filepath.Join(filepath.Dir(s.path), "workspaces", task.ID, "tree")
@@ -567,22 +440,17 @@ func TestNewChangeTasksDefaultToIsolationInCommittedRepository(t *testing.T) {
 
 func TestNewTasksUseSharedWorkspaceWhenIsolationIsUnavailable(t *testing.T) {
 	dir := t.TempDir()
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	seen := make(chan Task, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("plain", "do work", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "plain", "do work", dir)
 	if task.Isolated {
 		t.Fatal("task without an isolatable repository requested isolation")
 	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	run := <-seen
 	if run.Workspace != dir || done.ExecutionWorkspace != "" {
@@ -592,25 +460,18 @@ func TestNewTasksUseSharedWorkspaceWhenIsolationIsUnavailable(t *testing.T) {
 
 func TestDefaultIsolationCanBeDisabled(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
-	if err := s.SetDefaultIsolation(false); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetDefaultIsolation(false))
 	seen := make(chan Task, 1)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		seen <- task
 		return nil
 	}))
-	task, err := s.CreateTask("shared", "fix the parser", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "shared", "fix the parser", repo)
 	if task.Isolated {
 		t.Fatal("default isolation override was ignored")
 	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Completed)
 	if run := <-seen; run.Workspace != repo {
 		t.Fatalf("runner cwd %q, want shared source %q", run.Workspace, repo)
@@ -624,20 +485,11 @@ func TestEmptyReservationIsRecreated(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, statePath)
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-	task, err := s.CreateTask("empty", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "empty", "do work", repo)
+	must(t, s.SetTaskIsolation(task.ID, true))
 	reservation := filepath.Join(filepath.Dir(statePath), "workspaces", task.ID)
-	if err = os.MkdirAll(reservation, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(reservation, 0700))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if done.ExecutionWorkspace == "" {
 		t.Fatalf("empty reservation was not recreated: %+v", done)
@@ -650,8 +502,9 @@ func TestEmptyReservationIsRecreated(t *testing.T) {
 // An interrupted worktree add leaves a directory Git does not recognise and a
 // stale registration; a retry must repair both instead of failing forever.
 func TestBrokenWorktreeIsRepaired(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	var mu sync.Mutex
 	attempts := 0
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error {
@@ -664,36 +517,17 @@ func TestBrokenWorktreeIsRepaired(t *testing.T) {
 		}
 		return nil
 	}))
-	task, err := s.CreateTask("broken", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "broken", "do work", repo)
 	failed := await(t, s, task.ID, Failed)
 	tree := failed.ExecutionWorkspace
 	if tree == "" {
 		t.Fatal("worktree was not prepared")
 	}
-	if err = os.RemoveAll(tree); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.MkdirAll(tree, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(tree, "partial"), []byte("partial"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.RemoveAll(tree))
+	must(t, os.MkdirAll(tree, 0700))
+	must(t, os.WriteFile(filepath.Join(tree, "partial"), []byte("partial"), 0600))
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Completed)
 	if _, err = os.Stat(filepath.Join(tree, "tracked.txt")); err != nil {
 		t.Fatalf("broken worktree was not repaired: %v", err)

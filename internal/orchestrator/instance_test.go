@@ -6,11 +6,9 @@ import (
 )
 
 func TestInstanceLockExcludesSecondHolder(t *testing.T) {
+	var err error
 	statePath := filepath.Join(t.TempDir(), "state.json")
-	release, err := AcquireInstanceLock(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	release := mustGet(AcquireInstanceLock(statePath))(t)
 	if _, err = AcquireInstanceLock(statePath); err == nil {
 		t.Fatal("second instance lock on the same state file succeeded")
 	}

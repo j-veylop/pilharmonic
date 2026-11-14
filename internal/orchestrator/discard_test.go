@@ -17,16 +17,7 @@ import (
 // worktree with recorded worktree and merge commits.
 func mergedIsolatedTask(t *testing.T, s *Service, repo, title string) Task {
 	t.Helper()
-	task, err := s.CreateTask(title, "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, title, "do work", repo)
 	await(t, s, task.ID, Completed)
 	done := approveReview(t, s, task.ID)
 	if done.MergeStatus != MergeMerged || done.ExecutionWorkspace == "" {
@@ -41,16 +32,14 @@ func changeRunner(_ context.Context, task Task, _ io.Writer) error {
 
 func TestDiscardWorktreeRemovesMergedWorktreeOnly(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(changeRunner))
 	done := mergedIsolatedTask(t, s, repo, "discard")
 	tree := done.ExecutionWorkspace
 	reservation := filepath.Dir(tree)
 	sourceHead := testGit(t, repo, "rev-parse", "HEAD")
 
-	if err := s.DiscardWorktree(done.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.DiscardWorktree(done.ID))
 	if _, err := os.Stat(tree); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("worktree still exists: %v", err)
 	}
@@ -89,13 +78,11 @@ func TestDiscardWorktreeRemovesMergedWorktreeOnly(t *testing.T) {
 
 func TestDiscardWorktreeRefusesDirtyWorktree(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(changeRunner))
 	done := mergedIsolatedTask(t, s, repo, "dirty")
 	file := filepath.Join(done.ExecutionWorkspace, "local.txt")
-	if err := os.WriteFile(file, []byte("not committed\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(file, []byte("not committed\n"), 0600))
 
 	err := s.DiscardWorktree(done.ID)
 	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
@@ -109,9 +96,7 @@ func TestDiscardWorktreeRefusesDirtyWorktree(t *testing.T) {
 		t.Fatalf("refused discard cleared the workspace: %+v", got)
 	}
 
-	if err = os.Remove(file); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Remove(file))
 	if err = s.DiscardWorktree(done.ID); err != nil {
 		t.Fatalf("clean discard: %v", err)
 	}
@@ -121,24 +106,16 @@ func TestDiscardWorktreeRefusesDirtyWorktree(t *testing.T) {
 }
 
 func TestDiscardWorktreeRefusesUnmergedWorktree(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
 		if err := changeRunner(context.Background(), task, io.Discard); err != nil {
 			return err
 		}
 		return errors.New("runner failed")
 	}))
-	task, err := s.CreateTask("failed", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "failed", "do work", repo)
 	failed := await(t, s, task.ID, Failed)
 	if failed.ExecutionWorkspace == "" {
 		t.Fatal("failed attempt has no prepared worktree")
@@ -154,8 +131,9 @@ func TestDiscardWorktreeRefusesUnmergedWorktree(t *testing.T) {
 }
 
 func TestDiscardWorktreeRefusesRunningTask(t *testing.T) {
+	var err error
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
@@ -163,16 +141,7 @@ func TestDiscardWorktreeRefusesRunningTask(t *testing.T) {
 		<-release
 		return changeRunner(context.Background(), task, io.Discard)
 	}))
-	task, err := s.CreateTask("running", "do work", repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.SetTaskIsolation(task.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := startIsolated(t, s, "running", "do work", repo)
 	select {
 	case <-started:
 	case <-time.After(3 * time.Second):
@@ -187,14 +156,12 @@ func TestDiscardWorktreeRefusesRunningTask(t *testing.T) {
 
 func TestDiscardMergedWorktreesSkipsRefusedWorktrees(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(changeRunner))
 	first := mergedIsolatedTask(t, s, repo, "first")
 	second := mergedIsolatedTask(t, s, repo, "second")
 	dirty := filepath.Join(first.ExecutionWorkspace, "local.txt")
-	if err := os.WriteFile(dirty, []byte("not committed\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(dirty, []byte("not committed\n"), 0600))
 
 	if count := len(s.WorktreeDiscardCandidates()); count != 2 {
 		t.Fatalf("candidate count = %d, want 2", count)
@@ -210,9 +177,7 @@ func TestDiscardMergedWorktreesSkipsRefusedWorktrees(t *testing.T) {
 		t.Fatalf("clean worktree still exists: %v", statErr)
 	}
 
-	if err = os.Remove(dirty); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Remove(dirty))
 	removed, err = s.DiscardMergedWorktrees(s.WorktreeDiscardCandidates())
 	if removed != 1 || err != nil {
 		t.Fatalf("second bulk discard = %d, %v", removed, err)
@@ -224,12 +189,10 @@ func TestDiscardMergedWorktreesSkipsRefusedWorktrees(t *testing.T) {
 
 func TestDeleteTaskRemovesRetainedWorktree(t *testing.T) {
 	repo := committedRepo(t)
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.RegisterRunner("general", runnerFunc(changeRunner))
 	done := mergedIsolatedTask(t, s, repo, "delete")
-	if err := s.DeleteTask(done.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.DeleteTask(done.ID))
 	if _, err := os.Stat(done.ExecutionWorkspace); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("deletion kept the retained worktree: %v", err)
 	}
@@ -258,9 +221,7 @@ func TestRecoverInterruptedDiscard(t *testing.T) {
 			}
 			reservation := filepath.Dir(task.ExecutionWorkspace)
 			if phase == "after cleanup" {
-				if err := os.RemoveAll(reservation); err != nil {
-					t.Fatal(err)
-				}
+				must(t, os.RemoveAll(reservation))
 			}
 			restored := openTestService(t, path)
 			got, _ := restored.GetTask(task.ID)
@@ -336,12 +297,8 @@ func TestDiscardFinalSaveCanRetry(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if err := os.Rename(path, path+".saved"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(path, 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Rename(path, path+".saved"))
+	must(t, os.Mkdir(path, 0700))
 	unlock()
 	if err := <-result; err == nil {
 		t.Fatal("discard acknowledged a failed final save")
@@ -352,15 +309,9 @@ func TestDiscardFinalSaveCanRetry(t *testing.T) {
 	if _, err := s.FollowUp(task.ID, "again"); err == nil {
 		t.Fatal("requeued a task with an unsettled discard")
 	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(path+".saved", path); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DiscardWorktree(task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Remove(path))
+	must(t, os.Rename(path+".saved", path))
+	must(t, s.DiscardWorktree(task.ID))
 	got, _ := s.GetTask(task.ID)
 	if got.DiscardPending || got.ExecutionWorkspace != "" {
 		t.Fatal("retry failed to settle a completed removal")

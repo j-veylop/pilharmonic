@@ -91,16 +91,7 @@ func (s *Service) RejectReview(id, commit, note string) error {
 // durable merge intent and schedules the merge worker; a failed save restores
 // the previous state.
 func (s *Service) recordReview(id, decision, commit, note string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errors.New("service is shutting down")
-	}
-	for i := range s.data.Tasks {
-		t := &s.data.Tasks[i]
-		if t.ID != id {
-			continue
-		}
+	return s.withTask(id, func(t *Task) error {
 		if t.DiscardPending {
 			return errors.New("worktree discard is pending; wait before reviewing the commit")
 		}
@@ -132,8 +123,7 @@ func (s *Service) recordReview(id, decision, commit, note string) error {
 			go s.finishReviewedMerge(clone(*t))
 		}
 		return nil
-	}
-	return errors.New("task not found")
+	})
 }
 
 // resetReview clears a review decision because a new attempt invalidates it.

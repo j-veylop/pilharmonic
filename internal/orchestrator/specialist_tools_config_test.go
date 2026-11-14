@@ -9,30 +9,24 @@ import (
 func writeSpecialistToolsConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "specialist-tools.json")
-	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, []byte(body), 0600))
 	return path
 }
 
 func specialistToolService(t *testing.T) *Service {
 	t.Helper()
-	s := openTestService(t, filepath.Join(t.TempDir(), "state.json"))
+	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
 	return s
 }
 
 func TestLoadSpecialistToolsReplacesCatalog(t *testing.T) {
 	s := specialistToolService(t)
-	if err := s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read","grep"],"tester":["bash"]}`)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"reviewer":["read","grep"],"tester":["bash"]}`)))
 	if len(s.specialistTools) != 2 || s.specialistTools["reviewer"][1] != "grep" {
 		t.Fatalf("bad loaded config: %#v", s.specialistTools)
 	}
-	if err := s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"explorer":["find"]}`)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.LoadSpecialistTools(writeSpecialistToolsConfig(t, `{"explorer":["find"]}`)))
 	if len(s.specialistTools) != 1 || s.specialistTools["explorer"][0] != "find" {
 		t.Fatalf("catalog was not replaced atomically: %#v", s.specialistTools)
 	}
@@ -62,9 +56,7 @@ func TestLoadSpecialistToolsRejectsInvalidConfigsWithoutMutation(t *testing.T) {
 func TestLoadSpecialistToolsRejectsOversize(t *testing.T) {
 	s := specialistToolService(t)
 	path := writeSpecialistToolsConfig(t, `{"reviewer":["read"]}`)
-	if err := os.WriteFile(path, make([]byte, maxConfigSize+1), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, make([]byte, maxConfigSize+1), 0600))
 	if err := s.LoadSpecialistTools(path); err == nil {
 		t.Fatal("accepted oversized config")
 	}

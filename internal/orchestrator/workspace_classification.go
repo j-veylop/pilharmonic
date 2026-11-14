@@ -8,157 +8,50 @@ import (
 // changeVerbs are imperative actions that normally request a writable,
 // isolated workspace. Only verbs in request position count, so inspecting an
 // existing change still stays in the source workspace.
-var changeVerbs = map[string]bool{
-	"add":         true,
-	"adjust":      true,
-	"alter":       true,
-	"apply":       true,
-	"build":       true,
-	"bump":        true,
-	"change":      true,
-	"checkout":    true,
-	"cherry":      true,
-	"chmod":       true,
-	"chown":       true,
-	"clean":       true,
-	"cleanup":     true,
-	"combine":     true,
-	"commit":      true,
-	"consolidate": true,
-	"convert":     true,
-	"correct":     true,
-	"create":      true,
-	"delete":      true,
-	"deprecate":   true,
-	"disable":     true,
-	"document":    true,
-	"drop":        true,
-	"edit":        true,
-	"enable":      true,
-	"enhance":     true,
-	"expand":      true,
-	"expose":      true,
-	"extend":      true,
-	"extract":     true,
-	"fix":         true,
-	"format":      true,
-	"generate":    true,
-	"gofmt":       true,
-	"implement":   true,
-	"improve":     true,
-	"increase":    true,
-	"inline":      true,
-	"insert":      true,
-	"install":     true,
-	"integrate":   true,
-	"introduce":   true,
-	"make":        true,
-	"merge":       true,
-	"migrate":     true,
-	"modify":      true,
-	"move":        true,
-	"normalise":   true,
-	"normalize":   true,
-	"mv":          true,
-	"patch":       true,
-	"optimise":    true,
-	"optimize":    true,
-	"port":        true,
-	"pull":        true,
-	"push":        true,
-	"prune":       true,
-	"purge":       true,
-	"rebase":      true,
-	"rebuild":     true,
-	"redesign":    true,
-	"reduce":      true,
-	"refactor":    true,
-	"remove":      true,
-	"rename":      true,
-	"replace":     true,
-	"reset":       true,
-	"restore":     true,
-	"restructure": true,
-	"revert":      true,
-	"revise":      true,
-	"rework":      true,
-	"rewrite":     true,
-	"rm":          true,
-	"rmdir":       true,
-	"set":         true,
-	"simplify":    true,
-	"split":       true,
-	"stage":       true,
-	"standardise": true,
-	"standardize": true,
-	"stash":       true,
-	"strengthen":  true,
-	"support":     true,
-	"switch":      true,
-	"touch":       true,
-	"truncate":    true,
-	"update":      true,
-	"upgrade":     true,
-	"vendor":      true,
-	"write":       true,
-}
+var changeVerbs = wordSet(`
+	add adjust alter apply build bump change checkout cherry chmod chown
+	clean cleanup combine commit consolidate convert correct create delete
+	deprecate disable document drop edit enable enhance expand expose
+	extend extract fix format generate gofmt implement improve increase
+	inline insert install integrate introduce make merge migrate modify
+	move normalise normalize mv patch optimise optimize port pull push
+	prune purge rebase rebuild redesign reduce refactor remove rename
+	replace reset restore restructure revert revise rework rewrite rm
+	rmdir set simplify split stage standardise standardize stash
+	strengthen support switch touch truncate update upgrade vendor write`)
 
 // gitWorktreeMutations are Git worktree subcommands that modify the source
 // repository. They need isolation even though the surrounding request opens
 // with "git". Read-only forms such as "git worktree list" stay shared.
-var gitWorktreeMutations = map[string]bool{
-	"add":    true,
-	"lock":   true,
-	"move":   true,
-	"prune":  true,
-	"remove": true,
-	"repair": true,
-	"unlock": true,
-}
+var gitWorktreeMutations = wordSet("add lock move prune remove repair unlock")
 
 // changeConnectors start a new request phrase. An edit verb after one of these
 // is still requested work. The commands "run" and "git" are treated as
 // connectors only at a request start so "run gofmt" and "git commit" count,
 // while "how to run gofmt" remains an inspection question.
-var changeConnectors = map[string]bool{
-	"also":   true,
-	"and":    true,
-	"now":    true,
-	"please": true,
-	"then":   true,
-}
+var changeConnectors = wordSet("also and now please then")
 
 var mandateTokenPattern = regexp.MustCompile(`[a-z0-9_]+|[.;:,!?]`)
 
 var requestPoliteness = []string{
-	"can you ",
-	"could you ",
-	"help me ",
-	"i need you to ",
-	"i want you to ",
-	"i'll ",
-	"i'd like to ",
-	"i would like to ",
-	"kindly ",
-	"let me ",
-	"let's ",
-	"please ",
-	"we need to ",
-	"we should ",
-	"will you ",
-	"would you ",
+	"can you ", "could you ", "help me ", "i need you to ", "i want you to ", "i'll ", "i'd like to ",
+	"i would like to ", "kindly ", "let me ", "let's ", "please ", "we need to ", "we should ",
+	"will you ", "would you ",
 }
 
 // requestLeadWords may precede a request verb without making it a noun phrase:
 // subjects ("we should add tests"), modals ("we could add tests") and the
 // auxiliary words of common contractions, which the tokenizer splits off.
-var requestLeadWords = map[string]bool{
-	"can": true, "could": true, "d": true, "had": true, "has": true,
-	"have": true, "he": true, "help": true, "i": true, "it": true,
-	"let": true, "like": true, "ll": true, "may": true, "me": true,
-	"might": true, "must": true, "need": true, "s": true, "shall": true,
-	"she": true, "should": true, "they": true, "want": true, "we": true,
-	"will": true, "would": true, "you": true,
+var requestLeadWords = wordSet(`
+	can could d had has have he help i it let like ll may me might must
+	need s shall she should they want we will would you`)
+
+func wordSet(words string) map[string]bool {
+	set := make(map[string]bool)
+	for _, word := range strings.Fields(words) {
+		set[word] = true
+	}
+	return set
 }
 
 func trimRequestPoliteness(text string) string {

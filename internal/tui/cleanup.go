@@ -25,12 +25,12 @@ type cleanupRequest struct {
 
 type cleanupResultMsg string
 
-func (m *model) prepareCleanup(key string) {
+func (m *model) prepareCleanup(kind cleanupKind) {
 	if m.cleanupBusy {
 		m.notice.text = "Workspace cleanup is in progress."
 		return
 	}
-	request := cleanupRequest{kind: cleanupKind(key)}
+	request := cleanupRequest{kind: kind}
 	switch request.kind {
 	case deleteCompleted:
 		request.ids = m.service.CompletedDeletionCandidates()
@@ -45,10 +45,10 @@ func (m *model) prepareCleanup(key string) {
 			return
 		}
 	case deleteTask, discardTask:
-		if len(m.tasks) == 0 {
+		task, ok := m.selectedTask()
+		if !ok {
 			return
 		}
-		task := m.tasks[m.selected]
 		if request.kind == discardTask && (!task.Isolated || task.ExecutionWorkspace == "") {
 			m.notice.text = "Selected task has no retained worktree."
 			return
@@ -80,6 +80,19 @@ func (m model) cleanupKey(key string) (model, tea.Cmd) {
 		return m.requestQuit(), nil
 	}
 	return m, nil
+}
+
+// prompt is the confirmation shown in the footer.
+func (r cleanupRequest) prompt() (title, answer, note string) {
+	switch r.kind {
+	case deleteTask:
+		return "DELETE TASK + HISTORY  › " + singleLine(r.title), "y delete", "Removes its worktree; source workspace is untouched."
+	case deleteCompleted:
+		return fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", len(r.ids)), "y delete", "Tasks with unfinished children are kept; worktrees are removed."
+	case discardTask:
+		return "DISCARD RETAINED WORKTREE  › " + singleLine(r.title), "y discard", "Refuses uncommitted or unmerged work; task history is kept."
+	}
+	return fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", len(r.ids)), "y discard", "Skips uncommitted or unmerged work; task history is kept."
 }
 
 func (r cleanupRequest) run(service Service) string {

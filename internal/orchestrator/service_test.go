@@ -14,6 +14,32 @@ import (
 type runnerFunc func(context.Context, Task, io.Writer) error
 
 func (f runnerFunc) Run(ctx context.Context, t Task, w io.Writer) error { return f(ctx, t, w) }
+
+// must fails the test on an unexpected error.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mustGet returns a value, failing the test if the call that produced it
+// returned an error: v := mustGet(f())(t).
+func mustGet[T any](v T, err error) func(*testing.T) T {
+	return func(t *testing.T) T {
+		t.Helper()
+		must(t, err)
+		return v
+	}
+}
+
+func createTask(t *testing.T, s *Service, title, prompt, workspace string) Task {
+	t.Helper()
+	task, err := s.CreateTask(title, prompt, workspace)
+	must(t, err)
+	return task
+}
+
 func await(t *testing.T, s *Service, id string, want Status) Task {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -25,7 +51,7 @@ func await(t *testing.T, s *Service, id string, want Status) Task {
 		time.Sleep(time.Millisecond * 5)
 	}
 	task, _ := s.GetTask(id)
-	t.Fatalf("got status %s, want %s", task.Status, want)
+	t.Fatalf("got status %s, want %s (%s)", task.Status, want, task.Error)
 	return Task{}
 }
 
@@ -56,39 +82,27 @@ func approveReview(t *testing.T, s *Service, id string) Task {
 	if !task.AwaitingReview() {
 		t.Fatalf("task is not awaiting review: %+v", task)
 	}
-	if err := s.ApproveReview(id, task.ReviewCommit, ""); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.ApproveReview(id, task.ReviewCommit, ""))
 	return awaitIntegration(t, s, id)
 }
 func TestRouteRunAndReload(t *testing.T) {
+	var err error
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, task Task, out io.Writer) error {
 		_, err := io.WriteString(out, "work done")
 		return err
 	}))
-	task, err := s.CreateTask("build", "make a thing", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "build", "make a thing", t.TempDir())
 	if task.Decision.Outcome != "accept" || task.Trigger.Text != task.Prompt {
 		t.Fatalf("bad route: %+v", task)
 	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if done.Output != "work done" {
 		t.Fatalf("output %q", done.Output)
 	}
-	again, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	again := mustGet(Open(path))(t)
 	restored, ok := again.GetTask(task.ID)
 	if !ok || restored.Status != Completed || len(restored.Events) != 3 {
 		t.Fatalf("bad restored task: %+v", restored)
@@ -102,39 +116,24 @@ func TestCancelAndRecovery(t *testing.T) {
 	s, _ := Open(path)
 	started := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
-	task, err := s.CreateTask("x", "y", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "x", "y", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	<-started
 	// A fresh service models restarting after a crash; in normal operation only one process owns the state file.
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustGet(Open(path))(t)
 	if got, _ := restored.GetTask(task.ID); got.Status != Interrupted {
 		t.Fatalf("got %s", got.Status)
 	}
-	if err = s.Cancel(task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Cancel(task.ID))
 	await(t, s, task.ID, Canceled)
 }
 
 func TestLegacyRunningTaskMigrationThenRecovery(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	fixture := `{"tasks":[{"id":"legacy-task","title":"old task","prompt":"old mandate","workspace":"/workspace","status":"running","agent":"general","created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:06Z","events":[{"time":"2026-01-02T03:04:06Z","kind":"started","message":"Started"}]}]}`
-	if err := os.WriteFile(path, []byte(fixture), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, []byte(fixture), 0600))
 
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
 	got, ok := s.GetTask("legacy-task")
 	if !ok || got.Status != Interrupted {
 		t.Fatalf("legacy task status = %q, found=%t", got.Status, ok)
@@ -149,10 +148,7 @@ func TestLegacyRunningTaskMigrationThenRecovery(t *testing.T) {
 
 	// Migration and recovery are persisted together, so another open preserves
 	// the reconstructed attempt rather than inventing a second one.
-	reloaded, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reloaded := mustGet(Open(path))(t)
 	again, _ := reloaded.GetTask("legacy-task")
 	if len(again.Attempts) != 1 || again.Attempts[0].ID != attempt.ID || again.Attempts[0].Status != Interrupted {
 		t.Fatalf("reloaded legacy attempt changed: %+v", again.Attempts)
@@ -169,9 +165,7 @@ func TestValidationAndFailure(t *testing.T) {
 	}
 	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return errors.New("runner failed") }))
 	task, _ := s.CreateTask("x", "y", t.TempDir())
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Failed)
 	if !strings.Contains(done.Error, "runner failed") {
 		t.Fatal(done.Error)
@@ -183,13 +177,9 @@ func TestShutdownCancelsAndWaits(t *testing.T) {
 	started := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error { close(started); <-ctx.Done(); return ctx.Err() }))
 	task, _ := s.CreateTask("x", "y", t.TempDir())
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(context.Background(), task.ID))
 	<-started
-	if err := s.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Shutdown())
 	got, _ := s.GetTask(task.ID)
 	if got.Status != Canceled {
 		t.Fatalf("got %s", got.Status)
@@ -202,27 +192,14 @@ func TestShutdownCancelsAndWaits(t *testing.T) {
 
 func TestContextRoutingAndPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.CreateTask("build", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddContext(task.ID, "followup-1", "use the existing style"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddContext(task.ID, "followup-1", "use the existing style"); err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
+	task := createTask(t, s, "build", "original mandate", t.TempDir())
+	must(t, s.AddContext(task.ID, "followup-1", "use the existing style"))
+	must(t, s.AddContext(task.ID, "followup-1", "use the existing style"))
 	if err := s.AddContext(task.ID, "followup-1", "different"); err == nil {
 		t.Fatal("accepted conflicting trigger")
 	}
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustGet(Open(path))(t)
 	got, _ := restored.GetTask(task.ID)
 	if got.Prompt != "original mandate" || len(got.Context) != 1 || got.Context[0].Text != "use the existing style" {
 		t.Fatalf("bad restored task: %+v", got)
@@ -232,9 +209,7 @@ func TestContextRoutingAndPersistence(t *testing.T) {
 	}
 	received := make(chan Task, 1)
 	restored.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error { received <- task; return nil }))
-	if err := restored.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, restored.Start(context.Background(), task.ID))
 	sent := <-received
 	if sent.Prompt != "original mandate" || len(sent.Context) != 1 {
 		t.Fatalf("bad runner input: %+v", sent)
@@ -247,10 +222,7 @@ func TestContextRoutingAndPersistence(t *testing.T) {
 
 func TestRetryPreservesAttempts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
 	runs := 0
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		runs++
@@ -261,20 +233,11 @@ func TestRetryPreservesAttempts(t *testing.T) {
 		_, _ = io.WriteString(out, "second attempt")
 		return nil
 	}))
-	task, err := s.CreateTask("test", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "test", "original mandate", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Failed)
-	if err := s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if len(done.Attempts) != 2 || done.Attempts[0].Status != Failed || done.Attempts[0].Output != "first attempt" || done.Attempts[1].Output != "second attempt" || done.Prompt != "original mandate" {
 		t.Fatalf("unexpected attempts: %+v", done)
@@ -282,10 +245,7 @@ func TestRetryPreservesAttempts(t *testing.T) {
 	if err := s.Retry(task.ID); err == nil {
 		t.Fatal("retried completed task")
 	}
-	reloaded, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reloaded := mustGet(Open(path))(t)
 	got, _ := reloaded.GetTask(task.ID)
 	if len(got.Attempts) != 2 || got.Attempts[0].Error != "failed first" {
 		t.Fatalf("attempt history lost: %+v", got.Attempts)
@@ -297,10 +257,7 @@ func TestRetryPreservesAttempts(t *testing.T) {
 // carry any buffered output, so completing a task never drops it.
 func TestOutputBatchesUntilFlush(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustGet(Open(path))(t)
 	small := strings.Repeat("x", 1024)
 	large := strings.Repeat("y", outputFlushSize)
 	wroteSmall := make(chan struct{})
@@ -318,27 +275,16 @@ func TestOutputBatchesUntilFlush(t *testing.T) {
 		close(wroteLarge)
 		return nil
 	}))
-	task, err := s.CreateTask("stream", "stream output", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "stream", "stream output", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	<-wroteSmall
-	onDisk, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	onDisk := mustGet(os.ReadFile(path))(t)
 	if strings.Contains(string(onDisk), small) {
 		t.Fatal("small output chunk persisted before reaching the flush threshold")
 	}
 	close(release)
 	<-wroteLarge
-	flushed, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	flushed := mustGet(os.ReadFile(path))(t)
 	if !strings.Contains(string(flushed), large) {
 		t.Fatal("output crossing the flush threshold was not persisted")
 	}

@@ -227,87 +227,39 @@ func appendOutput(m model, line string) model {
 	return m
 }
 
-func TestStationaryClickAfterOutputGrowthDoesNotCopy(t *testing.T) {
-	m := longOutputModel(80)
-	m, anchor, x, y := pressContent(t, m, "line-70")
-
-	m = appendOutput(m, "line-80")
-	grown, ok := m.detailViewport()
-	if !ok || grown.start == anchor.line {
-		t.Fatalf("output growth did not move the viewport mapping: %+v", grown)
+// A selection is dropped, and never copied, once output growth or a resize
+// changes which content lines the frozen cells map to.
+func TestStaleSelectionIsDroppedNotCopied(t *testing.T) {
+	m, _, _, _ := pressContent(t, longOutputModel(80), "line-70")
+	if m.cancelStaleSelection(); !m.selection.active {
+		t.Fatal("an unchanged mapping cancelled the selection")
 	}
-
-	var out bytes.Buffer
-	m.clipboard = &out
-	next, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
-	m = next.(model)
-	if cmd != nil || out.Len() != 0 {
-		t.Fatalf("stationary release after output growth copied: %q", out.String())
+	changes := map[string]func(model) model{
+		"output growth": func(m model) model { return appendOutput(m, "line-80") },
+		"resize": func(m model) model {
+			next, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 16})
+			return next.(model)
+		},
+		"tick after growth": func(m model) model {
+			m = appendOutput(m, "line-80")
+			m.cancelStaleSelection()
+			return m
+		},
 	}
-	if m.selection.active {
-		t.Fatal("stale selection survived the release")
-	}
-}
-
-func TestDragReleaseAfterOutputGrowthDoesNotCopy(t *testing.T) {
-	m := longOutputModel(80)
-	m, _, _, _ = pressContent(t, m, "line-70")
-
-	m = appendOutput(m, "line-80")
-	m = appendOutput(m, "line-81")
-
-	viewport, ok := m.detailViewport()
-	if !ok {
-		t.Fatal("detail viewport unavailable")
-	}
-	target := findViewportText(t, viewport, "line-77")
-	endX, endY := screenPosition(viewport, target)
-	next, cmd := m.Update(tea.MouseMsg{X: endX, Y: endY, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
-	m = next.(model)
-	if cmd != nil || m.selection.active {
-		t.Fatal("motion after output growth kept or copied the stale selection")
-	}
-
-	var out bytes.Buffer
-	m.clipboard = &out
-	next, cmd = m.Update(tea.MouseMsg{X: endX, Y: endY, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
-	m = next.(model)
-	if cmd != nil || out.Len() != 0 {
-		t.Fatalf("release after output growth copied: %q", out.String())
-	}
-}
-
-func TestCancelStaleSelectionEveryTickKeepsStableMapping(t *testing.T) {
-	m := longOutputModel(80)
-	m, _, _, _ = pressContent(t, m, "line-70")
-
-	m.cancelStaleSelection()
-	if !m.selection.active {
-		t.Fatal("unchanged mapping cancelled the selection")
-	}
-
-	m = appendOutput(m, "line-80")
-	m.cancelStaleSelection()
-	if m.selection.active {
-		t.Fatal("selection survived an output change")
-	}
-}
-
-func TestResizeCancelsSelection(t *testing.T) {
-	m := longOutputModel(80)
-	m, _, x, y := pressContent(t, m, "line-70")
-
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 16})
-	m = next.(model)
-	if m.selection.active {
-		t.Fatal("resize kept a stale selection")
-	}
-
-	var out bytes.Buffer
-	m.clipboard = &out
-	next, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
-	m = next.(model)
-	if cmd != nil || out.Len() != 0 {
-		t.Fatalf("release after resize copied: %q", out.String())
+	for name, change := range changes {
+		for _, motion := range []bool{false, true} {
+			m, _, x, y := pressContent(t, longOutputModel(80), "line-70")
+			m = change(m)
+			var out bytes.Buffer
+			m.clipboard = &out
+			if motion {
+				next, _ := m.Update(tea.MouseMsg{X: x, Y: y - 2, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
+				m = next.(model)
+			}
+			next, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
+			if cmd != nil || out.Len() != 0 || next.(model).selection.active {
+				t.Fatalf("%s (motion=%v): stale selection was kept or copied", name, motion)
+			}
+		}
 	}
 }

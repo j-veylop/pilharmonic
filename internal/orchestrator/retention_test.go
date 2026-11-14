@@ -4,21 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
-	"path/filepath"
 	"testing"
 )
 
 // TestAttemptRetentionDropsOlderOutputs proves that retries cannot grow the
 // state file without bound while attempt identity and outcome stay intact.
 func TestAttemptRetentionDropsOlderOutputs(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	if err = s.SetAttemptRetention(1); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetAttemptRetention(1))
 	attempts := 0
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		attempts++
@@ -29,20 +22,11 @@ func TestAttemptRetentionDropsOlderOutputs(t *testing.T) {
 		_, _ = io.WriteString(out, "second attempt output")
 		return nil
 	}))
-	task, err := s.CreateTask("retry", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "retry", "original mandate", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Failed)
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if len(done.Attempts) != 2 {
 		t.Fatalf("attempts %+v", done.Attempts)
@@ -66,14 +50,8 @@ func TestAttemptRetentionDropsOlderOutputs(t *testing.T) {
 }
 
 func TestAttemptRetentionKeepsEverythingWhenDisabled(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	if err = s.SetAttemptRetention(0); err != nil {
-		t.Fatal(err)
-	}
+	s := newTestService(t)
+	must(t, s.SetAttemptRetention(0))
 	attempts := 0
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		attempts++
@@ -83,20 +61,11 @@ func TestAttemptRetentionKeepsEverythingWhenDisabled(t *testing.T) {
 		}
 		return nil
 	}))
-	task, err := s.CreateTask("keep", "original mandate", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	task := createTask(t, s, "keep", "original mandate", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
 	await(t, s, task.ID, Failed)
-	if err = s.Retry(task.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Retry(task.ID))
+	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)
 	if done.Attempts[0].Output != "first attempt output" || done.Attempts[0].OutputTruncated {
 		t.Fatalf("disabled retention dropped output: %+v", done.Attempts[0])
@@ -104,11 +73,7 @@ func TestAttemptRetentionKeepsEverythingWhenDisabled(t *testing.T) {
 }
 
 func TestAttemptRetentionRejectsNegative(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	if s.SetAttemptRetention(-1) == nil {
 		t.Fatal("expected error for negative retention")
 	}

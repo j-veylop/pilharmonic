@@ -10,15 +10,9 @@ func TestProviderCredentialRoundTrip(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 
-	if err := s.SetProviderCredential("openai", "sk-test-key"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetProviderCredential("openai", "sk-test-key"))
 	if err := s.SetProviderCredential("unknown-provider", "key"); err == nil {
 		t.Fatal("unknown provider accepted")
 	}
@@ -36,10 +30,7 @@ func TestProviderCredentialRoundTrip(t *testing.T) {
 	}
 
 	// The key must persist across reopen and never be returned by any list call.
-	reopened, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reopened := mustGet(Open(path))(t)
 	defer func() { _ = reopened.Shutdown() }()
 	found := false
 	for _, c := range reopened.ProviderCredentials() {
@@ -51,9 +42,7 @@ func TestProviderCredentialRoundTrip(t *testing.T) {
 		t.Fatal("stored credential did not survive reopen")
 	}
 
-	if err := reopened.RemoveProviderCredential("openai"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, reopened.RemoveProviderCredential("openai"))
 	for _, c := range reopened.ProviderCredentials() {
 		if c.Provider == "openai" && c.Configured {
 			t.Fatal("credential not removed")
@@ -66,11 +55,7 @@ func TestProviderCredentialCountsEnvironment(t *testing.T) {
 	// configure Bedrock) cannot make this test pass or fail by accident.
 	isolateProviderEnvironment(t)
 	dir := t.TempDir()
-	s, err := Open(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, filepath.Join(dir, "state.json"))
 
 	if s.AnyProviderConfigured() {
 		t.Fatal("empty environment reported a configured provider")
@@ -97,20 +82,14 @@ func TestProviderCredentialFeedsModelFactory(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
 	t.Setenv("DEEPSEEK_API_KEY", "")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 
 	// Without a stored key or env var, the factory fails with a clear error.
 	if _, err := s.fantasyModelFactory(t.Context(), "deepseek/deepseek-flash"); err == nil {
 		t.Fatal("expected a missing-key error")
 	}
 
-	if err := s.SetProviderCredential("deepseek", "sk-stored"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetProviderCredential("deepseek", "sk-stored"))
 	// The factory should now resolve (it will build a provider object; it does
 	// not make a network call until Generate/Stream).
 	model, err := s.fantasyModelFactory(t.Context(), "deepseek/deepseek-flash")
@@ -124,15 +103,9 @@ func TestProviderCredentialFeedsModelFactory(t *testing.T) {
 
 func TestHyperProviderResolves(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, filepath.Join(dir, "state.json"))
 
-	if err := s.SetProviderCredential("hyper", "hk-test"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetProviderCredential("hyper", "hk-test"))
 	model, err := s.fantasyModelFactory(t.Context(), "hyper/prism")
 	if err != nil {
 		t.Fatalf("hyper provider not resolved: %v", err)

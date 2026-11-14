@@ -9,11 +9,7 @@ import (
 )
 
 func TestAuthorizeAcceptsLocalRequests(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 
 	cases := []struct {
 		purpose string
@@ -56,11 +52,7 @@ func TestAuthorizeAcceptsLocalRequests(t *testing.T) {
 }
 
 func TestAuthorizeAcceptsDelegatedRequest(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	req := AuthorizationRequest{
 		Source:    SubagentPolicySource,
 		Actor:     "task:parent",
@@ -72,10 +64,7 @@ func TestAuthorizeAcceptsDelegatedRequest(t *testing.T) {
 		Workspace: "/workspace",
 		Depth:     1,
 	}
-	decision, err := s.authorize(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	decision := mustGet(s.authorize(req))(t)
 	if decision.Outcome != OutcomeAccept {
 		t.Fatalf("delegated request rejected: %+v", decision)
 	}
@@ -91,11 +80,7 @@ func TestAuthorizeAcceptsDelegatedRequest(t *testing.T) {
 }
 
 func TestAuthorizeRejectsBlankMandateAndUnknownSource(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	cases := []struct {
 		name string
 		req  AuthorizationRequest
@@ -150,13 +135,12 @@ func TestAuthorizeRejectsBlankMandateAndUnknownSource(t *testing.T) {
 }
 
 func TestAuthorizationRejectionCreatesNoTask(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
-	_, err = s.createTaskWithIsolation("title", "should not run", t.TempDir(), workspacePlan{},
-		AuthorizationRequest{Source: "external", Actor: "intruder", Purpose: PurposeManual}, DefaultRouteAgent, "")
+	s := newTestService(t)
+	var err error
+	s.mu.Lock()
+	_, err = s.acceptLocked(acceptedTaskInput{title: "title", agent: DefaultRouteAgent,
+		auth: AuthorizationRequest{Source: "external", Actor: "intruder", Purpose: PurposeManual, Text: "should not run", Workspace: t.TempDir()}})
+	s.mu.Unlock()
 	if err == nil || !strings.Contains(err.Error(), "external") {
 		t.Fatalf("rejection not reported: %v", err)
 	}
@@ -167,19 +151,12 @@ func TestAuthorizationRejectionCreatesNoTask(t *testing.T) {
 
 func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := openTestService(t, path)
 	s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
 		_, err := io.WriteString(out, "done")
 		return err
 	}))
-	task, err := s.SubmitRequest("audit this request", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := mustGet(s.SubmitRequest("audit this request", t.TempDir()))(t)
 	done := await(t, s, task.ID, Completed)
 	decision := done.Decision
 	if decision.Outcome != OutcomeAccept || !strings.Contains(decision.Reason, "router") {
@@ -207,10 +184,7 @@ func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
 		t.Fatalf("digest %q does not match canonical input %q", decision.InputDigest, wantDigest)
 	}
 
-	restored, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustGet(Open(path))(t)
 	defer func() { _ = restored.Shutdown() }()
 	reloaded, ok := restored.GetTask(task.ID)
 	if !ok || reloaded.Decision.PolicyID != decision.PolicyID ||

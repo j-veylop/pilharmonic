@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -88,20 +87,6 @@ var (
 	helpTrackStyle = lipgloss.NewStyle().
 			Foreground(faint)
 )
-
-// helpHints is the overlay's footer hint row, rendered by the bubbles help view
-// in this palette so it hides hints that no longer fit instead of overflowing
-// the frame.
-var helpHints = func() help.Model {
-	h := help.New()
-	h.ShortSeparator = helpHintSeparator
-	h.Ellipsis = helpHintEllipsis
-	h.Styles.ShortKey = keyStyle
-	h.Styles.ShortDesc = mutedStyle
-	h.Styles.ShortSeparator = faintStyle
-	h.Styles.Ellipsis = faintStyle
-	return h
-}()
 
 // gradientText paints a wordmark from violet to teal without changing its
 // visible text or width. ANSI styling is applied per rune, so callers can

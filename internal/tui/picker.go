@@ -1,71 +1,55 @@
 package tui
 
-import (
-	tea "github.com/charmbracelet/bubbletea"
-	"pilharmonic/internal/orchestrator"
-)
+import "pilharmonic/internal/orchestrator"
 
+// pickerState is a queued task's agent or profile chooser. target is captured
+// when the picker opens.
 type pickerState[T any] struct {
 	target  string
 	choices []T
 	index   int
 }
 
-func (picker *pickerState[T]) move(key string) {
-	switch key {
-	case "up", "k":
-		if picker.index > 0 {
-			picker.index--
-		}
-	case "down", "j":
-		if picker.index < len(picker.choices)-1 {
-			picker.index++
+func openPicker[T any](p *pickerState[T], target string, choices []T, current func(T) bool) {
+	*p = pickerState[T]{target: target, choices: choices}
+	for i, choice := range choices {
+		if current(choice) {
+			p.index = i
 		}
 	}
 }
 
-func (m model) profilePickerKey(key string) (model, tea.Cmd) {
+// pickerKey drives an open picker. Enter hands the choice to apply, which
+// returns the success notice and the service error.
+func pickerKey[T any](m *model, p *pickerState[T], key string, apply func(target string, choice T) (string, error)) {
 	switch key {
-	case "esc":
-		m.profilePicker = pickerState[orchestrator.Profile]{}
 	case "ctrl+c":
-		return m.requestQuit(), nil
+		*m = m.requestQuit()
+		return
 	case "enter":
-		if len(m.profilePicker.choices) > 0 {
-			profile := m.profilePicker.choices[m.profilePicker.index]
-			if err := m.service.SetTaskProfile(m.profilePicker.target, profile.Name); err != nil {
-				m.notice.text = err.Error()
-			} else {
-				m.notice.text = "Profile selected: " + profileLabel(profile)
-			}
+		if len(p.choices) > 0 {
+			notice, err := apply(p.target, p.choices[p.index])
+			m.notice.text = resultFor(notice, err).text()
 			m.refreshTasks()
 		}
-		m.profilePicker = pickerState[orchestrator.Profile]{}
+	case "esc":
 	default:
-		m.profilePicker.move(key)
+		moveMenuIndex(key, &p.index, len(p.choices))
+		return
 	}
-	return m, nil
+	*p = pickerState[T]{}
 }
 
-func (m model) agentPickerKey(key string) (model, tea.Cmd) {
-	switch key {
-	case "esc":
-		m.agentPicker = pickerState[orchestrator.AgentInfo]{}
-	case "ctrl+c":
-		return m.requestQuit(), nil
-	case "enter":
-		if len(m.agentPicker.choices) > 0 {
-			name := m.agentPicker.choices[m.agentPicker.index].Name
-			if err := m.service.SetTaskAgent(m.agentPicker.target, name); err != nil {
-				m.notice.text = err.Error()
-			} else {
-				m.notice.text = "Agent selected: " + name
-			}
-			m.refreshTasks()
-		}
-		m.agentPicker = pickerState[orchestrator.AgentInfo]{}
-	default:
-		m.agentPicker.move(key)
-	}
-	return m, nil
+func (m model) profilePickerKey(key string) model {
+	pickerKey(&m, &m.profilePicker, key, func(id string, p orchestrator.Profile) (string, error) {
+		return "Profile selected: " + profileLabel(p), m.service.SetTaskProfile(id, p.Name)
+	})
+	return m
+}
+
+func (m model) agentPickerKey(key string) model {
+	pickerKey(&m, &m.agentPicker, key, func(id string, a orchestrator.AgentInfo) (string, error) {
+		return "Agent selected: " + a.Name, m.service.SetTaskAgent(id, a.Name)
+	})
+	return m
 }

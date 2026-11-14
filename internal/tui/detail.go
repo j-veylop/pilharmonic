@@ -20,116 +20,22 @@ func (m model) detailGeometry() (int, int) {
 
 // detailContent wraps every line by display cells so long output remains readable.
 func (m model) detailContent(width int) []string {
-	if len(m.tasks) == 0 || m.selected < 0 || m.selected >= len(m.tasks) || width < 1 {
+	t, ok := m.selectedTask()
+	if !ok || width < 1 {
 		return nil
 	}
-	t := m.tasks[m.selected]
 	if m.activity.open {
 		return m.activityContent(width)
 	}
 	var lines []string
-	add := func(s string) { lines = append(lines, strings.Split(ansi.Hardwrap(s, width, true), "\n")...) }
-	configurable := t.Status == orchestrator.Queued && !t.ScheduleRequested
-	add(accentStyle.Render("MANDATE"))
-	add(terminalText(t.Prompt))
-	agentLine := "Agent: " + terminalText(t.Agent)
-	if configurable {
-		agentLine += " · A to change"
-	}
-	add(mutedStyle.Render(agentLine))
-	if n := len(t.Attempts); n > 0 && t.Attempts[n-1].RequestedModel != "" {
-		add(mutedStyle.Render("Last attempt model: " + terminalText(t.Attempts[n-1].RequestedModel)))
-	}
-	// Usage is the task's own recorded history, not the session total, so it
-	// stays readable after a restart. The price line describes the rate in force
-	// now, because the recorded rate only says what an earlier attempt was
-	// charged.
-	if usage := t.Usage(); !usage.IsZero() {
-		add(mutedStyle.Render("Usage: " + terminalText(taskUsageLine(usage))))
-		if price, ok := priceLine(usage.Model, usage.Rate, time.Now()); ok {
-			add(mutedStyle.Render(terminalText(price)))
+	add := func(rows ...string) {
+		for _, s := range rows {
+			lines = append(lines, strings.Split(ansi.Hardwrap(s, width, true), "\n")...)
 		}
 	}
-	if t.ProfileName != "" {
-		label := t.ProfileName
-		if t.ProfileSpec != nil {
-			label = profileLabel(*t.ProfileSpec)
-		}
-		profileLine := "Profile: " + terminalText(label)
-		if configurable {
-			profileLine += " · P to change"
-		}
-		add(mutedStyle.Render(profileLine))
-	}
-	if t.ParentID != "" {
-		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
-	}
-	add(mutedStyle.Render("Source: " + terminalText(t.Workspace)))
-	worktreeGlyph := lipgloss.NewStyle().Foreground(cyan).Render(glyphWorktree)
-	if t.Isolated {
-		if t.ExecutionWorkspace == "" {
-			line := worktreeGlyph + " Workspace: isolated worktree requested"
-			if configurable {
-				line += " (w to change)"
-			}
-			add(accentStyle.Render(line))
-			add(mutedStyle.Render("Committed HEAD only; uncommitted files are excluded."))
-		} else {
-			add(accentStyle.Render(worktreeGlyph + " Execution: " + terminalText(t.ExecutionWorkspace)))
-			add(mutedStyle.Render("Isolated worktree · commit " + terminalText(t.IsolationCommit)))
-		}
-	} else if t.ParentID != "" {
-		add(mutedStyle.Render(glyphInherited + " Execution: inherited from parent task"))
-	} else {
-		line := glyphShared + " Execution: shared workspace"
-		if configurable {
-			line += " (w to isolate before start)"
-		}
-		add(mutedStyle.Render(line))
-	}
-	badge := workspaceBadgeFor(t)
-	switch t.MergeStatus {
-	case orchestrator.MergeMerged:
-		add(lipgloss.NewStyle().Foreground(badge.color).Render(badge.glyph+" Merge: merged") + mutedStyle.Render(" · commit "+terminalText(t.MergeCommit)))
-		if t.MergeWarning != "" {
-			add(lipgloss.NewStyle().Foreground(statusWaiting).Render("Merge warning  ") + terminalText(t.MergeWarning))
-		}
-	case orchestrator.MergeUpToDate:
-		add(mutedStyle.Render(badge.glyph + " Merge: no changes to merge"))
-	case orchestrator.MergeFailed:
-		detail := "MERGE FAILED  "
-		if t.MergeConflict() {
-			detail = "MERGE FAILED (conflict)  "
-		}
-		add(lipgloss.NewStyle().Foreground(badge.color).Render(badge.glyph + " " + detail + terminalText(t.MergeError)))
-	}
-	switch t.ReviewStatus {
-	case orchestrator.ReviewPending:
-		add(accentStyle.Render("REVIEW PENDING") + mutedStyle.Render("  commit "+terminalText(t.ReviewCommit)+"  ·  merge blocked until approval  ·  v approve + merge / V reject"))
-	case orchestrator.ReviewApproved:
-		suffix := "  " + terminalText(t.ReviewedBy)
-		if !t.ReviewedAt.IsZero() {
-			suffix += "  " + t.ReviewedAt.Local().Format("Jan 02 15:04")
-		}
-		add(lipgloss.NewStyle().Foreground(statusCompleted).Bold(true).Render("REVIEW APPROVED") + mutedStyle.Render(suffix))
-		if t.MergeStatus == "" {
-			add(mutedStyle.Render("Merge scheduled for the approved commit; the result appears here."))
-		}
-	case orchestrator.ReviewRejected:
-		suffix := "  " + terminalText(t.ReviewedBy)
-		if !t.ReviewedAt.IsZero() {
-			suffix += "  " + t.ReviewedAt.Local().Format("Jan 02 15:04")
-		}
-		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("REVIEW REJECTED") + mutedStyle.Render(suffix))
-		line := "F adds follow-up context and requeues the task."
-		if t.ExecutionWorkspace != "" {
-			line = "Worktree retained; " + line
-		}
-		add(mutedStyle.Render(line))
-	}
-	if t.ReviewNote != "" {
-		add(mutedStyle.Render("Review note: " + terminalText(t.ReviewNote)))
-	}
+	m.taskSummary(t, add)
+	mergeSummary(t, add)
+	reviewSummary(t, add)
 	if children := m.childrenOf(t.ID); len(children) > 0 {
 		add(mutedStyle.Render(fmt.Sprintf("Subagents: %d", len(children))))
 	}
@@ -144,70 +50,165 @@ func (m model) detailContent(width int) []string {
 		add(mutedStyle.Render("Context paused (s to resume)"))
 	}
 	if t.Error != "" {
-		add("")
-		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("ERROR  " + terminalText(t.Error)))
+		add("", lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("ERROR  "+terminalText(t.Error)))
 	}
 	if m.history {
-		add("")
-		add(accentStyle.Render("HISTORY"))
-		if len(t.Context) > 0 {
-			add(accentStyle.Render("CONTEXT"))
+		m.taskHistory(t, width, add)
+		return lines
+	}
+	add("", accentStyle.Render("OUTPUT"))
+	if t.Output == "" {
+		add(mutedStyle.Render("Waiting for output…"))
+		return lines
+	}
+	return append(lines, m.renderedOutputFor(t.Output, width, m.runningGlyph(), m.thinking)...)
+}
+
+// taskSummary shows the mandate and what will run it. Usage is the task's own
+// recorded history; the price line describes the rate in force now.
+func (m model) taskSummary(t orchestrator.Task, add func(...string)) {
+	configurable := t.Status == orchestrator.Queued && !t.ScheduleRequested
+	change := func(line, hint string) string {
+		if configurable {
+			line += hint
 		}
-		for _, c := range t.Context {
-			delivery := c.Delivery
-			if delivery == "" {
-				delivery = "legacy"
-			}
-			description := "Context " + c.ID + "  " + delivery + "  " + terminalText(c.Text)
-			if c.DeliveryError != "" {
-				description += "  " + terminalText(c.DeliveryError)
-			}
-			add(description)
-		}
-		if len(t.Deliveries) > 0 {
-			add(accentStyle.Render("DELIVERIES") + mutedStyle.Render("  per attempt"))
-		}
-		for _, d := range t.Deliveries {
-			attempt := d.AttemptID
-			if attempt == "" {
-				attempt = "unstarted"
-			}
-			description := fmt.Sprintf("%s  attempt %s  %s  %s", d.UpdatedAt.Local().Format("15:04:05"), attempt, d.TriggerID, d.State)
-			if d.Error != "" {
-				description += "  " + terminalText(d.Error)
-			}
-			add(mutedStyle.Render(description))
-		}
-		if children := m.childrenOf(t.ID); len(children) > 0 {
-			add(accentStyle.Render("SUBAGENTS"))
-			for _, child := range children {
-				add(fmt.Sprintf("%s  %s  %s", child.CreatedAt.Local().Format("Jan 02 15:04"), m.taskLabel(child), terminalText(child.Title)))
-			}
-		}
-		if len(t.Attempts) > 0 {
-			add(accentStyle.Render("ATTEMPTS"))
-		}
-		for _, a := range t.Attempts {
-			row := fmt.Sprintf("%s  %s  %s", a.StartedAt.Local().Format("Jan 02 15:04"), statusLabel(a.Status), terminalText(a.ID))
-			// The attempt's own usage stays on its row, shortened to fit
-			// rather than wrapped: one run reads as one line.
-			row += attemptUsageSuffix(a.Usage, width-lipgloss.Width(row))
-			add(row)
-		}
-		for _, e := range t.Events {
-			add(mutedStyle.Render(e.Time.Local().Format("15:04:05")) + "  " + terminalText(e.Kind) + "  " + terminalText(e.Message))
-		}
-	} else {
-		add("")
-		add(accentStyle.Render("OUTPUT"))
-		if t.Output == "" {
-			add(mutedStyle.Render("Waiting for output…"))
-		} else {
-			lines = append(lines, m.renderedOutputFor(t.Output, width, m.runningGlyph(), m.thinking)...)
+		return mutedStyle.Render(line)
+	}
+	add(accentStyle.Render("MANDATE"), terminalText(t.Prompt), change("Agent: "+terminalText(t.Agent), " · A to change"))
+	if n := len(t.Attempts); n > 0 && t.Attempts[n-1].RequestedModel != "" {
+		add(mutedStyle.Render("Last attempt model: " + terminalText(t.Attempts[n-1].RequestedModel)))
+	}
+	if usage := t.Usage(); !usage.IsZero() {
+		add(mutedStyle.Render("Usage: " + terminalText(taskUsageLine(usage))))
+		if price, ok := priceLine(usage.Model, usage.Rate, time.Now()); ok {
+			add(mutedStyle.Render(terminalText(price)))
 		}
 	}
-	return lines
+	if t.ProfileName != "" {
+		label := t.ProfileName
+		if t.ProfileSpec != nil {
+			label = profileLabel(*t.ProfileSpec)
+		}
+		add(change("Profile: "+terminalText(label), " · P to change"))
+	}
+	if t.ParentID != "" {
+		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
+	}
+	add(mutedStyle.Render("Source: " + terminalText(t.Workspace)))
+	worktreeGlyph := lipgloss.NewStyle().Foreground(cyan).Render(glyphWorktree)
+	switch {
+	case t.Isolated && t.ExecutionWorkspace == "":
+		line := worktreeGlyph + " Workspace: isolated worktree requested"
+		if configurable {
+			line += " (w to change)"
+		}
+		add(accentStyle.Render(line), mutedStyle.Render("Committed HEAD only; uncommitted files are excluded."))
+	case t.Isolated:
+		add(accentStyle.Render(worktreeGlyph+" Execution: "+terminalText(t.ExecutionWorkspace)),
+			mutedStyle.Render("Isolated worktree · commit "+terminalText(t.IsolationCommit)))
+	case t.ParentID != "":
+		add(mutedStyle.Render(glyphInherited + " Execution: inherited from parent task"))
+	default:
+		add(change(glyphShared+" Execution: shared workspace", " (w to isolate before start)"))
+	}
 }
+
+// mergeSummary shows the outcome of merging isolated work.
+func mergeSummary(t orchestrator.Task, add func(...string)) {
+	badge := workspaceBadgeFor(t)
+	style := lipgloss.NewStyle().Foreground(badge.color)
+	switch t.MergeStatus {
+	case orchestrator.MergeMerged:
+		add(style.Render(badge.glyph+" Merge: merged") + mutedStyle.Render(" · commit "+terminalText(t.MergeCommit)))
+		if t.MergeWarning != "" {
+			add(lipgloss.NewStyle().Foreground(statusWaiting).Render("Merge warning  ") + terminalText(t.MergeWarning))
+		}
+	case orchestrator.MergeUpToDate:
+		add(mutedStyle.Render(badge.glyph + " Merge: no changes to merge"))
+	case orchestrator.MergeFailed:
+		detail := "MERGE FAILED  "
+		if t.MergeConflict() {
+			detail = "MERGE FAILED (conflict)  "
+		}
+		add(style.Render(badge.glyph + " " + detail + terminalText(t.MergeError)))
+	}
+}
+
+func reviewSummary(t orchestrator.Task, add func(...string)) {
+	reviewed := "  " + terminalText(t.ReviewedBy)
+	if !t.ReviewedAt.IsZero() {
+		reviewed += "  " + t.ReviewedAt.Local().Format("Jan 02 15:04")
+	}
+	switch t.ReviewStatus {
+	case orchestrator.ReviewPending:
+		add(accentStyle.Render("REVIEW PENDING") + mutedStyle.Render("  commit "+terminalText(t.ReviewCommit)+"  ·  merge blocked until approval  ·  v approve + merge / V reject"))
+	case orchestrator.ReviewApproved:
+		add(lipgloss.NewStyle().Foreground(statusCompleted).Bold(true).Render("REVIEW APPROVED") + mutedStyle.Render(reviewed))
+		if t.MergeStatus == "" {
+			add(mutedStyle.Render("Merge scheduled for the approved commit; the result appears here."))
+		}
+	case orchestrator.ReviewRejected:
+		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("REVIEW REJECTED") + mutedStyle.Render(reviewed))
+		line := "F adds follow-up context and requeues the task."
+		if t.ExecutionWorkspace != "" {
+			line = "Worktree retained; " + line
+		}
+		add(mutedStyle.Render(line))
+	}
+	if t.ReviewNote != "" {
+		add(mutedStyle.Render("Review note: " + terminalText(t.ReviewNote)))
+	}
+}
+
+func (m model) taskHistory(t orchestrator.Task, width int, add func(...string)) {
+	add("", accentStyle.Render("HISTORY"))
+	if len(t.Context) > 0 {
+		add(accentStyle.Render("CONTEXT"))
+	}
+	for _, c := range t.Context {
+		delivery := c.Delivery
+		if delivery == "" {
+			delivery = "legacy"
+		}
+		description := "Context " + c.ID + "  " + delivery + "  " + terminalText(c.Text)
+		if c.DeliveryError != "" {
+			description += "  " + terminalText(c.DeliveryError)
+		}
+		add(description)
+	}
+	if len(t.Deliveries) > 0 {
+		add(accentStyle.Render("DELIVERIES") + mutedStyle.Render("  per attempt"))
+	}
+	for _, d := range t.Deliveries {
+		attempt := d.AttemptID
+		if attempt == "" {
+			attempt = "unstarted"
+		}
+		description := fmt.Sprintf("%s  attempt %s  %s  %s", d.UpdatedAt.Local().Format("15:04:05"), attempt, d.TriggerID, d.State)
+		if d.Error != "" {
+			description += "  " + terminalText(d.Error)
+		}
+		add(mutedStyle.Render(description))
+	}
+	if children := m.childrenOf(t.ID); len(children) > 0 {
+		add(accentStyle.Render("SUBAGENTS"))
+		for _, child := range children {
+			add(fmt.Sprintf("%s  %s  %s", child.CreatedAt.Local().Format("Jan 02 15:04"), m.taskLabel(child), terminalText(child.Title)))
+		}
+	}
+	if len(t.Attempts) > 0 {
+		add(accentStyle.Render("ATTEMPTS"))
+	}
+	for _, a := range t.Attempts {
+		// One run reads as one line: its usage is shortened to fit, not wrapped.
+		row := fmt.Sprintf("%s  %s  %s", a.StartedAt.Local().Format("Jan 02 15:04"), statusLabel(a.Status), terminalText(a.ID))
+		add(row + attemptUsageSuffix(a.Usage, width-lipgloss.Width(row)))
+	}
+	for _, e := range t.Events {
+		add(mutedStyle.Render(e.Time.Local().Format("15:04:05")) + "  " + terminalText(e.Kind) + "  " + terminalText(e.Message))
+	}
+}
+
 func (m model) childrenOf(id string) []orchestrator.Task {
 	var children []orchestrator.Task
 	for _, task := range m.tasks {
@@ -228,45 +229,50 @@ func (m model) detailPage() int {
 }
 func (m model) maxScroll() int { return max(0, m.detailLineCount()-m.detailPage()) }
 
-func transcriptTab(label string, active bool) string {
-	if active {
-		return activeTabStyle.Render(" " + label + " ")
-	}
-	return inactiveTabStyle.Render(" " + label + " ")
-}
-
 func (m model) detailTabRow(t orchestrator.Task, width int) string {
-	row := transcriptTab("OUTPUT", !m.history && !m.activity.open) + faintStyle.Render("│") +
-		transcriptTab("HISTORY", m.history && !m.activity.open) + faintStyle.Render("  ·  ") +
+	tab := func(label string, active bool) string {
+		if active {
+			return activeTabStyle.Render(" " + label + " ")
+		}
+		return inactiveTabStyle.Render(" " + label + " ")
+	}
+	row := tab("OUTPUT", !m.history && !m.activity.open) + faintStyle.Render("│") +
+		tab("HISTORY", m.history && !m.activity.open) + faintStyle.Render("  ·  ") +
 		mutedStyle.Render(terminalText(executorLabel(t)))
 	return fit(row, width, 1)
 }
 
+// detailWindow is the [start, end) slice of n content lines shown in available
+// rows, scrolled up from the bottom by historyOffset.
+func (m model) detailWindow(n, available int) (start, end int) {
+	end = n - min(max(0, m.historyOffset), max(0, n-available))
+	return max(0, end-available), end
+}
+
 func (m model) detailPanel(width, height int) string {
 	if m.agentPicker.target != "" {
-		return m.agentPanel(width, height)
+		return pickerPanel(m.agentPicker, "SELECT AGENT", "No registered agents.", describeAgent, width, height)
 	}
 	if m.profilePicker.target != "" {
-		return m.profilePanel(width, height)
+		return pickerPanel(m.profilePicker, "SELECT PROFILE", "No registered profiles.", describeProfile, width, height)
 	}
-	inner := m.layout().panelInner(width)
-	if len(m.tasks) == 0 {
+	l := m.layout()
+	inner := l.panelInner(width)
+	t, ok := m.selectedTask()
+	if !ok {
 		return panel(titleStyle.Render("TASK DETAILS")+"\n\n"+mutedStyle.Render("Select a task to view details."), width, height)
 	}
-	t := m.tasks[m.selected]
 	titleLine := titleStyle.Render(singleLine(t.Title)) + "  " + m.taskLabel(t)
 	if action := m.currentAction(t); action != "" {
 		titleLine = lipgloss.NewStyle().Foreground(cyan).Render(action)
 	}
-	if position, total, ok := m.selectedPosition(); ok && !m.sidebarVisible() && inner >= 8 {
+	if position, total, ok := m.selectedPosition(); ok && !l.sidebar && inner >= 8 {
 		titleLine = mutedStyle.Render(fmt.Sprintf("TASK %d/%d  ", position, total)) + titleLine
 	}
 	lines := []string{m.detailTabRow(t, inner), fit(titleLine, inner, 1)}
 	content := m.detailContent(inner)
-	available := max(0, m.layout().detailRows(height))
-	offset := min(max(0, m.historyOffset), max(0, len(content)-available))
-	end := len(content) - offset
-	start := max(0, end-available)
+	available := max(0, l.detailRows(height))
+	start, end := m.detailWindow(len(content), available)
 	if available > 0 {
 		lines = append(lines, m.highlightSelection(content, start, end, inner)...)
 	}
@@ -276,26 +282,26 @@ func (m model) detailPanel(width, height int) string {
 	} else if m.history {
 		label = "HISTORY"
 	}
-	focused := m.detailFocus || m.fullscreen
-	focus := "l to focus · j/k scroll"
-	if focused {
-		focus = "j/k scroll · h tasks"
-	}
-	if m.activity.open {
-		switch {
-		case m.activity.expanded && focused:
-			focus = "j/k scroll · esc collapse"
-		case m.activity.expanded:
-			focus = "l to focus · esc collapse"
-		case focused:
-			focus = "j/k select · enter expand"
-		default:
-			focus = "l to focus · enter expand"
-		}
-	}
-	position := fmt.Sprintf("%s  %d–%d / %d  ·  %s", label, min(start+1, end), end, len(content), focus)
+	position := fmt.Sprintf("%s  %d–%d / %d  ·  %s", label, min(start+1, end), end, len(content), m.detailFocusHint())
 	lines = append(lines, mutedStyle.Render(position))
 	return focusedPanel(strings.Join(lines, "\n"), width, height, m.detailFocus || m.fullscreen)
+}
+
+func (m model) detailFocusHint() string {
+	focused := m.detailFocus || m.fullscreen
+	switch {
+	case !m.activity.open && focused:
+		return "j/k scroll · h tasks"
+	case !m.activity.open:
+		return "l to focus · j/k scroll"
+	case m.activity.expanded && focused:
+		return "j/k scroll · esc collapse"
+	case m.activity.expanded:
+		return "l to focus · esc collapse"
+	case focused:
+		return "j/k select · enter expand"
+	}
+	return "l to focus · enter expand"
 }
 
 func (m model) selectedTask() (orchestrator.Task, bool) {

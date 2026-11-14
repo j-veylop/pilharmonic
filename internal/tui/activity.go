@@ -104,31 +104,19 @@ func prettyPayload(raw json.RawMessage) string {
 }
 func (m model) activityContent(width int) []string {
 	var lines []string
-	add := func(s string) { lines = append(lines, strings.Split(ansi.Hardwrap(s, width, true), "\n")...) }
+	add := func(rows ...string) {
+		for _, s := range rows {
+			lines = append(lines, strings.Split(ansi.Hardwrap(s, width, true), "\n")...)
+		}
+	}
 	if len(m.tasks) == 0 {
 		return nil
 	}
-	activities := m.visibleActivities()
 	if m.activity.expanded {
-		a, _, ok := m.selectedActivity()
-		if !ok {
-			add("This call is no longer retained. Esc returns to the list.")
-			return lines
-		}
-		statusStyle, glyph := m.toolStatusStyle(a.Status)
-		add(titleStyle.Render(terminalText(a.Name)) + "  " + statusStyle.Bold(true).Render(glyph))
-		add(mutedStyle.Render("Attempt " + a.AttemptID + "  ·  " + a.StartedAt.Local().Format("15:04:05")))
-		if a.DurationMS != nil {
-			add(fmt.Sprintf("Duration %.0f ms", *a.DurationMS))
-		}
-		add("")
-		add(accentStyle.Render("ARGUMENTS"))
-		add(prettyPayload(a.Args))
-		add("")
-		add(accentStyle.Render("RESULT"))
-		add(readableResult(a.Result))
+		m.activityDetail(add)
 		return lines
 	}
+	activities := m.visibleActivities()
 	scope := []string{"all attempts", "latest attempt", "errors only"}[int(m.activity.filter)]
 	add(mutedStyle.Render("Filter: " + scope + " (f)"))
 	if len(activities) == 0 {
@@ -153,26 +141,40 @@ func (m model) activityContent(width int) []string {
 		if a.DurationMS != nil {
 			duration = fmt.Sprintf(" · %.0fms", *a.DurationMS)
 		}
-		plain := marker + stamp + " " + glyph
-		if summary != "" {
-			plain += " · " + summary
-		}
-		plain += duration
 		if isSelected {
-			add(selectionRow(plain, width))
+			plain := marker + stamp + " " + glyph
+			if summary != "" {
+				plain += " · " + summary
+			}
+			add(selectionRow(plain+duration, width))
 			continue
 		}
 		row := marker + mutedStyle.Render(stamp) + " " + style.Bold(true).Render(glyph)
 		if summary != "" {
 			row += mutedStyle.Render(" · ") + styledToolSummary(a.Summary())
 		}
-		row += mutedStyle.Render(duration)
-		add(fit(row, width, 1))
+		add(fit(row+mutedStyle.Render(duration), width, 1))
 	}
 	return lines
 }
 
-// readableResult preserves actual line breaks in Pi text results instead of
+// activityDetail shows the expanded call's arguments and result.
+func (m model) activityDetail(add func(...string)) {
+	a, _, ok := m.selectedActivity()
+	if !ok {
+		add("This call is no longer retained. Esc returns to the list.")
+		return
+	}
+	statusStyle, glyph := m.toolStatusStyle(a.Status)
+	add(titleStyle.Render(terminalText(a.Name))+"  "+statusStyle.Bold(true).Render(glyph),
+		mutedStyle.Render("Attempt "+a.AttemptID+"  ·  "+a.StartedAt.Local().Format("15:04:05")))
+	if a.DurationMS != nil {
+		add(fmt.Sprintf("Duration %.0f ms", *a.DurationMS))
+	}
+	add("", accentStyle.Render("ARGUMENTS"), prettyPayload(a.Args), "", accentStyle.Render("RESULT"), readableResult(a.Result))
+}
+
+// readableResult preserves actual line breaks in text results instead of
 // making command output readable only through JSON escape sequences.
 func readableResult(raw json.RawMessage) string {
 	var result struct {

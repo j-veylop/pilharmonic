@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
 
@@ -58,7 +61,7 @@ func (m model) taskPanel(width, height int) string {
 	if len(m.tasks) == 0 {
 		lines = append(lines,
 			mutedStyle.Render("No tasks yet."),
-			mutedStyle.Render("n creates one."))
+			mutedStyle.Render("/ creates one."))
 	} else {
 		rows := taskListRows(m.tasks)
 		selected := 0
@@ -109,23 +112,11 @@ func profileLabel(p orchestrator.Profile) string {
 	return p.Name
 }
 
-// pickerPanel lists a picker's choices, each as a label row and a muted detail
-// row, in place of the task details.
-func pickerPanel[T any](p pickerState[T], title, empty string, describe func(T) (label, detail string), width, height int) string {
-	lines := []string{titleStyle.Render(title), mutedStyle.Render("Queued task only"), ""}
-	start, end := windowRows(p.index, len(p.choices), (height-7)/2)
-	for i := start; i < end; i++ {
-		label, detail := describe(p.choices[i])
-		row := titleStyle.Render("  " + label)
-		if i == p.index {
-			row = selectionRow(label, width-4)
-		}
-		lines = append(lines, row, mutedStyle.Render("  "+detail))
+func taskProfileLabel(t orchestrator.Task) string {
+	if t.ProfileSpec != nil {
+		return profileLabel(*t.ProfileSpec)
 	}
-	if len(p.choices) == 0 {
-		lines = append(lines, mutedStyle.Render(empty))
-	}
-	return panel(strings.Join(lines, "\n"), width, height)
+	return t.ProfileName
 }
 
 func describeProfile(profile orchestrator.Profile) (label, detail string) {
@@ -164,4 +155,236 @@ func describeAgent(agent orchestrator.AgentInfo) (label, detail string) {
 		label += " · " + terminalText(agent.Description)
 	}
 	return label, detail
+}
+
+// overlay centres modal over a faint, unstyled copy of background in a w×h
+// frame. Stripping the background's own styles keeps the modal the only thing
+// that reads as active. The frame is always exactly w×h cells.
+func overlay(background, modal string, w, h, mw, mh int) string {
+	bg := strings.Split(background, "\n")
+	box := strings.Split(modal, "\n")
+	x, y := (w-mw)/2, (h-mh)/2
+	result := make([]string, max(0, h))
+	for row := range result {
+		line := ""
+		if row < len(bg) {
+			line = ansi.Strip(bg[row])
+		}
+		line = lipgloss.PlaceHorizontal(w, lipgloss.Left, line)
+		if row >= y && row < y+len(box) {
+			result[row] = mutedStyle.Faint(true).Render(ansi.Cut(line, 0, x)) + box[row-y] + mutedStyle.Faint(true).Render(ansi.Cut(line, x+mw, w))
+		} else {
+			result[row] = mutedStyle.Faint(true).Render(line)
+		}
+	}
+	return fit(strings.Join(result, "\n"), w, h)
+}
+
+// modalView draws content in a focused frame over background, or just the
+// background when the terminal is too small for the frame.
+func modalView(background string, w, h, mw, mh int, content []string) string {
+	if content == nil {
+		return fit(background, w, h)
+	}
+	return overlay(background, focusedPanel(strings.Join(content, "\n"), mw, mh, true), w, h, mw, mh)
+}
+
+// menuRow is one selectable line in a modal list menu. tag is pre-styled and
+// right-aligned, or empty for a plain row.
+type menuRow struct {
+	label string
+	tag   string
+}
+
+// menuView is the single renderer for the login and model menus.
+// It draws a titled modal over a faint background, windows the rows around the
+// selection, right-aligns each row's tag, and pads the body so the footer hint
+// stays on the last row.
+func menuView(background string, w, h int, title, subtitle string, body []string, rows []menuRow, selected int, empty, footer string, mw, mh int) string {
+	inner := mw - 4
+	if inner < 12 || mh < 6 {
+		return fit(background, w, h)
+	}
+	selected = max(0, min(len(rows)-1, selected))
+	content := []string{
+		accentStyle.Render(title) + mutedStyle.Render("  "+subtitle),
+		"",
+	}
+	content = append(content, body...)
+	if len(rows) == 0 && empty != "" {
+		content = append(content, mutedStyle.Render(empty))
+	}
+	start, end := windowRows(selected, len(rows), mh-5)
+	for i := start; i < end; i++ {
+		row := rows[i]
+		marker, name := "  ", mutedStyle.Render(row.label)
+		if i == selected {
+			marker, name = accentStyle.Render("› "), titleStyle.Render(row.label)
+		}
+		if row.tag == "" {
+			content = append(content, marker+name)
+			continue
+		}
+		plain := 2 + lipgloss.Width(row.label) + lipgloss.Width(ansi.Strip(row.tag))
+		if plain >= inner {
+			content = append(content, marker+name)
+			continue
+		}
+		content = append(content, marker+name+strings.Repeat(" ", inner-plain)+row.tag)
+	}
+	for len(content) < mh-3 {
+		content = append(content, "")
+	}
+	content = append(content, accentStyle.Render(footer))
+	modal := focusedPanel(strings.Join(content, "\n"), mw, mh, true)
+	return overlay(background, modal, w, h, mw, mh)
+}
+
+// listMenuKey handles the keys every list menu and picker shares: ctrl+c asks
+// to quit and j/k/up/down move index within count. It reports whether it
+// handled key.
+func (m *model) listMenuKey(key string, index *int, count int) bool {
+	switch key {
+	case "ctrl+c":
+		*m = m.requestQuit()
+	case "up", "k":
+		*index = max(0, min(count-1, *index-1))
+	case "down", "j":
+		*index = max(0, min(count-1, *index+1))
+	default:
+		return false
+	}
+	return true
+}
+
+// setupState is the setup popup for a held task, captured when it opens. Its
+// Executor and Profile rows open the agent and profile pickers in place.
+type setupState struct {
+	target string
+	index  int
+}
+
+var setupRows = []string{"Executor", "Profile", "Isolation"}
+
+// setupTask is the captured task, or a zero task once it is gone; the service
+// then refuses changes to it.
+func (m model) setupTask() orchestrator.Task {
+	for _, t := range m.tasks {
+		if t.ID == m.setup.target {
+			return t
+		}
+	}
+	return orchestrator.Task{}
+}
+
+func (m model) setupKey(key string) (model, tea.Cmd) {
+	switch {
+	case m.agentPicker.target != "":
+		return m.agentPickerKey(key), nil
+	case m.profilePicker.target != "":
+		return m.profilePickerKey(key), nil
+	case m.listMenuKey(key, &m.setup.index, len(setupRows)):
+		return m, nil
+	}
+	t := m.setupTask()
+	switch {
+	case key == "esc":
+		m.setup = setupState{}
+	case key != "enter":
+	case m.setup.index == 0:
+		openPicker(&m.agentPicker, m.setup.target, m.service.ListAgents(), func(a orchestrator.AgentInfo) bool { return a.Name == t.Agent })
+	case m.setup.index == 1:
+		openPicker(&m.profilePicker, m.setup.target, m.service.ListProfiles(), func(p orchestrator.Profile) bool { return p.Name == t.ProfileName })
+	case !m.isolationBusy:
+		m.isolationBusy = true
+		m.notice.text = "Checking workspace isolation…"
+		service, id, enabled := m.service, m.setup.target, !t.Isolated
+		return m, func() tea.Msg {
+			notice := "Isolation off: task uses the source workspace."
+			if enabled {
+				notice = "Isolation enabled: starts from committed HEAD; uncommitted files are excluded."
+			}
+			return isolationResultMsg(resultFor(notice, service.SetTaskIsolation(id, enabled)))
+		}
+	}
+	return m, nil
+}
+
+func (m model) setupView(background string, w, h int) string {
+	t := m.setupTask()
+	subtitle, index, footer := singleLine(t.Title), m.setup.index, "j/k select · enter change · esc close"
+	var rows []menuRow
+	choice := func(label, detail string) { rows = append(rows, menuRow{label: label, tag: mutedStyle.Render(detail)}) }
+	switch {
+	case m.agentPicker.target != "":
+		for _, a := range m.agentPicker.choices {
+			choice(describeAgent(a))
+		}
+		subtitle, index, footer = "Executor", m.agentPicker.index, "j/k select · enter choose · esc back"
+	case m.profilePicker.target != "":
+		for _, p := range m.profilePicker.choices {
+			choice(describeProfile(p))
+		}
+		subtitle, index, footer = "Profile", m.profilePicker.index, "j/k select · enter choose · esc back"
+	default:
+		isolation := "off"
+		if t.Isolated {
+			isolation = "on"
+		}
+		for i, value := range []string{t.Agent, taskProfileLabel(t), isolation} {
+			rows = append(rows, menuRow{label: setupRows[i], tag: accentStyle.Render(terminalText(value))})
+		}
+	}
+	return menuView(background, w, h, "SETUP", subtitle, nil, rows, index, "Nothing to choose.", footer, min(72, w-4), min(len(rows)+8, h-2))
+}
+
+// pickerState is a held task's agent or profile chooser. target is captured
+// when the picker opens.
+type pickerState[T any] struct {
+	target  string
+	choices []T
+	index   int
+}
+
+func openPicker[T any](p *pickerState[T], target string, choices []T, current func(T) bool) {
+	*p = pickerState[T]{target: target, choices: choices}
+	for i, choice := range choices {
+		if current(choice) {
+			p.index = i
+		}
+	}
+}
+
+// pickerKey drives an open picker. Enter hands the choice to apply, which
+// returns the success notice and the service error.
+func pickerKey[T any](m *model, p *pickerState[T], key string, apply func(target string, choice T) (string, error)) {
+	if m.listMenuKey(key, &p.index, len(p.choices)) {
+		return
+	}
+	switch key {
+	case "enter":
+		if len(p.choices) > 0 {
+			notice, err := apply(p.target, p.choices[p.index])
+			m.notice.text = resultFor(notice, err).text()
+			m.refreshTasks()
+		}
+	case "esc":
+	default:
+		return
+	}
+	*p = pickerState[T]{}
+}
+
+func (m model) profilePickerKey(key string) model {
+	pickerKey(&m, &m.profilePicker, key, func(id string, p orchestrator.Profile) (string, error) {
+		return "Profile selected: " + profileLabel(p), m.service.SetTaskProfile(id, p.Name)
+	})
+	return m
+}
+
+func (m model) agentPickerKey(key string) model {
+	pickerKey(&m, &m.agentPicker, key, func(id string, a orchestrator.AgentInfo) (string, error) {
+		return "Agent selected: " + a.Name, m.service.SetTaskAgent(id, a.Name)
+	})
+	return m
 }

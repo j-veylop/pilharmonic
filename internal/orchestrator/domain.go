@@ -128,6 +128,7 @@ type Task struct {
 	controlSocket   string
 	controlToken    string
 	controlGuidance string
+	model           string // the selector recorded on the running attempt
 }
 
 // stateVersion is written on every save. A file from a newer build fails

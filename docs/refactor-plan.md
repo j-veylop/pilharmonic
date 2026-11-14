@@ -1,7 +1,14 @@
 # Simplification plan
 
 Status: Phase 1 done; service.go split (Phase 2) done without the TUI
-interface split; Phase 3 screen stack deferred. Baseline below is pre-cleanup.
+interface split; Phase 3 screen stack deferred. Leaf packages extracted:
+`internal/worktree`, `internal/providers`, `internal/agenttools`,
+`internal/instance` and `internal/tui/editor`. The `-specialist-tools` flag is
+gone; specialist tool limits live only in `profiles.json`. Phase 4 deferred
+features are all still present. Baseline below is pre-cleanup.
+
+Current size: 56 production files (13,710 lines), 54 test files (11,901
+lines), 436 tests.
 
 ## Baseline
 
@@ -75,7 +82,7 @@ internal/tui
   app.go         screen stack, shared refresh tick, notices
   board.go       task list and actions
   detail.go      transcript, history, scrolling
-  request.go     new request form and slash commands
+  request.go     docked request box and slash commands
   login.go       provider login
   help.go        static help from one table
 ```
@@ -103,12 +110,12 @@ Ship first:
 4. One executor: Fantasy with the existing workspace tools.
 5. Source workspace, optional isolated worktree, review approval/rejection and
    merge.
-6. Board, detail transcript, request form, quit confirmation, help.
+6. Board, detail tabs, request box, quit confirmation, help.
 7. Crash/restart behavior and the instance lock.
 
 Defer, then add back feature by feature:
 
-- profiles, specialist tool limits, agent classes;
+- profiles, specialist tool limits;
 - the six-specialist catalog;
 - model menus, model fetching, usage totals and pricing;
 - subagents, control socket, live follow-up, thread subscriptions;

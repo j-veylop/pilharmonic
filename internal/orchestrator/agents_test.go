@@ -22,7 +22,8 @@ func TestAgentConfigurationAndSelection(t *testing.T) {
 	b, _ := json.Marshal(map[string]any{"agents": []AgentConfig{{Name: "echo", Command: "cat"}}})
 	must(t, s.LoadAgents(writeAgentConfig(t, string(b))))
 	agents := s.ListAgents()
-	if len(agents) != 2 || agents[0].Name != "echo" || agents[0].Capabilities.LiveContext || !agents[1].Capabilities.LiveContext {
+	if len(agents) != 2 || agents[0].Name != "echo" || agents[0].Capabilities != (AgentCapabilities{}) ||
+		agents[1].Capabilities != (AgentCapabilities{LiveContext: true, ToolActivity: true, StructuredReports: true}) {
 		t.Fatalf("bad capabilities: %+v", agents)
 	}
 	task := createTask(t, s, "task", "literal $(touch forbidden)", t.TempDir())
@@ -65,32 +66,13 @@ func TestAgentConfigAtomicValidation(t *testing.T) {
 }
 func TestCommandRunnerPassesContextOnStdin(t *testing.T) {
 	var out bytes.Buffer
-	err := (CommandRunner{Command: "cat"}).Run(context.Background(), Task{Prompt: "mandate", Workspace: t.TempDir(), Context: []Trigger{{Text: "context"}}}, &out)
+	err := (CommandRunner{Command: "cat"}).Run(context.Background(), Task{Prompt: "mandate", Workspace: t.TempDir(), Context: []Trigger{{Text: "context"}}, ProfileSpec: &Profile{Name: "role", Instructions: "role policy"}}, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "mandate") || !strings.Contains(out.String(), "not authority") || !strings.Contains(out.String(), "context") {
+	if !strings.Contains(out.String(), "mandate") || !strings.Contains(out.String(), "not authority") || !strings.Contains(out.String(), "context") || !strings.Contains(out.String(), "role policy") {
 		t.Fatal(out.String())
 	}
-}
-
-func TestAgentCapabilityRegistry(t *testing.T) {
-	s := mustGet(Open(filepath.Join(t.TempDir(), "state.json")))(t)
-	agents := s.ListAgents()
-	if len(agents) != 1 || agents[0].Name != "general" || !agents[0].Capabilities.LiveContext || !agents[0].Capabilities.ToolActivity || !agents[0].Capabilities.StructuredReports {
-		t.Fatalf("bad general capabilities: %+v", agents)
-	}
-	s.RegisterRunner("echo", CommandRunner{Command: "cat"})
-	for _, agent := range s.ListAgents() {
-		if agent.Name != "echo" {
-			continue
-		}
-		if agent.Capabilities.LiveContext || agent.Capabilities.ToolActivity || agent.Capabilities.StructuredReports {
-			t.Fatalf("command runner overclaimed capabilities: %+v", agent)
-		}
-		return
-	}
-	t.Fatal("echo runner not listed")
 }
 
 func TestBuiltinSpecialistsRespectConfiguredExecutor(t *testing.T) {
@@ -106,17 +88,6 @@ func TestBuiltinSpecialistsRespectConfiguredExecutor(t *testing.T) {
 	}
 }
 
-func TestBuiltinSpecialistCatalog(t *testing.T) {
-	s := newTestService(t)
-	s.LoadBuiltinSpecialists()
-	for _, name := range []string{"debugger", "explorer", "implementer", "gitter", "reviewer", "tester"} {
-		runner, ok := s.runners[name].(FantasyRunner)
-		if !ok || runner.instructions == "" || s.agentDescriptions[name] == "" {
-			t.Errorf("missing specialist instructions or description for %q", name)
-		}
-	}
-}
-
 func TestBuiltinSpecialistsUseLeastPrivilegeTools(t *testing.T) {
 	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
@@ -129,8 +100,8 @@ func TestBuiltinSpecialistsUseLeastPrivilegeTools(t *testing.T) {
 		"gitter":      "read,bash,edit,write,grep,find,ls",
 	} {
 		runner, ok := s.runners[name].(FantasyRunner)
-		if !ok {
-			t.Fatalf("specialist %q is not a fantasy runner", name)
+		if !ok || runner.instructions == "" || s.agentDescriptions[name] == "" {
+			t.Fatalf("specialist %q is missing, or lacks instructions or a description", name)
 		}
 		got := strings.Join(runner.toolPalette(nil), ",")
 		if got != want {
@@ -160,8 +131,10 @@ func TestSpecialistSelectionAndModel(t *testing.T) {
 			t.Fatalf("tester tool limit: %v", task.SpecialistTools)
 		}
 	}
-	runner := s.runners["tester"].(FantasyRunner)
-	if got := runner.RequestedModel(&Profile{Model: "provider/parent"}); got != "provider/example" {
+	if got := requestedModel(s, "tester", &Profile{Model: "provider/parent"}); got != "provider/parent" {
+		t.Fatalf("tester model = %q, want provider/parent", got)
+	}
+	if got := requestedModel(s, "tester", &Profile{}); got != "provider/example" {
 		t.Fatalf("tester model = %q, want provider/example", got)
 	}
 }

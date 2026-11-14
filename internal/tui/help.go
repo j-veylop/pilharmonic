@@ -20,9 +20,11 @@ type helpTopic struct {
 }
 
 // helpSection groups related shortcuts under a heading. An empty heading
-// continues the previous group without a label.
+// continues the previous group without a label. topic names the key table
+// bindings listed before rows.
 type helpSection struct {
 	heading string
+	topic   string
 	rows    []helpRow
 }
 
@@ -32,13 +34,24 @@ type helpRow struct {
 	desc string
 }
 
+func (s helpSection) keys() []helpRow {
+	var rows []helpRow
+	for _, b := range boardKeys {
+		if b.topic != "" && b.topic == s.topic && b.help != "" {
+			rows = append(rows, helpRow{b.key, b.help})
+		}
+	}
+	return append(rows, s.rows...)
+}
+
 var helpTopics = []helpTopic{
 	{
 		title: "Concepts",
 		sections: []helpSection{{rows: []helpRow{
-			{"Request", "Work submitted with /. One compiled-in authorization step decides acceptance and records its audit evidence."},
+			{"Request", "Work typed into the request box (/). One compiled-in authorization step decides acceptance and records its audit evidence."},
 			{"Task", "Accepted work with its own mandate, executor, status and history."},
 			{"Route", "The automatic acceptance step that picks an executor."},
+			{"Held", "A task kept queued with Ctrl-s so o can set it up before r starts it."},
 			{"Action", "Tasks that need you: blocked, waiting, awaiting review, undelivered input, merge failed, failed or interrupted."},
 			{"Attempt", "One run of a task. Retry keeps the task and adds an attempt."},
 			{"Usage", "Tokens and estimated cost per attempt; the board header sums them for this session, subagents included."},
@@ -47,63 +60,27 @@ var helpTopics = []helpTopic{
 	},
 	{
 		title: "Navigation",
-		sections: []helpSection{{rows: []helpRow{
+		sections: []helpSection{{topic: "Navigation", rows: []helpRow{
 			{"h / l", "Focus tasks / details"},
-			{"j / k", "Move down / up; counts: 5j, 3k"},
+			{"j / k", "Move down / up; counts: 5j, 3k; selects a call in focused ACTIVITY"},
 			{"gg / G", "First / last task or top / bottom"},
-			{"!", "Next task needing action (board)"},
 			{"Ctrl-u / d", "Half page up / down"},
-			{"Ctrl-b / f", "Full page up / down"},
-			{"Ctrl-y / e", "One detail line up / down"},
-			{"[ / ]", "One detail line up / down"},
 			{"PgUp / PgDn", "Page details"},
-			{"Home / End", "Top / bottom of details"},
 			{"Mouse wheel", "Scroll details"},
-			{"Enter", "Toggle task/detail focus"},
-			{"z", "Toggle full-width details"},
-			{"Esc", "Return / collapse expanded call"},
 		}}},
 	},
 	{
-		title: "Tasks",
-		sections: []helpSection{{rows: []helpRow{
-			{"@executor", "Prefix a request; Tab completes names"},
-			{"n", "New task without routing"},
-			{"/", "New request; acceptance is decided and recorded"},
-			{"a", "Related task in selected thread"},
-			{"b", "Spawn subagent from running task"},
-			{"A", "Choose executor before starting"},
-			{"P", "Choose profile (model, tools) before starting"},
-			{"w", "Toggle worktree isolation before start"},
-			{"r / R", "Start / retry task"},
-			{"v / V", "Approve (merge) / reject prepared worktree commit"},
-			{"c", "Cancel task"},
-			{"d", "Delete inactive task + worktree (confirm y)"},
-			{"D", "Delete completed tasks + worktrees (confirm y)"},
-			{"x", "Discard selected merged worktree (confirm y)"},
-			{"X", "Discard all merged worktrees (confirm y)"},
-			{"f", "Send context to thread subscribers"},
-			{"F", "Follow up task; a rejected worktree is kept for this"},
-			{"s", "Pause / resume thread subscription"},
-			{"p", "Report: kind + message progress, waiting, blocked, ready, failed"},
-		}}},
+		title:    "Tasks",
+		sections: []helpSection{{topic: "Tasks"}},
 	},
 	{
-		title: "Activity",
-		sections: []helpSection{{rows: []helpRow{
-			{"Tab", "Switch output / history"},
-			{"t", "Toggle tool activity"},
-			{"T", "Show / hide thinking blocks"},
-			{"j / k", "Select activity in detail focus"},
-			{"Enter", "Expand / collapse selected tool call"},
-			{"f", "All calls / latest attempt / errors"},
-			{"Ctrl-u / d", "Scroll expanded arguments and results"},
-		}}},
+		title:    "Details",
+		sections: []helpSection{{topic: "Details"}},
 	},
 	{
 		title: "Commands",
 		intro: []string{
-			"Type these into the NEW REQUEST form; they are never submitted as a request. Arguments follow the command name, as in /login <provider> or /model [big|small].",
+			"Type these into the REQUEST box; they are never submitted as a request. Arguments follow the command name, as in /login <provider> or /model [big|small].",
 		},
 		sections: []helpSection{{
 			heading: "SLASH COMMANDS",
@@ -112,7 +89,6 @@ var helpTopics = []helpTopic{
 				{"/logout", "Forget a provider's stored key"},
 				{"/providers", "List providers and whether a key is stored"},
 				{"/model", "Choose the models, or open the menu"},
-				{"/agents", "Choose an agent's model class"},
 				{"/help", "Open this help"},
 			},
 		}},
@@ -120,9 +96,14 @@ var helpTopics = []helpTopic{
 	{
 		title: "Editing",
 		intro: []string{
-			"The request form and every composer dock as one input box above the footer hints; the draft wraps inside it and grows to six rows.",
+			"The request box and every composer dock above the footer hints; the draft wraps inside it and grows to six rows.",
 		},
 		sections: []helpSection{{rows: []helpRow{
+			{"Enter", "Submit; the request box routes and starts the task"},
+			{"Ctrl-s", "Request box: hold the task queued for setup"},
+			{"Ctrl-j", "Insert a newline (also Alt-enter)"},
+			{"Tab", "Complete a leading @executor in the request box"},
+			{"Esc", "Cancel input; the request draft is kept"},
 			{"Ctrl-w", "Delete previous word (also Alt-backspace)"},
 			{"Alt-d", "Delete next word"},
 			{"Ctrl-k / u", "Delete to line end / line start"},
@@ -132,33 +113,18 @@ var helpTopics = []helpTopic{
 			{"Up / Down", "One wrapped line (also Ctrl-p / Ctrl-n)"},
 			{"Home / End", "Line start / line end (also Ctrl-a / Ctrl-e)"},
 			{"PgUp / PgDn", "Move through long input"},
-			{"Enter", "Submit; Ctrl-j or Alt-enter inserts a newline"},
-			{"Esc", "Cancel input; the request draft is kept"},
-			{"Tab", "Focus the action or recent list; Shift-Tab reverses"},
-			{"j / k", "Select a row in that list; Enter opens the task"},
 		}}},
 		note: []string{"Word deletion stays on the line you are editing."},
 	},
 	{
 		title: "General",
-		sections: []helpSection{
-			{rows: []helpRow{
-				{"m", "Choose the big and small models"},
-				{"L", "Choose a provider and store its API key"},
-				{"esc", "Close request form / return to tasks"},
-				{"?", "Open / close this help (not while typing)"},
-				{"F1", "Open / close this help from any screen"},
-				{"q / Ctrl-c", "Quit; the dialog takes y/Enter to confirm, n/Esc to stay"},
-				{"Drag details", "Select text; release copies via OSC 52"},
-				{"Paste", "Use the terminal shortcut in composers"},
-			}},
-			{heading: "COMPOSERS & PICKERS", rows: []helpRow{
-				{"Enter", "Submit input / select picker item"},
-				{"Ctrl-j", "Insert newline (also Alt-enter)"},
-				{"Esc", "Cancel input / close picker"},
-				{"j/k or ↑↓", "Select in executor or profile picker"},
-			}},
-		},
+		sections: []helpSection{{topic: "General", rows: []helpRow{
+			{"?", "Open / close this help (not while typing)"},
+			{"F1", "Open / close this help from any screen"},
+			{"j/k or ↑↓", "Move in the setup popup and menus; Enter chooses, Esc goes back"},
+			{"Drag details", "Select text; release copies via OSC 52"},
+			{"Paste", "Use the terminal shortcut in composers; a paste never answers a prompt"},
+		}}},
 		note: []string{"The Editing topic lists every cursor and word key."},
 	},
 }
@@ -189,7 +155,7 @@ func helpKeyColumn() int {
 	widest := 0
 	for _, topic := range helpTopics {
 		for _, section := range topic.sections {
-			for _, row := range section.rows {
+			for _, row := range section.keys() {
 				widest = max(widest, lipgloss.Width(row.keys))
 			}
 		}
@@ -237,7 +203,7 @@ func helpLines(topic helpTopic, width int) []string {
 				out = append(out, line)
 			}
 		}
-		for _, row := range section.rows {
+		for _, row := range section.keys() {
 			key := padHelp(keyStyle.Render(row.keys), keyWidth)
 			if stacked {
 				out = append(out, key)
@@ -421,7 +387,7 @@ func (m model) helpView(background string, w, h int) string {
 // ? stays text in a draft, an API key or a custom model ID. F1 always opens help.
 func (m model) textEntryFocused() bool {
 	return m.login.provider != "" || m.input.kind != "" ||
-		(m.router.open && m.router.focus == routerFocusComposer) ||
+		m.router.open ||
 		(m.models.menu && m.models.step == modelStepCustom)
 }
 

@@ -11,9 +11,9 @@ go run .                 # run
 go build -o pilharmonic . # or go install .
 ```
 
-pilharmonic opens on the **NEW REQUEST** form (or the login menu when no credential exists). Type a request and press **Enter**: one compiled-in authorization step records the decision, and an accepted request becomes a task routed to an executor. Start with `@NAME` to pick an executor (`@tester add regression tests`); otherwise `general` runs it. Typing `@` lists matches and **Tab** completes. Up to four agents run at once (`-max-concurrent`); further starts queue FIFO.
+pilharmonic opens on the task board with the **REQUEST** box docked at the bottom (or the login menu when no credential exists); `/` reopens it and **Esc** hides it, keeping the draft. Type a request and press **Enter**: one compiled-in authorization step records the decision, and an accepted request becomes a task routed to an executor and started. **Ctrl-s** instead holds the accepted task queued so `o` can set it up before `r` starts it. Start with `@NAME` to pick an executor (`@tester add regression tests`); otherwise `general` runs it. Typing `@` lists matches and **Tab** completes. Up to four agents run at once (`-max-concurrent`); further starts queue FIFO.
 
-**F1** opens help everywhere; **?** opens it wherever it is not typed text. `/help` in the request form opens it too, and its **Commands** topic lists slash commands. **q** or **Ctrl-c** asks for confirmation before quitting; quitting cancels active attempts.
+**F1** opens help everywhere; **?** opens it wherever it is not typed text. `/help` in the request box opens it too, and its **Commands** topic lists slash commands. **q** or **Ctrl-c** asks in the footer before quitting (**y** quits, **n**/**Esc** stays); quitting cancels active attempts.
 
 Inputs use standard text editing keys (word delete, line kill, word movement, Home/End). **Ctrl-J** or **Alt-Enter** inserts a newline.
 
@@ -23,17 +23,17 @@ Inputs use standard text editing keys (word delete, line kill, word movement, Ho
 
 | Action | Keys |
 | --- | --- |
-| Create | `n` queued draft without routing; `A` choose executor, `P` profile, `w` toggle isolation, `r` start. |
-| Share context | `a` related task in the thread; `f` context to subscribed tasks; `s` pause/resume subscription. |
-| Follow up | `F` context to one task (requeues a finished one); then `r`. |
-| Inspect | `Tab` output/history, `T` thinking, `t` tool activity (`f` filter, Enter expands). |
-| Navigate | `h`/`l` panes, `j`/`k` move, `!` next task needing action, `z` full width, `[`/`]` scroll, mouse wheel. |
+| Create | `/` request box: **Enter** routes and starts, **Ctrl-s** holds. `o` sets up a held task (executor, profile, isolation); `r` starts it. |
+| Run / cancel | `r` starts a held task, or retries and starts a failed, interrupted, canceled or merge-failed one; `c` cancels. |
+| Share context | `a` related task in the thread; `m` message to subscribed tasks; `s` pause/resume subscription. |
+| Follow up | `f` context to one task (requeues a finished one); then `r`. |
+| Inspect | `Tab`/`Shift-Tab` cycle the OUTPUT, INFO and ACTIVITY tabs; `t` thinking; `e` activity filter; **Enter** in focused ACTIVITY expands a call. |
+| Navigate | `h`/`l` panes, `j`/`k` move (counts like `5j`), `gg`/`G`, `Ctrl-u`/`Ctrl-d`, `PgUp`/`PgDn`, **Enter** focus, `!` next task needing action, `z` full width, mouse wheel. |
 | Copy | Drag in the details pane; release copies via OSC 52. |
-| Report / review | `p` status report; `v` approve and merge, `V` reject with reason. |
-| Cancel / retry | `c` cancel; `R` requeue a failed, interrupted, canceled or merge-failed task. |
+| Report / review | `p` status report; `v` asks: `y` approve and merge, `n` reject with reason. |
 | Clean up | `x` discard clean integrated worktree, `d` delete task; `X`/`D` bulk. Confirm with `y`. |
 | Delegate | `b` create a child task from a running one. |
-| Models | `m` or `/model [big\|small]`; `/agents` toggles agent classes. |
+| Login / models | `/login`, `/model [big\|small]`. |
 
 Status glyphs: `●` running, `✓` completed, `✗` failed/blocked/merge failed, `⊘` interrupted/canceled, `◷` queued/waiting (including a parent waiting for subagents), `◆` awaiting review. Children are indented under their parent. The footer shows only actions valid for the selection. The header shows counts and, once reported, session token usage and estimated cost; task details show per-task usage and the current price.
 
@@ -41,9 +41,9 @@ Prices are a curated USD-per-1M snapshot for the catalog's OpenAI and DeepSeek m
 
 ## Workspaces and review
 
-In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate opens with an edit action (`fix`, `add`, `update`, `implement`, ...). Read-only and ambiguous requests run in the source workspace. Override per task with `w`, or disable with `-isolation=false`. Worktrees are reused on retry.
+In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate opens with an edit action (`fix`, `add`, `update`, `implement`, ...). Read-only and ambiguous requests run in the source workspace. Override per held task in the `o` setup popup, or disable with `-isolation=false`. Worktrees are reused on retry.
 
-A successful isolated run commits its changes for review unless the profile sets `no_integrate`. `v` merges the displayed commit into the source checkout (serialized); `V` rejects and keeps the worktree; `F` then `r` reworks it within the mandate. Uncommitted source changes are autostashed and reapplied; if that fails, the task records a merge warning and the stash remains. Untracked files that a merge would overwrite block it.
+A successful isolated run commits its changes for review unless the profile sets `no_integrate`. `v` then `y` merges the displayed commit into the source checkout (serialized); `v` then `n` rejects and keeps the worktree; `f` then `r` reworks it within the mandate. Uncommitted source changes are autostashed and reapplied; if that fails, the task records a merge warning and the stash remains. Untracked files that a merge would overwrite block it.
 
 A parent waits to integrate while descendants use its worktree. Delete descendants before discarding a shared worktree.
 
@@ -66,10 +66,9 @@ Select one with a leading `@name`, with **A** on a draft, or let a delegating pa
 
 A model is a `provider/model` selector. Prefixes: `openai`, `deepseek`, `openrouter`, `groq`, `hyper`, `bedrock`. Keys go in an owner-only `credentials.json` beside the state file. `bedrock` splits at the first `/` (ARNs work), uses the AWS credential chain and region (default `us-east-1`) unless `/login bedrock` stores a bearer token.
 
-Agents belong to a model class, `big` (default for `general`) or `small` (specialists). The model menu fetches each provider's catalog (cached ten minutes; a labelled built-in list on failure). Choices persist in `models.json`:
-`{"big": "provider/model", "small": "provider/model", "agents": {"implementer": "big"}}`. Resolution order: class model, specialist model from `profiles.json`, `-model`, task profile model.
+`/model big|small` sets the two class models; the menu fetches each provider's catalog (cached ten minutes; a labelled built-in list on failure). Choices persist in `models.json` as `{"big": "provider/model", "small": "provider/model"}`. `general` runs on `big` and specialists on `small`; a profile or `specialists[].model` may name `"big"` or `"small"` instead of a selector to use that class's model, and a specialist alias also moves it to that class. An alias whose class has no model is skipped. Resolution order: task profile model, class model, specialist model from `profiles.json`, `-model`.
 
-Startup reads `profiles.json` beside the state file (never the current directory); `-profiles PATH` loads another, e.g. the [provided one](profiles.json). Profiles set tools, model, instructions, `no_integrate` and `no_subagents`; the task snapshots its profile at acceptance:
+Startup reads `profiles.json` beside the state file (never the current directory); `-profiles PATH` loads another, e.g. the [provided one](profiles.json), which sets the specialists' model (a `/model small` choice overrides it); pair it with `/model big provider/model` for `general`. Profiles set tools, model, instructions, `no_integrate` and `no_subagents`; the task snapshots its profile at acceptance:
 
 ```json
 {
@@ -82,7 +81,7 @@ Startup reads `profiles.json` beside the state file (never the current directory
 }
 ```
 
-Built-in profiles `implementer` (routing default) and `coordinator` set nothing and inherit executor defaults. Entries overlay built-ins field by field; `default_profile` picks the routing default. Specialist tool limits (also accepted standalone via `-specialist-tools`) intersect with the task profile; disjoint lists prevent the start.
+Built-in profiles `implementer` (routing default) and `coordinator` set nothing and inherit executor defaults. Entries overlay built-ins field by field; `default_profile` picks the routing default. Specialist tool limits (`specialists[].tools`) intersect with the task profile; disjoint lists prevent the start.
 
 ## Command executors
 
@@ -92,7 +91,7 @@ For smoke tests or wrapping a program, run `go run . -agents agents.json`:
 {"agents": [{"name": "echo-test", "description": "Print the prompt.", "command": "cat", "args": []}]}
 ```
 
-The command receives the mandate and queued context on stdin; stdout and stderr appear as output. It is one-shot (no live follow-ups, tool activity or reports). Configure only trusted executables. See the [executor contract](docs/executors.md).
+The command receives the mandate, queued context and role instructions on stdin; stdout and stderr appear as output. It is one-shot (no live follow-ups, tool activity or reports). Configure only trusted executables. See the [executor contract](docs/executors.md).
 
 ## Compatibility
 
@@ -109,7 +108,7 @@ grep " ${name}\$" sha256sums.txt | sha256sum -c -   # verify a download
 
 ## Development
 
-`internal/orchestrator` owns task state and execution; `internal/tui` is the Bubble Tea interface. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
+`internal/orchestrator` owns task state and execution; `internal/tui` is the Bubble Tea interface. The leaf packages `internal/worktree` (Git worktrees), `internal/providers` (model providers), `internal/agenttools` (workspace tools) and `internal/instance` (state-file lock, atomic writes) do not depend on the engine. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
 
 ```sh
 go test ./... && go vet ./...

@@ -4,12 +4,8 @@ package tui
 var vimScrolls = map[string]func(page int) int{
 	"ctrl+u": func(page int) int { return max(1, page/2) },
 	"ctrl+d": func(page int) int { return -max(1, page/2) },
-	"ctrl+b": func(page int) int { return page },
 	"pgup":   func(page int) int { return page },
-	"ctrl+f": func(page int) int { return -page },
 	"pgdown": func(page int) int { return -page },
-	"ctrl+y": func(int) int { return 1 },
-	"ctrl+e": func(int) int { return -1 },
 }
 
 // vimNavigation applies normal-mode motions only; composers handle text first.
@@ -35,10 +31,10 @@ func (m *model) vimNavigation(key string) bool {
 		m.jumpVim(false, count)
 	case "G":
 		m.jumpVim(true, count)
-	case "h", "ctrl+h":
+	case "h":
 		m.detailFocus, m.fullscreen = false, false
 		m.clampScroll()
-	case "l", "ctrl+l":
+	case "l":
 		m.detailFocus = true
 		m.clampScroll()
 	case "j", "down":

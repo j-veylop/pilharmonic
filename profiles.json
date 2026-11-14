@@ -1,6 +1,5 @@
 {
   "default_profile": "coordinator",
-  "profiles": [{ "name": "coordinator", "model": "openai/gpt-6.1-sol" }],
   "specialists": [
     { "name": "explorer", "model": "deepseek/deepseek-flash" },
     { "name": "implementer", "model": "deepseek/deepseek-flash" },

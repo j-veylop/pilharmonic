@@ -176,8 +176,8 @@ func (v detailViewport) clamp(x, y int) textPosition {
 // detailViewport maps mouse coordinates onto the visible detail content. It
 // deliberately excludes the sidebar, title tabs, footer and modal overlays.
 func (m model) detailViewport() (detailViewport, bool) {
-	if m.router.open || m.help.open || m.input.kind != "" || m.cleanup.kind != "" ||
-		m.quitConfirm || m.agentPicker.target != "" || m.profilePicker.target != "" ||
+	if m.router.open || m.help.open || m.input.kind != "" || m.cleanup.kind != "" || m.review.target != "" ||
+		m.quitConfirm || m.setup.target != "" ||
 		len(m.tasks) == 0 || m.selected < 0 || m.selected >= len(m.tasks) {
 		return detailViewport{}, false
 	}
@@ -252,8 +252,7 @@ func (m *model) mouseWheel(button tea.MouseButton) {
 		m.scrollHelpBody(-delta)
 		return
 	}
-	if m.router.open || m.input.kind != "" || m.cleanup.kind != "" ||
-		m.agentPicker.target != "" || m.profilePicker.target != "" {
+	if m.router.open || m.input.kind != "" || m.cleanup.kind != "" || m.review.target != "" || m.setup.target != "" {
 		return
 	}
 	m.selection = textSelection{}

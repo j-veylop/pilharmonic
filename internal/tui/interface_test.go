@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
+	"pilharmonic/internal/tui/editor"
 )
 
 func TestHeaderSummarizesDisplayStatesAndAttention(t *testing.T) {
@@ -47,84 +48,74 @@ func TestBoardFooterShowsOnlyValidSelectedTaskActions(t *testing.T) {
 		{
 			name:    "running",
 			task:    orchestrator.Task{Status: orchestrator.Running},
-			want:    []string{"c cancel", "t activity"},
-			notWant: []string{"r run", "R retry", "v approve"},
+			want:    []string{"c cancel", "tab output/info/activity"},
+			notWant: []string{"r run", "v review"},
 		},
 		{
 			name:    "unscheduled queued",
 			task:    orchestrator.Task{Status: orchestrator.Queued},
-			want:    []string{"r run"},
-			notWant: []string{"c cancel", "R retry", "v approve"},
+			want:    []string{"o setup", "r run"},
+			notWant: []string{"c cancel", "v review"},
 		},
 		{
 			name:    "scheduled queued",
 			task:    orchestrator.Task{Status: orchestrator.Queued, ScheduleRequested: true},
 			want:    []string{"c cancel"},
-			notWant: []string{"r run", "R retry", "v approve"},
+			notWant: []string{"r run", "v review"},
 		},
 		{
 			name:    "failed retry",
 			task:    orchestrator.Task{Status: orchestrator.Failed},
-			want:    []string{"R retry"},
-			notWant: []string{"r run", "c cancel", "t activity"},
+			want:    []string{"r run"},
+			notWant: []string{"c cancel", "tab output/info/activity"},
 		},
 		{
 			name:    "merge failed retry",
 			task:    orchestrator.Task{Status: orchestrator.Completed, MergeStatus: orchestrator.MergeFailed},
-			want:    []string{"R retry"},
-			notWant: []string{"r run", "c cancel", "v approve"},
+			want:    []string{"r run"},
+			notWant: []string{"c cancel", "v review"},
 		},
 		{
 			name:    "awaiting review",
 			task:    orchestrator.Task{Status: orchestrator.Completed, ReviewStatus: orchestrator.ReviewPending, ReviewCommit: "abc"},
-			want:    []string{"v approve + merge", "V reject"},
-			notWant: []string{"r run", "c cancel", "R retry"},
+			want:    []string{"v review"},
+			notWant: []string{"r run", "c cancel"},
 		},
 		{
 			name:    "rejected review",
 			task:    orchestrator.Task{Status: orchestrator.Completed, ReviewStatus: orchestrator.ReviewRejected},
-			want:    []string{"F follow up"},
-			notWant: []string{"r run", "c cancel", "R retry", "v approve"},
+			want:    []string{"f follow up"},
+			notWant: []string{"r run", "c cancel", "v review"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.task.ID = "task"
 			tc.task.Title = "work"
-			m := model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}}
-			footer := ansi.Strip(m.footer(120))
-			for _, want := range tc.want {
-				if !strings.Contains(footer, want) {
-					t.Fatalf("footer missing %q: %q", want, footer)
+			for _, size := range [][2]int{{30, 10}, {50, 20}, {80, 24}, {120, 35}} {
+				m := model{width: size[0], height: size[1], tasks: []orchestrator.Task{tc.task}}
+				footer := strings.ReplaceAll(ansi.Strip(m.footer(size[0])), "\n", "")
+				for _, want := range append([]string{"q quit"}, tc.want...) {
+					if !strings.Contains(footer, want) {
+						t.Fatalf("%v: footer missing %q: %q", size, want, footer)
+					}
 				}
-			}
-			for _, unwanted := range tc.notWant {
-				if strings.Contains(footer, unwanted) {
-					t.Fatalf("footer advertises invalid %q: %q", unwanted, footer)
+				for _, unwanted := range tc.notWant {
+					if strings.Contains(footer, unwanted) {
+						t.Fatalf("%v: footer advertises invalid %q: %q", size, unwanted, footer)
+					}
 				}
-			}
-			for _, essential := range []string{"? help", "/ request", "n new", "q quit"} {
-				if !strings.Contains(footer, essential) {
-					t.Fatalf("footer missing essential %q: %q", essential, footer)
+				assertFits(t, m.View(), size[0], size[1])
+				if size[0] < 120 {
+					continue
+				}
+				for _, essential := range []string{"? help", "/ request"} {
+					if !strings.Contains(footer, essential) {
+						t.Fatalf("footer missing essential %q: %q", essential, footer)
+					}
 				}
 			}
 		})
-	}
-}
-
-func TestBoardFooterIsContextualAndDimensionsStayBounded(t *testing.T) {
-	task := orchestrator.Task{ID: "queued", Title: "work", Status: orchestrator.Queued}
-	for _, size := range [][2]int{{30, 10}, {50, 20}, {80, 24}, {120, 35}} {
-		m := model{width: size[0], height: size[1], tasks: []orchestrator.Task{task}}
-		footer := ansi.Strip(m.footer(size[0]))
-		if !strings.Contains(footer, "r run") || !strings.Contains(footer, "q quit") {
-			t.Fatalf("%v: missing contextual run or quit hint: %q", size, footer)
-		}
-		if strings.Contains(footer, "R retry") || strings.Contains(footer, "c cancel") {
-			t.Fatalf("%v: footer advertises an invalid action: %q", size, footer)
-		}
-		view := m.View()
-		assertFits(t, view, size[0], size[1])
 	}
 }
 
@@ -138,8 +129,8 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 	}
 
 	activity := base
-	activity.activity.open = true
-	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "enter expand") || !strings.Contains(footer, "f filter") || strings.Contains(footer, "esc collapse") || strings.Contains(footer, "c cancel") {
+	activity.tab, activity.detailFocus = activityTab, true
+	if footer := ansi.Strip(activity.footer(120)); !strings.Contains(footer, "enter expand") || !strings.Contains(footer, "e filter") || strings.Contains(footer, "esc collapse") || strings.Contains(footer, "c cancel") {
 		t.Fatalf("activity list footer changed: %q", footer)
 	}
 	activity.activity.expanded = true
@@ -148,24 +139,12 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 	}
 
 	composerModel := base
-	composerModel.input = composer{kind: newTaskInput, editor: editor{text: "!keep this", cursor: len("!keep this")}}
+	composerModel.input = composer{kind: reportInput, Editor: editor.Editor{Text: "!keep this", Cursor: len("!keep this")}}
 	if footer := ansi.Strip(composerModel.footer(120)); !strings.Contains(footer, "enter submit") || !strings.Contains(footer, "ctrl+j/alt+enter newline") {
 		t.Fatalf("composer footer changed: %q", footer)
 	}
-	if view := ansi.Strip(composerModel.View()); !strings.Contains(view, "NEW TASK") || !strings.Contains(view, "!keep this") {
+	if view := ansi.Strip(composerModel.View()); !strings.Contains(view, "REPORT") || !strings.Contains(view, "!keep this") {
 		t.Fatalf("composer box missing its label or draft: %q", view)
-	}
-
-	agentPicker := base
-	agentPicker.agentPicker.target = "task"
-	if footer := ansi.Strip(agentPicker.footer(120)); !strings.Contains(footer, "j/k choose agent") || !strings.Contains(footer, "enter select") {
-		t.Fatalf("agent picker footer changed: %q", footer)
-	}
-
-	profilePicker := base
-	profilePicker.profilePicker.target = "task"
-	if footer := ansi.Strip(profilePicker.footer(120)); !strings.Contains(footer, "j/k choose profile") || !strings.Contains(footer, "enter select") {
-		t.Fatalf("profile picker footer changed: %q", footer)
 	}
 
 	cleanup := base
@@ -175,86 +154,52 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 	}
 }
 
-func TestAttentionJumpFollowsGroupedOrderAndWraps(t *testing.T) {
-	tasks := []orchestrator.Task{
+// ! walks attention tasks in grouped display order, wraps, and resets the
+// detail state; composers keep it as text.
+func TestAttentionShortcut(t *testing.T) {
+	grouped := []orchestrator.Task{
 		{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Failed},
 		{ID: "normal", Title: "normal", Status: orchestrator.Completed},
 		{ID: "parent", Title: "parent", Status: orchestrator.Failed},
 	}
-	m := model{tasks: tasks, selected: 2, historyOffset: 4, activity: activityState{id: "call", expanded: true}}
-	if !m.jumpAttention() {
-		t.Fatal("attention jump found nothing")
+	detail := activityState{id: "call", expanded: true}
+	cases := []struct {
+		name     string
+		m        model
+		selected []int // selection after each press
+		notice   string
+		text     string
+	}{
+		{name: "grouped order wraps", m: model{tasks: grouped, selected: 2, historyOffset: 4, activity: detail}, selected: []int{0, 2}},
+		{name: "from a task without attention", m: model{tasks: grouped, selected: 1, historyOffset: 3, activity: detail}, selected: []int{2}},
+		{name: "nothing needs action", m: model{tasks: grouped[1:2], historyOffset: 3}, selected: []int{0}, notice: "No tasks need action"},
+		{name: "task composer", m: model{input: composer{kind: reportInput}}, text: "!"},
+		{name: "request form", m: model{router: routerState{open: true}}, text: "!"},
 	}
-	if m.selected != 0 || m.historyOffset != 0 {
-		t.Fatalf("jump selected %d offset %d, want child at 0 with reset scroll", m.selected, m.historyOffset)
-	}
-	if !m.jumpAttention() {
-		t.Fatal("attention jump did not wrap")
-	}
-	if m.selected != 2 {
-		t.Fatalf("wrapped jump selected %d, want parent at 2", m.selected)
-	}
-
-	m.selected = 1
-	m.historyOffset = 3
-	if !m.jumpAttention() || m.selected != 2 || m.historyOffset != 0 {
-		t.Fatalf("jump from a non-attention task selected %d offset %d", m.selected, m.historyOffset)
-	}
-}
-
-func TestAttentionShortcutResetsDetailState(t *testing.T) {
-	s := newTestService(t)
-	first, err := s.CreateTask("first", "work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := s.CreateTask("second", "work", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RecordReport(second.ID, "blocked", "need input"); err != nil {
-		t.Fatal(err)
-	}
-	m := model{service: s, tasks: s.ListTasks(), selected: 1, width: 120, height: 35, historyOffset: 5, activity: activityState{id: "call", expanded: true}}
-	if m.selectedID() != first.ID {
-		t.Fatalf("test setup selected %q, want %q", m.selectedID(), first.ID)
-	}
-	m = key(m, runeKey("!"))
-	if m.selectedID() != second.ID {
-		t.Fatalf("! selected %q, want %q", m.selectedID(), second.ID)
-	}
-	if m.historyOffset != 0 || m.activity.id != "" || m.activity.expanded {
-		t.Fatalf("! did not reset detail state: offset=%d activity=%q expanded=%v", m.historyOffset, m.activity.id, m.activity.expanded)
-	}
-}
-
-func TestAttentionShortcutNoAttentionShowsNotice(t *testing.T) {
-	s := newTestService(t)
-	if _, err := s.CreateTask("first", "work", t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
-	selected := m.selectedID()
-	m = key(m, runeKey("!"))
-	if m.selectedID() != selected {
-		t.Fatalf("! changed selection without attention: %q -> %q", selected, m.selectedID())
-	}
-	if !strings.Contains(m.notice.text, "No tasks need action") {
-		t.Fatalf("missing no-action notice: %q", m.notice.text)
-	}
-}
-
-func TestAttentionShortcutStaysTextInComposers(t *testing.T) {
-	m := model{input: composer{kind: newTaskInput}}
-	m = key(m, runeKey("!"))
-	if m.input.text != "!" {
-		t.Fatalf("task composer consumed ! as a command: %q", m.input.text)
-	}
-
-	m = model{router: routerState{open: true}}
-	m = key(m, runeKey("!"))
-	if m.router.text != "!" || !m.router.open {
-		t.Fatalf("router composer consumed ! as a command: %q", m.router.text)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.m
+			m.width, m.height = 120, 35
+			if tc.text != "" {
+				m = key(m, runeKey("!"))
+				if m.input.Text+m.router.Text != tc.text || tc.m.router.open != m.router.open {
+					t.Fatalf("composer consumed ! as a command: input=%q router=%q open=%v", m.input.Text, m.router.Text, m.router.open)
+				}
+				return
+			}
+			for _, want := range tc.selected {
+				m = key(m, runeKey("!"))
+				if m.selected != want {
+					t.Fatalf("! selected %d, want %d", m.selected, want)
+				}
+				if tc.notice == "" && (m.historyOffset != 0 || m.activity.id != "" || m.activity.expanded) {
+					t.Fatalf("! did not reset detail state: offset=%d activity=%+v", m.historyOffset, m.activity)
+				}
+			}
+			if !strings.Contains(m.notice.text, tc.notice) {
+				t.Fatalf("notice = %q, want %q", m.notice.text, tc.notice)
+			}
+		})
 	}
 }
 
@@ -282,15 +227,6 @@ func TestNarrowLayoutShowsSelectedTaskPosition(t *testing.T) {
 	m.width = 120
 	if plain := ansi.Strip(m.View()); strings.Contains(plain, "TASK 2/3") {
 		t.Fatalf("wide layout duplicated position beside the sidebar: %q", plain)
-	}
-}
-
-func TestHelpDocumentsAttentionJump(t *testing.T) {
-	m := model{width: 120, height: 40, help: helpState{open: true}}
-	m.scrollHelp(1)
-	plain := ansi.Strip(m.View())
-	if !strings.Contains(plain, "Next task needing action") {
-		t.Fatalf("help does not document the action jump: %q", plain)
 	}
 }
 

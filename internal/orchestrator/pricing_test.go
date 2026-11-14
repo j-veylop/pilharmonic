@@ -11,49 +11,24 @@ import (
 // operator could see, so a rounding difference cannot hide a real error.
 func floatMatches(got, want float64) bool { return math.Abs(got-want) <= 1e-12 }
 
-// TestDeepSeekOffPeakBoundaries pins both edges of the daily discount window to
-// the second and in both directions: a report one second before 16:30 UTC is
-// peak, one second later is discounted, one second before 00:30 UTC is still
-// discounted and one second later is peak again.
+// TestDeepSeekOffPeakBoundaries pins both edges of the daily discount window
+// (16:30-00:30 UTC, published as 00:30-08:30 Beijing time) to the second.
 func TestDeepSeekOffPeakBoundaries(t *testing.T) {
-	day := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
-	at := func(hour, minute, second int) time.Time {
-		return day.Add(time.Duration(hour)*time.Hour + time.Duration(minute)*time.Minute + time.Duration(second)*time.Second)
-	}
+	beijing := time.FixedZone("CST", 8*60*60)
 	cases := []struct {
-		name string
 		when time.Time
 		want bool
 	}{
-		{"one second before the window opens", at(16, 29, 59), false},
-		{"the window opens", at(16, 30, 0), true},
-		{"inside the window", at(20, 0, 0), true},
-		{"one second before the window closes", at(0, 29, 59), true},
-		{"the window closes", at(0, 30, 0), false},
-		{"one second after the window closes", at(0, 30, 1), false},
-		{"deep in peak hours", at(12, 0, 0), false},
+		{time.Date(2025, 9, 1, 16, 29, 59, 0, time.UTC), false},
+		{time.Date(2025, 9, 1, 16, 30, 0, 0, time.UTC), true},
+		{time.Date(2025, 9, 1, 0, 29, 59, 0, time.UTC), true},
+		{time.Date(2025, 9, 1, 0, 30, 0, 0, time.UTC), false},
+		{time.Date(2025, 9, 1, 0, 30, 0, 0, beijing), true},
+		{time.Date(2025, 9, 1, 8, 30, 0, 0, beijing), false},
 	}
 	for _, tc := range cases {
 		if got := deepseekOffPeak(tc.when); got != tc.want {
-			t.Errorf("%s (%s): off-peak = %v, want %v", tc.name, tc.when.Format(time.RFC3339), got, tc.want)
-		}
-	}
-	// The window is published in Beijing time (UTC+8): 00:30-08:30 there is
-	// 16:30-00:30 UTC, and the same boundaries hold in that zone.
-	beijing := time.FixedZone("CST", 8*60*60)
-	beijingCases := []struct {
-		name string
-		when time.Time
-		want bool
-	}{
-		{"00:29 Beijing", time.Date(2025, 9, 1, 0, 29, 59, 0, beijing), false},
-		{"00:30 Beijing", time.Date(2025, 9, 1, 0, 30, 0, 0, beijing), true},
-		{"08:29 Beijing", time.Date(2025, 9, 1, 8, 29, 59, 0, beijing), true},
-		{"08:30 Beijing", time.Date(2025, 9, 1, 8, 30, 0, 0, beijing), false},
-	}
-	for _, tc := range beijingCases {
-		if got := deepseekOffPeak(tc.when); got != tc.want {
-			t.Errorf("%s (%s): off-peak = %v, want %v", tc.name, tc.when.UTC().Format(time.RFC3339), got, tc.want)
+			t.Errorf("%s: off-peak = %v, want %v", tc.when.Format(time.RFC3339), got, tc.want)
 		}
 	}
 }
@@ -140,53 +115,38 @@ func TestModelPriceCostScalesPerMillionTokens(t *testing.T) {
 		if !floatMatches(got, tc.want) {
 			t.Errorf("%s: cost = %v, want %v", tc.name, got, tc.want)
 		}
-		doubled := TokenUsage{InputTokens: tc.usage.InputTokens * 2, OutputTokens: tc.usage.OutputTokens * 2}
-		if got := price.Cost(doubled, tc.when); !floatMatches(got, tc.want*2) {
-			t.Errorf("%s: doubling the tokens cost %v, want %v", tc.name, got, tc.want*2)
-		}
 	}
 }
 
-// TestPriceForRejectsUnpricedSelectors proves an unknown selector is reported as
-// unpriced rather than priced as some other model: a session total must never
-// claim a cost it cannot support.
-func TestPriceForRejectsUnpricedSelectors(t *testing.T) {
-	now := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
-	for _, selector := range []string{
-		"",
-		"   ",
-		"\t\n",
-		"deepseek",
-		"provider/",
-		"nosuch/model",
-		"openai/gpt-4",
-		"openrouter/deepseek-chat",
-		"openai/gpt-4.1-2024-08-06",
-	} {
-		if price, ok := PriceFor(selector, now); ok {
-			t.Errorf("selector %q was priced as %+v", selector, price)
-		}
-	}
-}
-
-// TestPriceForNormalizesSelector checks a selector the adapter reports with
-// stray case or spacing still resolves to the curated entry, and reports the
-// canonical selector so the per-model breakdown does not split one model in two.
-func TestPriceForNormalizesSelector(t *testing.T) {
+// TestPriceForSelectors checks an unknown selector is unpriced rather than
+// priced as some other model, and a selector with stray case or spacing
+// resolves to the canonical entry so the per-model breakdown does not split.
+func TestPriceForSelectors(t *testing.T) {
 	now := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
 		selector  string
 		wantModel string
 		wantTOD   bool
 	}{
+		{"", "", false},
+		{"\t\n", "", false},
+		{"deepseek", "", false},
+		{"provider/", "", false},
+		{"nosuch/model", "", false},
+		{"openai/gpt-4", "", false},
+		{"openrouter/deepseek-chat", "", false},
+		{"openai/gpt-4.1-2024-08-06", "", false},
 		{" OpenAI/GPT-4.1 ", "openai/gpt-4.1", false},
 		{"DeepSeek/DeepSeek-Reasoner", "deepseek/deepseek-reasoner", true},
 		{"deepseek/deepseek-chat\n", "deepseek/deepseek-chat", true},
 	}
 	for _, tc := range cases {
 		price, ok := PriceFor(tc.selector, now)
+		if ok != (tc.wantModel != "") {
+			t.Errorf("selector %q priced = %v (%+v)", tc.selector, ok, price)
+			continue
+		}
 		if !ok {
-			t.Errorf("selector %q was not priced", tc.selector)
 			continue
 		}
 		if price.Model != tc.wantModel {

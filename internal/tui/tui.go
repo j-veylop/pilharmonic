@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"pilharmonic/internal/orchestrator"
+	"pilharmonic/internal/tui/editor"
 )
 
 const runningGlyphPlaceholder = "\uE000"
@@ -34,8 +35,9 @@ type isolationResultMsg actionResultMsg
 // routerResultMsg reports a submitted request. A task with an empty ID means
 // nothing was accepted and the draft is still the operator's only copy.
 type routerResultMsg struct {
-	task orchestrator.Task
-	err  error
+	task   orchestrator.Task
+	notice string
+	err    error
 }
 
 type fetchModelsMsg struct {
@@ -82,8 +84,6 @@ type Service interface {
 	ModelSelection() orchestrator.ModelSelection
 	ModelsForProvider(provider string) []string
 	FetchModels(ctx context.Context, provider string) ([]string, error)
-	SetAgentClass(agent, class string) error
-	AgentClasses() []orchestrator.AgentClass
 	PersistenceError() error
 	StartupWarning() string
 }
@@ -95,6 +95,7 @@ type model struct {
 	thinking      bool
 	vimG          bool
 	vimCount      int
+	setup         setupState
 	agentPicker   pickerState[orchestrator.AgentInfo]
 	profilePicker pickerState[orchestrator.Profile]
 	service       Service
@@ -107,12 +108,13 @@ type model struct {
 	input         composer
 	historyOffset int
 	notice        noticeState
-	history       bool
+	tab           detailTab
 	detailFocus   bool
 	fullscreen    bool
 	help          helpState
 	isolationBusy bool
 	cleanup       cleanupRequest
+	review        reviewPrompt
 	cleanupBusy   bool
 	selection     textSelection
 	clipboard     io.Writer
@@ -122,24 +124,30 @@ type model struct {
 	quitConfirm   bool
 	login         loginState
 	models        modelMenuState
-	agentClass    agentClassState
 }
 
+// detailTab is the detail pane's OUTPUT, INFO or ACTIVITY view.
+type detailTab int
+
+const (
+	outputTab detailTab = iota
+	infoTab
+	activityTab
+)
+
+var detailTabNames = []string{"OUTPUT", "INFO", "ACTIVITY"}
+
 type activityState struct {
-	open     bool
 	filter   activityFilter
 	id       string
 	attempt  string
 	expanded bool
 }
 
-// routerState is the new-request form and its action and recent lists.
+// routerState is the request box. Its draft survives esc.
 type routerState struct {
-	editor
-	open           bool
-	focus          int
-	selected       int
-	recentSelected int
+	editor.Editor
+	open bool
 }
 
 // noticeState is the notice line above the footer. text expires; service is a
@@ -179,11 +187,6 @@ type modelMenuState struct {
 	fetchFailed  bool // the built-in list is shown instead
 }
 
-type agentClassState struct {
-	menu  bool
-	index int
-}
-
 // Run starts the terminal interface. The service owns task execution.
 func Run(service *orchestrator.Service, workspace string) error {
 	initial := newModel(service, workspace)
@@ -194,7 +197,7 @@ func Run(service *orchestrator.Service, workspace string) error {
 }
 
 // newModel builds the starting model. Without any usable provider the operator
-// lands on the login menu instead of the request form, because no request can
+// lands on the login menu instead of the request box, because no request can
 // be routed until a credential exists.
 func newModel(service Service, workspace string) model {
 	m := model{
@@ -301,12 +304,12 @@ func (m *model) finish(result actionResultMsg) {
 // routerResult selects an accepted request's task. A task with an empty ID
 // means nothing was accepted, so the draft is kept.
 func (m *model) routerResult(msg routerResultMsg) {
-	m.notice.text = resultFor(routeNotice(msg.task), msg.err).text()
+	m.notice.text = resultFor(msg.notice, msg.err).text()
 	if msg.task.ID == "" {
 		return
 	}
 	m.refreshTasks()
-	m.router = routerState{open: m.router.open, focus: m.router.focus}
+	m.router = routerState{open: m.router.open}
 	m.selectTask(msg.task.ID)
 	m.clampScroll()
 }
@@ -314,7 +317,6 @@ func (m *model) routerResult(msg routerResultMsg) {
 func (m *model) tick() tea.Cmd {
 	oldID, oldLines := m.selectedID(), m.detailLineCount()
 	m.refreshTasks()
-	m.clampRouter()
 	if oldID != m.selectedID() {
 		m.resetActivitySelection()
 		m.historyOffset = 0
@@ -350,16 +352,14 @@ func (m model) keyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.providerMenuKey(key), nil
 	case m.models.menu:
 		return m.modelMenuKey(key)
-	case m.agentClass.menu:
-		return m.agentClassMenuKey(key), nil
+	case m.setup.target != "":
+		return m.setupKey(key)
 	case m.router.open:
 		return m.routerKey(msg)
 	case m.cleanup.kind != "":
 		return m.cleanupKey(key)
-	case m.profilePicker.target != "":
-		return m.profilePickerKey(key), nil
-	case m.agentPicker.target != "":
-		return m.agentPickerKey(key), nil
+	case m.review.target != "":
+		return m.reviewKey(key)
 	case m.input.kind != "":
 		return m.composerKey(msg)
 	case m.activityKey(key):
@@ -383,7 +383,6 @@ func (m *model) clamp() { m.selected = max(0, min(m.selected, len(m.tasks)-1)) }
 // would otherwise shift the selected slice index to a different task.
 func (m *model) refreshTasks() {
 	selected := m.selectedID()
-	recent := m.recentSelectedID()
 	if m.service == nil {
 		m.clamp()
 		return
@@ -392,7 +391,6 @@ func (m *model) refreshTasks() {
 	m.usage = m.service.SessionUsage()
 	m.notice.service = serviceNotice(m.service)
 	m.selectTask(selected)
-	m.anchorRecentSelection(recent)
 }
 
 // expireNotice clears a notice that has stayed unchanged for about five ticks.

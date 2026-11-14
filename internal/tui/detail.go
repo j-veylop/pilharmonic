@@ -24,7 +24,7 @@ func (m model) detailContent(width int) []string {
 	if !ok || width < 1 {
 		return nil
 	}
-	if m.activity.open {
+	if m.tab == activityTab {
 		return m.activityContent(width)
 	}
 	var lines []string
@@ -33,11 +33,21 @@ func (m model) detailContent(width int) []string {
 			lines = append(lines, strings.Split(ansi.Hardwrap(s, width, true), "\n")...)
 		}
 	}
-	m.taskSummary(t, add)
-	mergeSummary(t, add)
-	reviewSummary(t, add)
-	if children := m.childrenOf(t.ID); len(children) > 0 {
-		add(mutedStyle.Render(fmt.Sprintf("Subagents: %d", len(children))))
+	if m.tab == infoTab {
+		m.taskSummary(t, add)
+		mergeSummary(t, add)
+		reviewSummary(t, add)
+		if children := m.childrenOf(t.ID); len(children) > 0 {
+			add(mutedStyle.Render(fmt.Sprintf("Subagents: %d", len(children))))
+		}
+		m.taskHistory(t, width, add)
+		return lines
+	}
+	if t.Error != "" {
+		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("ERROR  " + terminalText(t.Error)))
+	}
+	if t.ReviewStatus == orchestrator.ReviewPending {
+		add(accentStyle.Render("REVIEW PENDING") + mutedStyle.Render("  commit "+terminalText(t.ReviewCommit)+"  ·  merge blocked until approval  ·  v to review"))
 	}
 	if report, ok := t.CurrentReport(); ok {
 		source := ""
@@ -49,14 +59,9 @@ func (m model) detailContent(width int) []string {
 	if t.ContextPaused {
 		add(mutedStyle.Render("Context paused (s to resume)"))
 	}
-	if t.Error != "" {
-		add("", lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("ERROR  "+terminalText(t.Error)))
+	if len(lines) > 0 {
+		add("")
 	}
-	if m.history {
-		m.taskHistory(t, width, add)
-		return lines
-	}
-	add("", accentStyle.Render("OUTPUT"))
 	if t.Output == "" {
 		add(mutedStyle.Render("Waiting for output…"))
 		return lines
@@ -74,7 +79,7 @@ func (m model) taskSummary(t orchestrator.Task, add func(...string)) {
 		}
 		return mutedStyle.Render(line)
 	}
-	add(accentStyle.Render("MANDATE"), terminalText(t.Prompt), change("Agent: "+terminalText(t.Agent), " · A to change"))
+	add(accentStyle.Render("MANDATE"), terminalText(t.Prompt), change("Agent: "+terminalText(t.Agent), " · o to change"))
 	if n := len(t.Attempts); n > 0 && t.Attempts[n-1].RequestedModel != "" {
 		add(mutedStyle.Render("Last attempt model: " + terminalText(t.Attempts[n-1].RequestedModel)))
 	}
@@ -85,11 +90,7 @@ func (m model) taskSummary(t orchestrator.Task, add func(...string)) {
 		}
 	}
 	if t.ProfileName != "" {
-		label := t.ProfileName
-		if t.ProfileSpec != nil {
-			label = profileLabel(*t.ProfileSpec)
-		}
-		add(change("Profile: "+terminalText(label), " · P to change"))
+		add(change("Profile: "+terminalText(taskProfileLabel(t)), " · o to change"))
 	}
 	if t.ParentID != "" {
 		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
@@ -100,7 +101,7 @@ func (m model) taskSummary(t orchestrator.Task, add func(...string)) {
 	case t.Isolated && t.ExecutionWorkspace == "":
 		line := worktreeGlyph + " Workspace: isolated worktree requested"
 		if configurable {
-			line += " (w to change)"
+			line += " (o to change)"
 		}
 		add(accentStyle.Render(line), mutedStyle.Render("Committed HEAD only; uncommitted files are excluded."))
 	case t.Isolated:
@@ -109,7 +110,7 @@ func (m model) taskSummary(t orchestrator.Task, add func(...string)) {
 	case t.ParentID != "":
 		add(mutedStyle.Render(glyphInherited + " Execution: inherited from parent task"))
 	default:
-		add(change(glyphShared+" Execution: shared workspace", " (w to isolate before start)"))
+		add(change(glyphShared+" Execution: shared workspace", " (o to change)"))
 	}
 }
 
@@ -140,8 +141,6 @@ func reviewSummary(t orchestrator.Task, add func(...string)) {
 		reviewed += "  " + t.ReviewedAt.Local().Format("Jan 02 15:04")
 	}
 	switch t.ReviewStatus {
-	case orchestrator.ReviewPending:
-		add(accentStyle.Render("REVIEW PENDING") + mutedStyle.Render("  commit "+terminalText(t.ReviewCommit)+"  ·  merge blocked until approval  ·  v approve + merge / V reject"))
 	case orchestrator.ReviewApproved:
 		add(lipgloss.NewStyle().Foreground(statusCompleted).Bold(true).Render("REVIEW APPROVED") + mutedStyle.Render(reviewed))
 		if t.MergeStatus == "" {
@@ -149,7 +148,7 @@ func reviewSummary(t orchestrator.Task, add func(...string)) {
 		}
 	case orchestrator.ReviewRejected:
 		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("REVIEW REJECTED") + mutedStyle.Render(reviewed))
-		line := "F adds follow-up context and requeues the task."
+		line := "f adds follow-up context and requeues the task."
 		if t.ExecutionWorkspace != "" {
 			line = "Worktree retained; " + line
 		}
@@ -236,9 +235,14 @@ func (m model) detailTabRow(t orchestrator.Task, width int) string {
 		}
 		return inactiveTabStyle.Render(" " + label + " ")
 	}
-	row := tab("OUTPUT", !m.history && !m.activity.open) + faintStyle.Render("│") +
-		tab("HISTORY", m.history && !m.activity.open) + faintStyle.Render("  ·  ") +
-		mutedStyle.Render(terminalText(executorLabel(t)))
+	row := ""
+	for i, name := range detailTabNames {
+		if i > 0 {
+			row += faintStyle.Render("│")
+		}
+		row += tab(name, detailTab(i) == m.tab)
+	}
+	row += faintStyle.Render("  ·  ") + mutedStyle.Render(terminalText(executorLabel(t)))
 	return fit(row, width, 1)
 }
 
@@ -250,12 +254,6 @@ func (m model) detailWindow(n, available int) (start, end int) {
 }
 
 func (m model) detailPanel(width, height int) string {
-	if m.agentPicker.target != "" {
-		return pickerPanel(m.agentPicker, "SELECT AGENT", "No registered agents.", describeAgent, width, height)
-	}
-	if m.profilePicker.target != "" {
-		return pickerPanel(m.profilePicker, "SELECT PROFILE", "No registered profiles.", describeProfile, width, height)
-	}
 	l := m.layout()
 	inner := l.panelInner(width)
 	t, ok := m.selectedTask()
@@ -276,32 +274,21 @@ func (m model) detailPanel(width, height int) string {
 	if available > 0 {
 		lines = append(lines, m.highlightSelection(content, start, end, inner)...)
 	}
-	label := "OUTPUT"
-	if m.activity.open {
-		label = "ACTIVITY"
-	} else if m.history {
-		label = "HISTORY"
-	}
-	position := fmt.Sprintf("%s  %d–%d / %d  ·  %s", label, min(start+1, end), end, len(content), m.detailFocusHint())
+	position := fmt.Sprintf("%s  %d–%d / %d  ·  %s", detailTabNames[m.tab], min(start+1, end), end, len(content), m.detailFocusHint())
 	lines = append(lines, mutedStyle.Render(position))
 	return focusedPanel(strings.Join(lines, "\n"), width, height, m.detailFocus || m.fullscreen)
 }
 
 func (m model) detailFocusHint() string {
-	focused := m.detailFocus || m.fullscreen
 	switch {
-	case !m.activity.open && focused:
+	case !m.detailFocus && !m.fullscreen:
+		return "l to focus"
+	case m.tab != activityTab:
 		return "j/k scroll · h tasks"
-	case !m.activity.open:
-		return "l to focus · j/k scroll"
-	case m.activity.expanded && focused:
-		return "j/k scroll · esc collapse"
 	case m.activity.expanded:
-		return "l to focus · esc collapse"
-	case focused:
-		return "j/k select · enter expand"
+		return "j/k scroll · esc collapse"
 	}
-	return "l to focus · enter expand"
+	return "j/k select · enter expand"
 }
 
 func (m model) selectedTask() (orchestrator.Task, bool) {
@@ -330,23 +317,27 @@ func (m model) selectedTaskHints() []string {
 	if !ok {
 		return nil
 	}
-	var hints []string
+	var keys []string
 	if task.AwaitingReview() {
-		hints = append(hints, "v approve + merge", "V reject")
+		keys = append(keys, "v")
 	}
 	if task.ReviewStatus == orchestrator.ReviewRejected {
-		hints = append(hints, "F follow up")
+		keys = append(keys, "f")
 	}
 	switch {
 	case task.Status == orchestrator.Running:
-		hints = append(hints, "c cancel", "t activity")
+		keys = append(keys, "c", "tab")
 	case task.Status == orchestrator.Queued && !task.ScheduleRequested:
-		hints = append(hints, "r run")
+		keys = append(keys, "o", "r")
 	case task.Status == orchestrator.Queued:
-		hints = append(hints, "c cancel")
+		keys = append(keys, "c")
 	}
 	if retryable(task) {
-		hints = append(hints, "R retry")
+		keys = append(keys, "r")
+	}
+	hints := make([]string, len(keys))
+	for i, key := range keys {
+		hints[i] = keyHint(key)
 	}
 	return hints
 }

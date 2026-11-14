@@ -45,25 +45,9 @@ func TestHelpKeysChangePageScrollAndClose(t *testing.T) {
 	}
 }
 
-func TestHelpGoldenFrame(t *testing.T) {
-	m := model{width: 80, height: 24, help: helpState{open: true}}
-	view := ansi.Strip(m.View())
-	for _, want := range []string{"HELP · Concepts", "1/7", "▸Concepts", " Navigation", "Request", "Accepted work", "esc close", "h/l topics", "j/k scroll"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("help frame lost %q:\n%s", want, view)
-		}
-	}
-	if strings.Contains(view, "Focus tasks") {
-		t.Fatal("concepts page shows another topic")
-	}
-	m.help.page = 1
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "HELP · Navigation") || !strings.Contains(view, "▸Navigation") {
-		t.Fatalf("page change did not move the title and strip:\n%s", view)
-	}
-}
-
-// Every topic fits its frame at every supported size, scrolled or not, and
-// keyboard scrolling reaches the last line the overlay draws.
+// Every topic fits its frame at every supported size, scrolled or not, keeps
+// every description word when wrapped, and keyboard scrolling reaches the last
+// line the overlay draws.
 func TestHelpEveryTopicFitsAndScrollsToItsEnd(t *testing.T) {
 	for _, size := range [][2]int{{30, 10}, {40, 12}, {50, 20}, {60, 20}, {80, 24}, {120, 40}} {
 		w, h := size[0], size[1]
@@ -88,34 +72,29 @@ func TestHelpEveryTopicFitsAndScrollsToItsEnd(t *testing.T) {
 			if strings.Contains(view, "\x1b[48;") {
 				t.Fatalf("%s at %v: help sets a background colour", topic.title, size)
 			}
-		}
-	}
-}
-
-// Descriptions share one column on wide frames and hang under each key on
-// narrow ones; no text is lost to wrapping either way.
-func TestHelpLinesAlignAndKeepEveryWord(t *testing.T) {
-	column := helpKeyColumn()
-	for _, width := range []int{16, 22, 40, 72} {
-		for _, topic := range helpTopics {
-			lines := helpLines(topic, width)
 			text := ""
 			for _, line := range lines {
 				plain := ansi.Strip(line)
-				if lipgloss.Width(plain) > width {
-					t.Fatalf("width %d %s: %q overflows", width, topic.title, plain)
+				if lipgloss.Width(plain) > helpBodyWidth(mw) {
+					t.Fatalf("%s at %v: %q overflows", topic.title, size, plain)
 				}
 				text += strings.Join(strings.Fields(plain), "")
 			}
 			for _, section := range topic.sections {
 				for _, row := range section.rows {
 					if desc := strings.Join(strings.Fields(row.desc), ""); !strings.Contains(text, desc) {
-						t.Fatalf("width %d %s: lost %q", width, topic.title, row.desc)
+						t.Fatalf("%s at %v: lost %q", topic.title, size, row.desc)
 					}
 				}
 			}
 		}
 	}
+}
+
+// Descriptions share one column on wide frames and hang under each key on
+// narrow ones.
+func TestHelpLinesAlignOrHangDescriptions(t *testing.T) {
+	column := helpKeyColumn()
 	for _, line := range helpLines(helpTopics[1], 72) {
 		if plain := ansi.Strip(line); strings.HasPrefix(plain, "h / l") && ansi.Cut(plain, column, column+5) != "Focus" {
 			t.Fatalf("description is not in column %d: %q", column, plain)
@@ -127,20 +106,17 @@ func TestHelpLinesAlignAndKeepEveryWord(t *testing.T) {
 	}
 }
 
-// The strip falls back from titles to positions to nothing as the frame narrows.
-func TestHelpTopicStripNarrows(t *testing.T) {
-	if got := ansi.Strip(helpTabs(72, 1)); !strings.Contains(got, "▸Navigation") || strings.Count(got, "▸") != 1 {
-		t.Fatalf("wide strip: %q", got)
+func TestKeyTableBindsEachKeyOnce(t *testing.T) {
+	seen := map[string]bool{}
+	for _, b := range boardKeys {
+		if seen[b.key] {
+			t.Fatalf("%q is bound twice", b.key)
+		}
+		seen[b.key] = true
 	}
-	if got := ansi.Strip(helpTabs(40, 1)); !strings.Contains(got, "▸2") || strings.Contains(got, "Navigation") {
-		t.Fatalf("narrow strip: %q", got)
-	}
-	if got := helpTabs(12, 1); got != "" {
-		t.Fatalf("tiny strip: %q", ansi.Strip(got))
-	}
-	for _, width := range []int{72, 22, 12} {
-		if row := ansi.Strip(fitHints(width, "esc close", "h/l topics", "j/k scroll")); lipgloss.Width(row) > width || !strings.HasPrefix(row, "esc close") {
-			t.Fatalf("width %d hint row: %q", width, row)
+	for _, removed := range []string{"n", "A", "P", "w", "R", "V", "F", "L", "T", "[", "]", "home", "end"} {
+		if seen[removed] {
+			t.Fatalf("removed key %q is still bound", removed)
 		}
 	}
 }

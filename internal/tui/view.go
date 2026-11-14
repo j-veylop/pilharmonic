@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"pilharmonic/internal/orchestrator"
 )
 
 // terminalText makes untrusted task data safe to lay out in a terminal. Tabs
@@ -102,7 +104,7 @@ func (m model) View() string {
 	if w < 30 || h < 10 {
 		prompt := "q quit"
 		if m.quitConfirm {
-			// The frame cannot hold the dialog, but the answer keys still work,
+			// The frame cannot hold the footer prompt, but the answer keys still work,
 			// so the resize prompt explains them.
 			prompt = "y quit · n/esc stay"
 		}
@@ -110,8 +112,6 @@ func (m model) View() string {
 	}
 	var body string
 	switch {
-	case m.router.open:
-		body = m.routerPanel(w, l.bodyHeight)
 	case l.sidebar:
 		body = lipgloss.JoinHorizontal(lipgloss.Top, m.taskPanel(l.taskWidth, l.bodyHeight), " ", m.detailPanel(l.detailWidth, l.bodyHeight))
 	default:
@@ -126,21 +126,214 @@ func (m model) View() string {
 	}
 	rows = append(rows, m.footer(w))
 	screen := fit(strings.Join(rows, "\n"), w, h)
-	// Menus draw over the board, help over menus, and the quit dialog last.
+	// The quit prompt is in the footer, so nothing may cover it.
+	if m.quitConfirm {
+		return screen
+	}
+	// Menus draw over the board and help over menus.
 	if m.login.menu {
 		screen = m.loginMenuView(screen, w, h)
 	}
 	if m.models.menu {
 		screen = m.modelMenuView(screen, w, h)
 	}
-	if m.agentClass.menu {
-		screen = m.agentClassMenuView(screen, w, h)
+	if m.setup.target != "" {
+		screen = m.setupView(screen, w, h)
 	}
 	if m.help.open {
 		screen = m.helpView(screen, w, h)
 	}
-	if m.quitConfirm {
-		screen = m.quitView(screen, w, h)
-	}
 	return screen
+}
+
+func (m model) attentionCount() int { return len(m.attentionTasks()) }
+
+func (m model) headerModeBadge() string {
+	label, color := " TASKS ", accent
+	switch {
+	case m.router.open:
+		label, color = " REQUEST ", accent
+	case m.input.kind != "":
+		label, color = " INSERT ", amber
+	case m.detailFocus || m.fullscreen:
+		label, color = " DETAILS ", cyan
+	}
+	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(label)
+}
+
+// headerRow is the wordmark, the task counters and the session total, with the
+// mode badge right-aligned. The badge is never truncated; the session total is
+// dropped before a counter loses its wording.
+func (m model) headerRow(width int) string {
+	header := gradientText("◈ PILHARMONIC")
+	mode := m.headerModeBadge()
+	available := max(1, width-lipgloss.Width(header)-lipgloss.Width(mode)-1)
+	options := m.headerCountOptions()
+	summary, usage := options[len(options)-1], ""
+fit:
+	for _, option := range options {
+		for _, variant := range m.headerUsageVariants() {
+			if lipgloss.Width(option)+lipgloss.Width(variant) <= available {
+				summary, usage = option, variant
+				break fit
+			}
+		}
+	}
+	if usage != "" {
+		usage = mutedStyle.Render(usage)
+	}
+	gap := max(1, width-lipgloss.Width(header+summary+usage)-lipgloss.Width(mode))
+	return fit(header+summary+usage+strings.Repeat(" ", gap)+mode, width, 1)
+}
+
+// headerUsageVariants lists the session total, richest first and ending with
+// an empty variant. An untouched session has no segment at all.
+func (m model) headerUsageVariants() []string {
+	if m.usage.TotalTokens == 0 {
+		return []string{""}
+	}
+	variants := usageVariants(m.usage.InputTokens, m.usage.OutputTokens, m.usage.CostUSD, m.usage.Priced)
+	for i, variant := range variants {
+		if variant != "" {
+			variants[i] = "  Σ " + variant
+		}
+	}
+	return variants
+}
+
+// headerCountOptions lists the counter formats, richest first. Running is the
+// displayed state, so a parent waiting for subagents is not counted; queued is
+// the process status. The last form keeps only the attention count.
+func (m model) headerCountOptions() []string {
+	running, queued := 0, 0
+	for _, task := range m.tasks {
+		if task.Status == orchestrator.Queued {
+			queued++
+		}
+		if _, label, _ := m.taskState(task); label == "RUNNING" {
+			running++
+		}
+	}
+	attention := m.attentionCount()
+	actionText := "need action"
+	if attention == 1 {
+		actionText = "needs action"
+	}
+	tasks := fmt.Sprintf("  %d tasks", len(m.tasks))
+	format := func(runningText, queuedText, attentionText string) string {
+		return mutedStyle.Render(tasks) +
+			lipgloss.NewStyle().Foreground(statusRunning).Render(runningText) +
+			lipgloss.NewStyle().Foreground(statusWaiting).Render(queuedText) +
+			lipgloss.NewStyle().Foreground(cyan).Render(attentionText)
+	}
+	return []string{
+		format(fmt.Sprintf("  ● %d running", running), fmt.Sprintf("  ◷ %d queued", queued), fmt.Sprintf("  ◆ %d %s", attention, actionText)),
+		format(fmt.Sprintf("  ● %d run", running), fmt.Sprintf("  ◷ %d wait", queued), fmt.Sprintf("  ◆ %d action", attention)),
+		format(fmt.Sprintf("  ●%d", running), fmt.Sprintf("  ◷%d", queued), fmt.Sprintf("  ◆%d", attention)),
+		format("", "", fmt.Sprintf("  ◆%d", attention)),
+	}
+}
+
+// boardFooter keeps selected-task actions first, then the operator essentials.
+// Optional hints are dropped before the footer grows past two lines.
+func (m model) boardFooter(w int) string {
+	var hints []string
+	add := func(hint string, optional bool) {
+		candidate := append(append([]string{}, hints...), hint)
+		if optional && hintRows(strings.Join(candidate, " · "), w) > 2 {
+			return
+		}
+		hints = candidate
+	}
+	for _, hint := range m.selectedTaskHints() {
+		add(hint, false)
+	}
+	if m.attentionCount() > 0 {
+		add(keyHint("!"), true)
+	}
+	add("? help", true)
+	add(keyHint("q"), false)
+	add(keyHint("/"), true)
+	if w < 76 {
+		add("j/k tasks", true)
+		add("l details", true)
+	}
+	return strings.Join(hints, " · ")
+}
+
+// hintRows counts the rows text occupies once the separators are rendered and
+// the footer is hard-wrapped at width. A hint is only worth adding when it costs
+// no extra row.
+func hintRows(text string, w int) int {
+	return len(strings.Split(ansi.Hardwrap(strings.ReplaceAll(text, " · ", "  ·  "), w, true), "\n"))
+}
+
+// withHelpHint advertises the help overlay where there is room for it. F1 is
+// the one help key that works inside a text field, so the entry surfaces
+// advertise that key rather than ?.
+func withHelpHint(text string, w int) string {
+	withHelp := text + " · f1 help"
+	if hintRows(withHelp, w) <= hintRows(text, w) {
+		return withHelp
+	}
+	return text
+}
+
+func (m model) footer(w int) string {
+	footerText := m.boardFooter(w)
+	switch {
+	case m.router.open:
+		footerText = withHelpHint("enter start · ctrl+s hold · esc tasks · ctrl+c quit", w)
+		if _, ok := m.routerMentionQuery(); ok {
+			footerText = withHelpHint("tab complete · enter start · ctrl+s hold · esc tasks", w)
+		}
+	case m.input.kind != "":
+		footerText = withHelpHint("enter submit · ctrl+j/alt+enter newline · esc cancel", w)
+	case m.tab == activityTab && m.activity.expanded:
+		footerText = "esc collapse · " + keyHint("e") + " · ? help · " + keyHint("q")
+	case m.tab == activityTab && (m.detailFocus || m.fullscreen):
+		footerText = "enter expand · " + keyHint("e") + " · " + keyHint("tab") + " · ? help · " + keyHint("q")
+	case m.detailFocus || m.fullscreen:
+		footerText = "j/k scroll · " + keyHint("t") + " · " + keyHint("tab") + " · h tasks · ? help · " + keyHint("q")
+	}
+	footer := renderHints(strings.Split(footerText, " · ")...)
+	if m.notice.text != "" {
+		footer = accentStyle.Render("› "+singleLine(m.notice.text)) + "\n" + footer
+	}
+	if m.notice.service != "" {
+		footer = warningStyle.Render("› "+singleLine(m.notice.service)) + "\n" + footer
+	}
+	if m.cleanup.kind != "" {
+		title, answer, note := m.cleanup.prompt()
+		footer = accentStyle.Render(title) + "\n" + mutedStyle.Render(answer+"  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render(note)
+	}
+	if m.review.target != "" {
+		footer = accentStyle.Render("REVIEW  › "+singleLine(m.review.title)) + "\n" + mutedStyle.Render("commit "+singleLine(m.review.commit)) + "\n" +
+			mutedStyle.Render("approve + merge (y)  ·  reject (n)  ·  esc  ·  f1 help")
+	}
+	if m.quitConfirm {
+		footer = accentStyle.Render("QUIT  › Leave pilharmonic?") + "\n" + m.quitCountLine() + "\n" +
+			mutedStyle.Render("y quit  ·  n/esc stay") + "\n" + mutedStyle.Render("History and worktrees are kept")
+	}
+	return ansi.Hardwrap(footer, w, true)
+}
+
+// renderHints styles "key description" hints as one row.
+func renderHints(hints ...string) string {
+	parts := make([]string, len(hints))
+	for i, hint := range hints {
+		key, desc, _ := strings.Cut(hint, " ")
+		parts[i] = keyStyle.Render(key) + mutedStyle.Render(" "+desc)
+	}
+	return strings.Join(parts, faintStyle.Render("  ·  "))
+}
+
+// fitHints drops trailing hints until the row fits width, so a label is never
+// cut in half unless even the first one overflows.
+func fitHints(width int, hints ...string) string {
+	row := renderHints(hints...)
+	for n := len(hints) - 1; n > 0 && lipgloss.Width(row) > width; n-- {
+		row = renderHints(hints[:n]...)
+	}
+	return fit(row, width, 1)
 }

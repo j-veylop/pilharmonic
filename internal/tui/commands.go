@@ -11,12 +11,12 @@ import (
 
 // slashCommandsHelp is shown alongside an unknown command, so the operator
 // always sees the whole vocabulary.
-const slashCommandsHelp = "/login — pick a provider (or /login <provider>), /logout <provider>, /providers, /model [big|small], /agents, /help"
+const slashCommandsHelp = "/login — pick a provider (or /login <provider>), /logout <provider>, /providers, /model [big|small], /help"
 
 // forcedLoginNotice is the standing message while no provider is configured.
 const forcedLoginNotice = "No provider configured — log in first"
 
-// slashCommand handles a command typed into the new-request form. It never
+// slashCommand handles a command typed into the request box. It never
 // submits a task; the router clears the draft after dispatching.
 func (m model) slashCommand(line string) model {
 	fields := strings.Fields(line)
@@ -42,10 +42,6 @@ func (m model) slashCommand(line string) model {
 			return m
 		}
 		m.openModelMenu(arg)
-	case "/agents":
-		m.agentClass = agentClassState{menu: true}
-		m.router.open = false
-		m.notice.text = "Select an agent to toggle big/small"
 	case "/logout":
 		if arg == "" {
 			m.notice.text = "Usage: /logout <provider>"
@@ -120,9 +116,10 @@ func trimLastRune(text string) string {
 // providerMenuKey drives the provider login menu; /login opens the same state.
 func (m model) providerMenuKey(key string) model {
 	credentials := m.service.ProviderCredentials()
+	if m.listMenuKey(key, &m.login.index, len(credentials)) {
+		return m
+	}
 	switch key {
-	case "ctrl+c":
-		return m.requestQuit()
 	case "esc", "q":
 		m.login.menu = false
 		m.notice.text = "No provider configured"
@@ -139,12 +136,8 @@ func (m model) providerMenuKey(key string) model {
 		// The masked key prompt lives in the request composer, wherever the
 		// menu was opened.
 		m.router.open = true
-		m.router.focus = routerFocusComposer
 		m.clearRouterDraft()
 		m.notice.text = "Enter API key for " + provider + " (Enter to save, Esc to cancel)"
-		m.clampRouter()
-	default:
-		moveMenuIndex(key, &m.login.index, len(credentials))
 	}
 	return m
 }

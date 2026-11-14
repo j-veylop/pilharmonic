@@ -38,9 +38,9 @@ func TestQuitKeysAskOnEverySurface(t *testing.T) {
 				t.Fatalf("%s: confirmation not drawn: %s", name, plain)
 			}
 			after := key(key(armed, runeKey("j")), runeKey("a"))
-			if after.help != armed.help || after.selected != armed.selected || after.router.editor != armed.router.editor ||
+			if after.help != armed.help || after.selected != armed.selected || after.router.Editor != armed.router.Editor ||
 				after.models.index != armed.models.index || after.models.customInput != armed.models.customInput ||
-				after.input.editor != armed.input.editor || after.agentPicker.index != armed.agentPicker.index ||
+				after.input.Editor != armed.input.Editor || after.agentPicker.index != armed.agentPicker.index ||
 				after.login != armed.login || after.cleanup.kind != armed.cleanup.kind {
 				t.Fatalf("%s: a key reached the surface under the confirmation", name)
 			}
@@ -62,18 +62,18 @@ func TestQuitConfirmationAnswers(t *testing.T) {
 		{runeKey("x"), false, true},
 		{runeKey("n"), false, false},
 		{runeKey("N"), false, false},
-		{runeKey("q"), false, false},
+		{runeKey("q"), false, true},
 		{tea.KeyMsg{Type: tea.KeyEsc}, false, false},
 	}
 	for _, tc := range cases {
 		m := boardWithTask()
-		m.router.open, m.router.text = true, "keep this draft"
+		m.router.open, m.router.Text = true, "keep this draft"
 		next, cmd := m.requestQuit().Update(tc.msg)
 		m = next.(model)
 		if quits(cmd) != tc.quit || m.quitConfirm != tc.open {
 			t.Fatalf("%q: quit=%v open=%v", tc.msg.String(), quits(cmd), m.quitConfirm)
 		}
-		if !m.router.open || m.router.text != "keep this draft" || len(m.tasks) != 1 {
+		if !m.router.open || m.router.Text != "keep this draft" || len(m.tasks) != 1 {
 			t.Fatalf("%q disturbed the surface underneath", tc.msg.String())
 		}
 		if !tc.open && m.notice.text != "Quit canceled." {
@@ -107,7 +107,7 @@ func TestQuitConfirmationCountsLiveWorkAndFits(t *testing.T) {
 		{waiting, "1 running task stops when you quit."}, // a parent waiting for subagents is still live
 		{model{width: 100, height: 28}, "Nothing is running."},
 	} {
-		if plain := quitPlain(tc.m.requestQuit().View()); !strings.Contains(plain, tc.want) || !strings.Contains(plain, "History and worktrees are kept.") {
+		if plain := quitPlain(tc.m.requestQuit().View()); !strings.Contains(plain, tc.want) || !strings.Contains(plain, "History and worktrees are kept") {
 			t.Fatalf("dialog lost %q: %s", tc.want, plain)
 		}
 	}
@@ -126,7 +126,7 @@ func TestQuitConfirmationCountsLiveWorkAndFits(t *testing.T) {
 		if !strings.Contains(plain, "y quit") || !strings.Contains(plain, "when you quit") {
 			t.Fatalf("%v: dialog lost its count or answers: %s", size, plain)
 		}
-		if size[1] > 10 && !strings.Contains(plain, "History and worktrees are kept.") {
+		if size[1] > 10 && !strings.Contains(plain, "History and worktrees are kept") {
 			t.Fatalf("%v: dialog dropped the reassurance: %s", size, plain)
 		}
 	}

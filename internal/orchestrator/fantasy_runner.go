@@ -10,43 +10,24 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+
+	"pilharmonic/internal/agenttools"
 )
 
 // FantasyRunner executes a task in-process through the fantasy agent loop,
-// with the workspace tools in fantasy_tools.go.
+// with the workspace tools in package agenttools. It is fixed configuration; the
+// service resolves each attempt's model and passes it with the task.
 type FantasyRunner struct {
 	// instructions is trusted operator policy appended to the executor's
 	// tool-usage guidance in the system prompt. It never carries task text.
 	instructions string
-	// model is the fallback selector used when a task's profile names none.
-	model string
-	// modelClass is "big" or "small"; it selects which operator-chosen model
-	// (from models.json) this runner uses.
-	modelClass string
-	// modelOverride pins this runner to a specific provider/model when set,
-	// winning over the task's profile model. It is derived from modelClass and
-	// the operator's model selection.
-	modelOverride string
 	// defaultTools is the role's least-privilege palette. An explicit profile
 	// snapshot still overrides it; an empty palette falls back to the full
-	// fantasyToolNames set.
+	// agenttools palette.
 	defaultTools []string
 	// ModelFactory resolves a model ID to a fantasy.LanguageModel. Nil means
 	// DefaultFantasyModelFactory.
 	ModelFactory ModelFactory
-}
-
-// RequestedModel resolves the model selector used for this attempt, in
-// priority order: the operator's per-agent override, the runner's configured
-// model (from profiles.json or the -model flag), then the task profile's model.
-func (f FantasyRunner) RequestedModel(profile *Profile) string {
-	if f.modelOverride != "" {
-		return f.modelOverride
-	}
-	if f.model != "" || profile == nil {
-		return f.model
-	}
-	return profile.Model
 }
 
 // SupportsProfile accepts the parameters this adapter can translate. Tool names
@@ -85,7 +66,7 @@ func (f FantasyRunner) systemPrompt(profile *Profile) string {
 // toolPalette resolves the tools to expose: the profile snapshot, then the
 // role's default palette, then the full set.
 func (f FantasyRunner) toolPalette(profile *Profile) []string {
-	tools := fantasyToolNames
+	tools := agenttools.Names()
 	if len(f.defaultTools) > 0 {
 		tools = f.defaultTools
 	}
@@ -100,7 +81,7 @@ const maxSummaryInput = 200
 
 // summaryLine collapses untrusted tool text to one bounded line.
 func summaryLine(text string) string {
-	text = strings.TrimSpace(sanitizeTranscript(text))
+	text = strings.TrimSpace(agenttools.Sanitize(text))
 	if line, _, ok := strings.Cut(text, "\n"); ok {
 		text = strings.TrimSpace(line)
 	}
@@ -113,7 +94,7 @@ func summaryLine(text string) string {
 // toolCallSummary renders the one-line display marker written when a tool call
 // starts. Tool arguments are untrusted, so the line is sanitized and bounded.
 func toolCallSummary(name, input string) string {
-	name = sanitizeTranscript(name)
+	name = agenttools.Sanitize(name)
 	input = summaryLine(input)
 	if input == "" {
 		return name
@@ -148,7 +129,7 @@ func (f FantasyRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 // text, reasoning and tool activity are forwarded to out as they happen; a
 // structured failure is reported before the run returns an error.
 func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-chan Trigger, ack func(string, bool, string)) error {
-	prompt := composeInput(t)
+	prompt := composeInput(t, false)
 	if len(prompt) > maxPromptBytes {
 		return fmt.Errorf("prompt exceeds 100 KiB argument limit (%d bytes)", len(prompt))
 	}
@@ -156,14 +137,14 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 	if factory == nil {
 		factory = DefaultFantasyModelFactory
 	}
-	selector := f.RequestedModel(t.ProfileSpec)
+	selector := t.model
 	model, err := factory(ctx, selector)
 	if err != nil {
 		return err
 	}
 	agent := fantasy.NewAgent(model,
 		fantasy.WithSystemPrompt(f.systemPrompt(t.ProfileSpec)),
-		fantasy.WithTools(fantasyTools(t.Workspace, f.toolPalette(t.ProfileSpec), t.runnerEnvironment())...),
+		fantasy.WithTools(agenttools.Tools(t.Workspace, f.toolPalette(t.ProfileSpec), t.runnerEnvironment())...),
 	)
 	stream := &fantasyStream{transcript: transcript{out: out}, reasoning: map[string]int{}, inFlight: map[string]ToolActivity{}}
 	stream.recorder, _ = out.(ToolActivityRecorder)
@@ -178,7 +159,7 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
-			return fmt.Errorf("fantasy: %w", errors.New(sanitizeTranscript(err.Error())))
+			return fmt.Errorf("fantasy: %w", errors.New(agenttools.Sanitize(err.Error())))
 		}
 		for _, step := range result.Steps {
 			history = append(history, step.Messages...)
@@ -209,7 +190,7 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 
 // reportFailure records failure as a structured report and returns it.
 func reportFailure(out io.Writer, failure error) error {
-	if err := adapterReport(out, "failed", sanitizeTranscript(failure.Error())); err != nil {
+	if err := adapterReport(out, "failed", agenttools.Sanitize(failure.Error())); err != nil {
 		return errors.Join(err, failure)
 	}
 	return failure
@@ -236,11 +217,11 @@ func (s *fantasyStream) call(prompt string, history []fantasy.Message) fantasy.A
 		Messages: history,
 		OnTextDelta: func(_ string, text string) error {
 			s.sawText = s.sawText || strings.TrimSpace(text) != ""
-			return s.prose(sanitizeTranscript(text))
+			return s.prose(agenttools.Sanitize(text))
 		},
 		OnReasoningStart: func(id string, _ fantasy.ReasoningContent) error { return s.thinkingStart(s.reasoningIndex(id)) },
 		OnReasoningDelta: func(id, delta string) error {
-			return s.thinkingDelta(s.reasoningIndex(id), sanitizeTranscript(delta))
+			return s.thinkingDelta(s.reasoningIndex(id), agenttools.Sanitize(delta))
 		},
 		OnReasoningEnd: func(id string, _ fantasy.ReasoningContent) error { return s.thinkingEnd(s.reasoningIndex(id)) },
 		OnToolCall:     s.toolCall,
@@ -284,7 +265,7 @@ func (s *fantasyStream) record(activity ToolActivity) error {
 func (s *fantasyStream) toolCall(call fantasy.ToolCallContent) error {
 	activity := ToolActivity{
 		ID:        call.ToolCallID,
-		Name:      sanitizeTranscript(call.ToolName),
+		Name:      agenttools.Sanitize(call.ToolName),
 		Args:      json.RawMessage(call.Input),
 		Status:    ActivityRunning,
 		StartedAt: time.Now().UTC(),
@@ -306,7 +287,7 @@ func (s *fantasyStream) toolResult(result fantasy.ToolResultContent) error {
 	}
 	text, failed := toolResultContent(result.Result)
 	if activity.Name == "" {
-		activity.Name = sanitizeTranscript(result.ToolName)
+		activity.Name = agenttools.Sanitize(result.ToolName)
 	}
 	activity.Status = ActivityFinished
 	summary := activity.Name

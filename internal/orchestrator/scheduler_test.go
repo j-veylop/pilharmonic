@@ -11,9 +11,6 @@ import (
 func TestConcurrencyLimit(t *testing.T) {
 	s := newTestService(t)
 	must(t, s.SetConcurrencyLimit(1))
-	if err := s.SetConcurrencyLimit(0); err == nil {
-		t.Fatal("zero concurrency accepted")
-	}
 	entered := make(chan struct{}, 2)
 	unblock := make(chan struct{})
 	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {

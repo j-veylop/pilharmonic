@@ -1,8 +1,14 @@
 package orchestrator
 
 import (
+	"context"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+
+	"charm.land/fantasy"
 )
 
 func TestModelSelection(t *testing.T) {
@@ -22,15 +28,10 @@ func TestModelSelection(t *testing.T) {
 		t.Fatal("unknown class accepted")
 	}
 
-	// By default every specialist is small, so the small model applies to them.
-	explorer := s.runners["explorer"].(FantasyRunner)
-	if got := explorer.RequestedModel(&Profile{Model: "hyper/prism"}); got != "deepseek/deepseek-flash" {
+	if got := requestedModel(s, "explorer", nil); got != "deepseek/deepseek-flash" {
 		t.Fatalf("small model not applied to explorer: %q", got)
 	}
-	// The coordinator (general) is big by default, so the small model does not
-	// leak to it.
-	general := s.runners[DefaultRouteAgent].(FantasyRunner)
-	if got := general.RequestedModel(&Profile{Model: "hyper/prism"}); got != "hyper/prism" {
+	if got := requestedModel(s, DefaultRouteAgent, nil); got != "" {
 		t.Fatalf("small model leaked to general: %q", got)
 	}
 
@@ -38,54 +39,87 @@ func TestModelSelection(t *testing.T) {
 	reopened := mustGet(Open(path))(t)
 	defer func() { _ = reopened.Shutdown() }()
 	reopened.LoadBuiltinSpecialists()
-	reopenedExplorer := reopened.runners["explorer"].(FantasyRunner)
-	if got := reopenedExplorer.RequestedModel(nil); got != "deepseek/deepseek-flash" {
+	if got := requestedModel(reopened, "explorer", nil); got != "deepseek/deepseek-flash" {
 		t.Fatalf("small model not persisted: %q", got)
 	}
 
 	// Clearing reverts to the profile/default model.
 	must(t, reopened.SetModel(ModelClassSmall, ""))
-	cleared := reopened.runners["explorer"].(FantasyRunner)
-	if cleared.RequestedModel(nil) != "" {
-		t.Fatalf("model not cleared: %q", cleared.RequestedModel(nil))
+	if requestedModel(reopened, "explorer", nil) != "" {
+		t.Fatalf("model not cleared: %q", requestedModel(reopened, "explorer", nil))
 	}
 }
 
-func TestAgentClassOverride(t *testing.T) {
-	s := newTestService(t)
+func TestFantasyModelResolutionOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name, profile, specialist, big, small, flag, want string
+	}{
+		{name: "profile concrete beats everything", profile: "hyper/profile", specialist: "hyper/specialist", big: "hyper/big", small: "hyper/small", flag: "hyper/flag", want: "hyper/profile"},
+		{name: "profile alias uses class model", profile: ModelClassBig, specialist: "hyper/specialist", big: "hyper/big", small: "hyper/small", flag: "hyper/flag", want: "hyper/big"},
+		{name: "profile alias with unset class falls through", profile: ModelClassBig, specialist: ModelClassBig, small: "hyper/small", flag: "hyper/flag", want: "hyper/flag"},
+		{name: "specialist alias picks class", specialist: ModelClassBig, big: "hyper/big", small: "hyper/small", flag: "hyper/flag", want: "hyper/big"},
+		{name: "default class beats specialist concrete", specialist: "hyper/specialist", small: "hyper/small", want: "hyper/small"},
+		{name: "specialist concrete when class unset", specialist: "hyper/specialist", big: "hyper/big", flag: "hyper/flag", want: "hyper/specialist"},
+		{name: "flag last", big: "hyper/big", flag: "hyper/flag", want: "hyper/flag"},
+		{name: "nothing configured", profile: ModelClassSmall, specialist: ModelClassSmall, want: ""},
+		{name: "flag alias uses class model", big: "hyper/big", flag: ModelClassBig, want: "hyper/big"},
+		{name: "unset flag alias resolves to nothing", flag: ModelClassSmall, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestService(t)
+			s.LoadBuiltinSpecialists()
+			must(t, s.SetModel(ModelClassBig, tc.big))
+			must(t, s.SetModel(ModelClassSmall, tc.small))
+			s.SetDefaultModel(tc.flag)
+			if tc.specialist != "" {
+				must(t, s.LoadProfiles(writeProfileConfig(t, `{"specialists":[{"name":"tester","model":"`+tc.specialist+`"}]}`)))
+			}
+			if got := requestedModel(s, "tester", &Profile{Name: "task", Model: tc.profile}); got != tc.want {
+				t.Fatalf("model = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLegacyAgentClassesIgnored(t *testing.T) {
+	dir := t.TempDir()
+	modelsPath := filepath.Join(dir, "models.json")
+	must(t, os.WriteFile(modelsPath, []byte(`{"big":"hyper/prism","agents":{"tester":"big"}}`), 0600))
+	s := openTestService(t, filepath.Join(dir, "state.json"))
 	s.LoadBuiltinSpecialists()
+	if warning := s.StartupWarning(); !strings.Contains(warning, "no longer supported") || !strings.Contains(warning, `"model": "big"`) {
+		t.Fatalf("startup warning = %q", warning)
+	}
+	if got := requestedModel(s, "tester", nil); got != "" {
+		t.Fatalf("legacy class applied: %q", got)
+	}
+	if got := requestedModel(s, DefaultRouteAgent, nil); got != "hyper/prism" {
+		t.Fatalf("big model not loaded: %q", got)
+	}
+	must(t, s.SetModel(ModelClassSmall, "hyper/prism-flash"))
+	b := mustGet(os.ReadFile(modelsPath))(t)
+	if strings.Contains(string(b), "agents") || !strings.Contains(string(b), "hyper/prism-flash") {
+		t.Fatalf("models.json not rewritten: %s", b)
+	}
+}
 
-	// Default: everything but general is small.
-	classes := map[string]string{}
-	for _, c := range s.AgentClasses() {
-		classes[c.Agent] = c.Class
-	}
-	if classes[DefaultRouteAgent] != ModelClassBig {
-		t.Fatalf("general default class = %q", classes[DefaultRouteAgent])
-	}
-	if classes["implementer"] != ModelClassSmall || classes["explorer"] != ModelClassSmall {
-		t.Fatalf("specialist default classes: %v", classes)
-	}
-
-	// Pin implementer to the big model and set both class models.
-	must(t, s.SetAgentClass("implementer", ModelClassBig))
+func TestLegacyProfileModelStillRuns(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	fixture := `{"tasks":[{"id":"legacy","title":"old","prompt":"old mandate","workspace":` + strconv.Quote(t.TempDir()) + `,"status":"queued","agent":"general","profile":"old","profile_spec":{"name":"old","model":"hyper/frozen"},"created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:05Z","events":[]}]}`
+	must(t, os.WriteFile(statePath, []byte(fixture), 0600))
+	s := openTestService(t, statePath)
 	must(t, s.SetModel(ModelClassBig, "hyper/prism"))
-	implementer := s.runners["implementer"].(FantasyRunner)
-	if got := implementer.RequestedModel(&Profile{Model: "hyper/prism-flash"}); got != "hyper/prism" {
-		t.Fatalf("big model not applied to overridden implementer: %q", got)
-	}
-	if err := s.SetAgentClass("bogus", ModelClassBig); err == nil {
-		t.Fatal("unknown agent accepted")
-	}
-	if err := s.SetAgentClass("implementer", "huge"); err == nil {
-		t.Fatal("invalid class accepted")
-	}
-
-	// Clearing reverts to the default (small).
-	must(t, s.SetAgentClass("implementer", ""))
-	cleared := s.runners["implementer"].(FantasyRunner)
-	if got := cleared.RequestedModel(nil); got != "" {
-		t.Fatalf("class override not cleared: %q", got)
+	s.SetDefaultModel("hyper/flag")
+	requested := make(chan string, 1)
+	s.RegisterRunner(DefaultRouteAgent, FantasyRunner{ModelFactory: func(_ context.Context, model string) (fantasy.LanguageModel, error) {
+		requested <- model
+		return &fakeFantasyModel{scripts: [][]fantasy.StreamPart{textDelta("done")}}, nil
+	}})
+	must(t, s.Start(context.Background(), "legacy"))
+	done := await(t, s, "legacy", Completed)
+	if got := <-requested; got != "hyper/frozen" || done.Attempts[len(done.Attempts)-1].RequestedModel != got {
+		t.Fatalf("adapter ran %q, attempt recorded %q", got, done.Attempts[len(done.Attempts)-1].RequestedModel)
 	}
 }
 
@@ -96,5 +130,29 @@ func TestModelSelectionReportsClasses(t *testing.T) {
 	sel := s.ModelSelection()
 	if sel.Big != "hyper/prism" || sel.Small != "" {
 		t.Fatalf("unexpected selection: %+v", sel)
+	}
+}
+
+func requestedModel(s *Service, agent string, profile *Profile) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fantasyModelLocked(agent, profile)
+}
+
+// TestFantasyAttemptRunsTheRecordedModel checks the service fixes the resolved
+// selector on the attempt and hands exactly that selector to the adapter.
+func TestFantasyAttemptRunsTheRecordedModel(t *testing.T) {
+	s := newTestService(t)
+	must(t, s.SetModel(ModelClassBig, "hyper/prism"))
+	requested := make(chan string, 1)
+	s.RegisterRunner(DefaultRouteAgent, FantasyRunner{ModelFactory: func(_ context.Context, model string) (fantasy.LanguageModel, error) {
+		requested <- model
+		return &fakeFantasyModel{scripts: [][]fantasy.StreamPart{textDelta("done")}}, nil
+	}})
+	task := createTask(t, s, "model", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
+	done := await(t, s, task.ID, Completed)
+	if got := <-requested; got != "hyper/prism" || done.Attempts[0].RequestedModel != got {
+		t.Fatalf("adapter ran %q, attempt recorded %q", got, done.Attempts[0].RequestedModel)
 	}
 }

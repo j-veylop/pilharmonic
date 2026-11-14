@@ -1,4 +1,4 @@
-package tui
+package editor
 
 import (
 	"strings"
@@ -8,9 +8,9 @@ import (
 )
 
 // draft splits "text|more" into its text and the cursor at the bar.
-func draft(s string) editor {
+func draft(s string) Editor {
 	at := strings.Index(s, "|")
-	return editor{text: s[:at] + s[at+1:], cursor: at}
+	return Editor{Text: s[:at] + s[at+1:], Cursor: at}
 }
 
 func TestEditorKeys(t *testing.T) {
@@ -46,15 +46,15 @@ func TestEditorKeys(t *testing.T) {
 		{"ctrl+p keeps column", []tea.KeyMsg{ctrl(tea.KeyCtrlP)}, "first\nsecon|d", "first|\nsecond"},
 		{"ctrl+n keeps column", []tea.KeyMsg{ctrl(tea.KeyCtrlN)}, "fir|st\nsecond", "first\nsec|ond"},
 		{"ctrl+j newline", []tea.KeyMsg{ctrl(tea.KeyCtrlJ)}, "a|b", "a\n|b"},
-		{"typing", []tea.KeyMsg{runeKey("x"), {Type: tea.KeySpace}}, "a|b", "ax |b"},
+		{"typing", []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("x")}, {Type: tea.KeySpace}}, "a|b", "ax |b"},
 	}
 	for _, tc := range cases {
 		e := draft(tc.from)
 		for _, msg := range tc.keys {
-			e.handleKey(msg, 30, 4)
+			e.HandleKey(msg, 30, 4)
 		}
-		if want := draft(tc.to); e.text != want.text || e.cursor != want.cursor {
-			t.Fatalf("%s: %q at %d, want %q at %d", tc.name, e.text, e.cursor, want.text, want.cursor)
+		if want := draft(tc.to); e.Text != want.Text || e.Cursor != want.Cursor {
+			t.Fatalf("%s: %q at %d, want %q at %d", tc.name, e.Text, e.Cursor, want.Text, want.Cursor)
 		}
 	}
 }

@@ -15,30 +15,20 @@ import (
 )
 
 func TestOutputScrollKeyboard(t *testing.T) {
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.CreateTask("test", strings.Repeat("mandate ", 400), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := orchestrator.Task{ID: "x", Title: "test"}
 	for i := 0; i < 40; i++ {
 		task.Output += fmt.Sprintf("line-%02d\n", i)
 	}
-	m := model{service: s, width: 120, height: 22, tasks: []orchestrator.Task{task}}
+	m := model{width: 120, height: 22, tasks: []orchestrator.Task{task}, detailFocus: true}
 	if view := m.View(); !strings.Contains(view, "line-39") || strings.Contains(view, "line-00") {
 		t.Fatalf("initial view not at bottom: %s", view)
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyHome})
-	m = next.(model)
+	m = key(key(m, runeKey("g")), runeKey("g"))
 	if m.historyOffset != m.maxScroll() || m.historyOffset == 0 {
-		t.Fatalf("home offset %d of %d", m.historyOffset, m.maxScroll())
+		t.Fatalf("gg offset %d of %d", m.historyOffset, m.maxScroll())
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
-	m = next.(model)
-	if m.historyOffset != 0 {
-		t.Fatalf("end offset %d", m.historyOffset)
+	if m = key(m, runeKey("G")); m.historyOffset != 0 {
+		t.Fatalf("G offset %d", m.historyOffset)
 	}
 }
 
@@ -58,7 +48,7 @@ func TestMouseWheelScrollsDetails(t *testing.T) {
 }
 
 func TestWrappedDetailAndScrollBounds(t *testing.T) {
-	task := orchestrator.Task{ID: "x", Title: "title", Prompt: "begin-" + strings.Repeat("x", 100) + "-end", Output: strings.Repeat("a", 200) + "THE-END"}
+	task := orchestrator.Task{ID: "x", Title: "title", Output: "begin-" + strings.Repeat("a", 200) + "THE-END"}
 	m := model{width: 80, height: 24, tasks: []orchestrator.Task{task}}
 	content := strings.Join(m.detailContent(20), "\n")
 	if !strings.Contains(content, "begin-") || !strings.Contains(strings.Join(strings.Fields(ansi.Strip(content)), ""), "THE-END") || len(strings.Split(content, "\n")) < 10 {

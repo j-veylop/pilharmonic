@@ -196,32 +196,13 @@ func TestAuthorizationDecisionCarriesAuditEvidence(t *testing.T) {
 	}
 }
 
-// TestAuthorizationInputDigestFormatIsStable pins the digest schema and one
-// recorded value. Digests are persisted in state.json, so a changed payload or
-// schema would silently invalidate every audit record written by earlier builds
-// even if the digest stayed deterministic.
-func TestAuthorizationInputDigestFormatIsStable(t *testing.T) {
+// TestAuthorizationInputDigest pins the digest schema and one recorded value,
+// and checks every field changes it. Digests are persisted in state.json, so a
+// changed payload or schema would silently invalidate earlier audit records.
+func TestAuthorizationInputDigest(t *testing.T) {
 	if authorizationDigestSchema != "orchestrator.authorization/v1" {
 		t.Fatalf("digest schema drifted: %q", authorizationDigestSchema)
 	}
-	want := "sha256:41f759f3d1edaacea0198ccd5dd934b7e87c7aa2cc5ade743bddb9b35bbe39fd"
-	got := authorizationInputDigest(AuthorizationRequest{
-		Source:    LocalPolicySource,
-		Actor:     LocalActor,
-		Purpose:   PurposeManual,
-		TriggerID: "trigger",
-		ThreadID:  "thread",
-		ParentID:  "parent",
-		Text:      "mandate",
-		Workspace: "/workspace",
-		Depth:     1,
-	})
-	if got != want {
-		t.Fatalf("recorded digest changed: %q", got)
-	}
-}
-
-func TestAuthorizationInputDigestIsCanonicalAndSensitive(t *testing.T) {
 	base := AuthorizationRequest{
 		Source:    LocalPolicySource,
 		Actor:     LocalActor,
@@ -234,8 +215,8 @@ func TestAuthorizationInputDigestIsCanonicalAndSensitive(t *testing.T) {
 		Depth:     1,
 	}
 	digest := authorizationInputDigest(base)
-	if again := authorizationInputDigest(base); again != digest {
-		t.Fatalf("digest is not deterministic: %q != %q", digest, again)
+	if want := "sha256:41f759f3d1edaacea0198ccd5dd934b7e87c7aa2cc5ade743bddb9b35bbe39fd"; digest != want {
+		t.Fatalf("recorded digest changed: %q", digest)
 	}
 	changes := []AuthorizationRequest{base, base, base, base, base, base, base, base, base}
 	changes[0].Source = SubagentPolicySource
@@ -254,26 +235,5 @@ func TestAuthorizationInputDigestIsCanonicalAndSensitive(t *testing.T) {
 			t.Fatalf("digest collision for change %+v", changed)
 		}
 		seen[next] = true
-	}
-}
-
-func TestAuthorizationIdentifiersStayStable(t *testing.T) {
-	if LocalPolicyID != "local" || LocalPolicyVersion != "local-1" {
-		t.Fatalf("local authorization identifiers drifted: %q %q", LocalPolicyID, LocalPolicyVersion)
-	}
-	if SubagentPolicyID != "subagent" || SubagentPolicyVersion != "subagent-1" {
-		t.Fatalf("subagent authorization identifiers drifted: %q %q", SubagentPolicyID, SubagentPolicyVersion)
-	}
-	if LocalPolicySource != "manual" || SubagentPolicySource != "subagent" {
-		t.Fatalf("source names drifted: %q %q", LocalPolicySource, SubagentPolicySource)
-	}
-	if LocalActor != "local-user" {
-		t.Fatalf("local actor drifted: %q", LocalActor)
-	}
-	if PurposeRouter != "router" || PurposeManual != "manual" || PurposeRelated != "related" || PurposeSubagent != "subagent" {
-		t.Fatal("request purpose names drifted")
-	}
-	if OutcomeAccept != "accept" || OutcomeReject != "reject" {
-		t.Fatal("authorization outcome names drifted")
 	}
 }

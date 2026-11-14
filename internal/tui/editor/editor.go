@@ -1,4 +1,4 @@
-package tui
+package editor
 
 import (
 	"strings"
@@ -10,13 +10,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// editor is the shared multiline draft used by composers and the router. It
+// Editor is the shared multiline draft used by composers and the router. It
 // stores a byte cursor and the first visible wrapped line. The zero value is a
 // usable empty editor so composer values remain comparable in tests.
-type editor struct {
-	text   string
-	cursor int
-	scroll int
+type Editor struct {
+	Text   string
+	Cursor int
+	Scroll int
 }
 
 // editorLine is one display line after soft wrapping. start and end are byte
@@ -28,46 +28,46 @@ type editorLine struct {
 	newline bool
 }
 
-func (e *editor) clamp() {
-	if e.cursor < 0 {
-		e.cursor = 0
+func (e *Editor) clamp() {
+	if e.Cursor < 0 {
+		e.Cursor = 0
 	}
-	if e.cursor > len(e.text) {
-		e.cursor = len(e.text)
+	if e.Cursor > len(e.Text) {
+		e.Cursor = len(e.Text)
 	}
-	for e.cursor > 0 && e.cursor < len(e.text) && !utf8.RuneStart(e.text[e.cursor]) {
-		e.cursor--
+	for e.Cursor > 0 && e.Cursor < len(e.Text) && !utf8.RuneStart(e.Text[e.Cursor]) {
+		e.Cursor--
 	}
-	if e.scroll < 0 {
-		e.scroll = 0
+	if e.Scroll < 0 {
+		e.Scroll = 0
 	}
 }
 
-func (e *editor) insert(value string) {
+func (e *Editor) insert(value string) {
 	e.clamp()
 	value = strings.ReplaceAll(value, "\r\n", "\n")
 	value = strings.ReplaceAll(value, "\r", "\n")
-	e.text = e.text[:e.cursor] + value + e.text[e.cursor:]
-	e.cursor += len(value)
+	e.Text = e.Text[:e.Cursor] + value + e.Text[e.Cursor:]
+	e.Cursor += len(value)
 }
 
-func (e *editor) backspace() {
+func (e *Editor) backspace() {
 	e.clamp()
-	if e.cursor == 0 {
+	if e.Cursor == 0 {
 		return
 	}
-	_, size := utf8.DecodeLastRuneInString(e.text[:e.cursor])
-	e.text = e.text[:e.cursor-size] + e.text[e.cursor:]
-	e.cursor -= size
+	_, size := utf8.DecodeLastRuneInString(e.Text[:e.Cursor])
+	e.Text = e.Text[:e.Cursor-size] + e.Text[e.Cursor:]
+	e.Cursor -= size
 }
 
-func (e *editor) delete() {
+func (e *Editor) delete() {
 	e.clamp()
-	if e.cursor >= len(e.text) {
+	if e.Cursor >= len(e.Text) {
 		return
 	}
-	_, size := utf8.DecodeRuneInString(e.text[e.cursor:])
-	e.text = e.text[:e.cursor] + e.text[e.cursor+size:]
+	_, size := utf8.DecodeRuneInString(e.Text[e.Cursor:])
+	e.Text = e.Text[:e.Cursor] + e.Text[e.Cursor+size:]
 }
 
 // isEditorWord reports whether r belongs to a word for word-wise editing.
@@ -78,241 +78,241 @@ func isEditorWord(r rune) bool {
 
 // moveWordBackward moves to the start of the word before the cursor, skipping
 // the whitespace between words first.
-func (e *editor) moveWordBackward() {
+func (e *Editor) moveWordBackward() {
 	e.clamp()
-	for e.cursor > 0 {
-		r, size := utf8.DecodeLastRuneInString(e.text[:e.cursor])
+	for e.Cursor > 0 {
+		r, size := utf8.DecodeLastRuneInString(e.Text[:e.Cursor])
 		if !unicode.IsSpace(r) {
 			break
 		}
-		e.cursor -= size
+		e.Cursor -= size
 	}
-	for e.cursor > 0 {
-		r, size := utf8.DecodeLastRuneInString(e.text[:e.cursor])
+	for e.Cursor > 0 {
+		r, size := utf8.DecodeLastRuneInString(e.Text[:e.Cursor])
 		if !isEditorWord(r) {
 			break
 		}
-		e.cursor -= size
+		e.Cursor -= size
 	}
 }
 
 // moveWordForward moves past the next word, skipping leading non-word runes.
-func (e *editor) moveWordForward() {
+func (e *Editor) moveWordForward() {
 	e.clamp()
-	for e.cursor < len(e.text) {
-		r, size := utf8.DecodeRuneInString(e.text[e.cursor:])
+	for e.Cursor < len(e.Text) {
+		r, size := utf8.DecodeRuneInString(e.Text[e.Cursor:])
 		if isEditorWord(r) {
 			break
 		}
-		e.cursor += size
+		e.Cursor += size
 	}
-	for e.cursor < len(e.text) {
-		r, size := utf8.DecodeRuneInString(e.text[e.cursor:])
+	for e.Cursor < len(e.Text) {
+		r, size := utf8.DecodeRuneInString(e.Text[e.Cursor:])
 		if !isEditorWord(r) {
 			break
 		}
-		e.cursor += size
+		e.Cursor += size
 	}
 }
 
 // deleteWordBackward removes the word before the cursor and the whitespace
 // that separates it from earlier text. Like a textarea, it stays on its own
 // line so a deletion never swallows a line break.
-func (e *editor) deleteWordBackward() {
+func (e *Editor) deleteWordBackward() {
 	e.clamp()
-	if e.cursor == 0 {
+	if e.Cursor == 0 {
 		return
 	}
-	if r, _ := utf8.DecodeLastRuneInString(e.text[:e.cursor]); r == '\n' {
+	if r, _ := utf8.DecodeLastRuneInString(e.Text[:e.Cursor]); r == '\n' {
 		return
 	}
-	start := e.cursor
+	start := e.Cursor
 	for start > 0 {
-		r, size := utf8.DecodeLastRuneInString(e.text[:start])
+		r, size := utf8.DecodeLastRuneInString(e.Text[:start])
 		if r == '\n' || !unicode.IsSpace(r) {
 			break
 		}
 		start -= size
 	}
 	for start > 0 {
-		r, size := utf8.DecodeLastRuneInString(e.text[:start])
+		r, size := utf8.DecodeLastRuneInString(e.Text[:start])
 		if r == '\n' || unicode.IsSpace(r) {
 			break
 		}
 		start -= size
 	}
-	e.text = e.text[:start] + e.text[e.cursor:]
-	e.cursor = start
+	e.Text = e.Text[:start] + e.Text[e.Cursor:]
+	e.Cursor = start
 }
 
 // deleteWordForward removes the word after the cursor and the gap that follows
 // it, leaving no double space behind. It stays on its own line.
-func (e *editor) deleteWordForward() {
+func (e *Editor) deleteWordForward() {
 	e.clamp()
-	end := e.cursor
-	for end < len(e.text) {
-		r, size := utf8.DecodeRuneInString(e.text[end:])
+	end := e.Cursor
+	for end < len(e.Text) {
+		r, size := utf8.DecodeRuneInString(e.Text[end:])
 		if r == '\n' || !unicode.IsSpace(r) {
 			break
 		}
 		end += size
 	}
-	for end < len(e.text) {
-		r, size := utf8.DecodeRuneInString(e.text[end:])
+	for end < len(e.Text) {
+		r, size := utf8.DecodeRuneInString(e.Text[end:])
 		if r == '\n' || unicode.IsSpace(r) {
 			break
 		}
 		end += size
 	}
-	if end == e.cursor {
+	if end == e.Cursor {
 		return
 	}
-	for end < len(e.text) {
-		r, size := utf8.DecodeRuneInString(e.text[end:])
+	for end < len(e.Text) {
+		r, size := utf8.DecodeRuneInString(e.Text[end:])
 		if r == '\n' || !unicode.IsSpace(r) {
 			break
 		}
 		end += size
 	}
-	e.text = e.text[:e.cursor] + e.text[end:]
+	e.Text = e.Text[:e.Cursor] + e.Text[end:]
 }
 
 // deleteLineStart removes the draft between the line start and the cursor. At
 // a line start it joins the previous line, which is what repeated Ctrl-u does
 // in a readline-style editor.
-func (e *editor) deleteLineStart() {
+func (e *Editor) deleteLineStart() {
 	e.clamp()
 	start := 0
-	if i := strings.LastIndexByte(e.text[:e.cursor], '\n'); i >= 0 {
+	if i := strings.LastIndexByte(e.Text[:e.Cursor], '\n'); i >= 0 {
 		start = i + 1
-	} else if e.cursor == 0 {
+	} else if e.Cursor == 0 {
 		return
 	}
-	if start == e.cursor && start > 0 {
+	if start == e.Cursor && start > 0 {
 		start--
 	}
-	e.text = e.text[:start] + e.text[e.cursor:]
-	e.cursor = start
+	e.Text = e.Text[:start] + e.Text[e.Cursor:]
+	e.Cursor = start
 }
 
 // deleteLineEnd removes the draft between the cursor and the line end. At a
 // line end it removes the newline, joining the following line.
-func (e *editor) deleteLineEnd() {
+func (e *Editor) deleteLineEnd() {
 	e.clamp()
-	if e.cursor >= len(e.text) {
+	if e.Cursor >= len(e.Text) {
 		return
 	}
-	end := len(e.text)
-	if i := strings.IndexByte(e.text[e.cursor:], '\n'); i >= 0 {
-		end = e.cursor + i
+	end := len(e.Text)
+	if i := strings.IndexByte(e.Text[e.Cursor:], '\n'); i >= 0 {
+		end = e.Cursor + i
 	}
-	if end == e.cursor {
+	if end == e.Cursor {
 		end++
 	}
-	e.text = e.text[:e.cursor] + e.text[end:]
+	e.Text = e.Text[:e.Cursor] + e.Text[end:]
 }
 
-func (e *editor) moveHorizontal(delta int) {
+func (e *Editor) moveHorizontal(delta int) {
 	e.clamp()
 	if delta < 0 {
-		for ; delta < 0 && e.cursor > 0; delta++ {
-			_, size := utf8.DecodeLastRuneInString(e.text[:e.cursor])
-			e.cursor -= size
+		for ; delta < 0 && e.Cursor > 0; delta++ {
+			_, size := utf8.DecodeLastRuneInString(e.Text[:e.Cursor])
+			e.Cursor -= size
 		}
 		return
 	}
-	for ; delta > 0 && e.cursor < len(e.text); delta-- {
-		_, size := utf8.DecodeRuneInString(e.text[e.cursor:])
-		e.cursor += size
+	for ; delta > 0 && e.Cursor < len(e.Text); delta-- {
+		_, size := utf8.DecodeRuneInString(e.Text[e.Cursor:])
+		e.Cursor += size
 	}
 }
 
-func (e *editor) moveLineStart() {
+func (e *Editor) moveLineStart() {
 	e.clamp()
-	if i := strings.LastIndexByte(e.text[:e.cursor], '\n'); i >= 0 {
-		e.cursor = i + 1
+	if i := strings.LastIndexByte(e.Text[:e.Cursor], '\n'); i >= 0 {
+		e.Cursor = i + 1
 	} else {
-		e.cursor = 0
+		e.Cursor = 0
 	}
 }
 
-func (e *editor) moveLineEnd() {
+func (e *Editor) moveLineEnd() {
 	e.clamp()
-	if i := strings.IndexByte(e.text[e.cursor:], '\n'); i >= 0 {
-		e.cursor += i
+	if i := strings.IndexByte(e.Text[e.Cursor:], '\n'); i >= 0 {
+		e.Cursor += i
 	} else {
-		e.cursor = len(e.text)
+		e.Cursor = len(e.Text)
 	}
 }
 
 // moveVertical keeps the display column while moving between visual lines so
 // wrapped paragraphs and hard line breaks both behave like a textarea.
-func (e *editor) moveVertical(delta, width int) {
+func (e *Editor) moveVertical(delta, width int) {
 	e.clamp()
-	lines := wrapEditor(e.text, width)
-	current := editorCursorLine(lines, e.cursor)
-	column := editorCursorColumn(e.text, lines[current], e.cursor)
+	lines := wrapEditor(e.Text, width)
+	current := editorCursorLine(lines, e.Cursor)
+	column := editorCursorColumn(e.Text, lines[current], e.Cursor)
 	target := min(max(0, current+delta), len(lines)-1)
 	if target == current {
 		return
 	}
-	offset := editorOffsetAtColumn(e.text, lines[target], column)
-	e.cursor = editorOffsetWithinLine(e.text, lines, target, offset)
+	offset := editorOffsetAtColumn(e.Text, lines[target], column)
+	e.Cursor = editorOffsetWithinLine(e.Text, lines, target, offset)
 }
 
-func (e *editor) ensureVisible(width, height int) {
+func (e *Editor) ensureVisible(width, height int) {
 	e.clamp()
-	lines := wrapEditor(e.text, width)
+	lines := wrapEditor(e.Text, width)
 	height = max(1, height)
-	current := editorCursorLine(lines, e.cursor)
-	if current < e.scroll {
-		e.scroll = current
+	current := editorCursorLine(lines, e.Cursor)
+	if current < e.Scroll {
+		e.Scroll = current
 	}
-	if current >= e.scroll+height {
-		e.scroll = current - height + 1
+	if current >= e.Scroll+height {
+		e.Scroll = current - height + 1
 	}
-	e.scroll = min(max(0, e.scroll), max(0, len(lines)-height))
+	e.Scroll = min(max(0, e.Scroll), max(0, len(lines)-height))
 }
 
 // editorKeys are the editing and cursor keys. Enter and Esc stay with the
 // surrounding screen because they submit or cancel the draft.
-var editorKeys = func() map[string]func(e *editor, width, height int) {
-	keys := map[string]func(*editor, int, int){}
-	bind := func(action func(*editor, int, int), names ...string) {
+var editorKeys = func() map[string]func(e *Editor, width, height int) {
+	keys := map[string]func(*Editor, int, int){}
+	bind := func(action func(*Editor, int, int), names ...string) {
 		for _, name := range names {
 			keys[name] = action
 		}
 	}
-	plain := func(action func(*editor)) func(*editor, int, int) {
-		return func(e *editor, _, _ int) { action(e) }
+	plain := func(action func(*Editor)) func(*Editor, int, int) {
+		return func(e *Editor, _, _ int) { action(e) }
 	}
-	vertical := func(lines int) func(*editor, int, int) {
-		return func(e *editor, width, height int) { e.moveVertical(lines*max(1, height), width) }
+	vertical := func(lines int) func(*Editor, int, int) {
+		return func(e *Editor, width, height int) { e.moveVertical(lines*max(1, height), width) }
 	}
-	bind(func(e *editor, _, _ int) { e.insert("\n") }, "ctrl+j", "alt+enter", "shift+enter")
-	bind(plain((*editor).backspace), "backspace", "ctrl+h")
-	bind(plain((*editor).delete), "delete", "ctrl+d")
-	bind(plain((*editor).deleteWordBackward), "ctrl+w", "alt+backspace")
-	bind(plain((*editor).deleteWordForward), "alt+d", "alt+delete")
-	bind(plain((*editor).deleteLineStart), "ctrl+u")
-	bind(plain((*editor).deleteLineEnd), "ctrl+k")
-	bind(func(e *editor, _, _ int) { e.moveHorizontal(-1) }, "left", "ctrl+b")
-	bind(func(e *editor, _, _ int) { e.moveHorizontal(1) }, "right", "ctrl+f")
-	bind(plain((*editor).moveWordBackward), "ctrl+left", "alt+left", "alt+b")
-	bind(plain((*editor).moveWordForward), "ctrl+right", "alt+right", "alt+f")
-	bind(func(e *editor, width, _ int) { e.moveVertical(-1, width) }, "up", "ctrl+p")
-	bind(func(e *editor, width, _ int) { e.moveVertical(1, width) }, "down", "ctrl+n")
+	bind(func(e *Editor, _, _ int) { e.insert("\n") }, "ctrl+j", "alt+enter", "shift+enter")
+	bind(plain((*Editor).backspace), "backspace", "ctrl+h")
+	bind(plain((*Editor).delete), "delete", "ctrl+d")
+	bind(plain((*Editor).deleteWordBackward), "ctrl+w", "alt+backspace")
+	bind(plain((*Editor).deleteWordForward), "alt+d", "alt+delete")
+	bind(plain((*Editor).deleteLineStart), "ctrl+u")
+	bind(plain((*Editor).deleteLineEnd), "ctrl+k")
+	bind(func(e *Editor, _, _ int) { e.moveHorizontal(-1) }, "left", "ctrl+b")
+	bind(func(e *Editor, _, _ int) { e.moveHorizontal(1) }, "right", "ctrl+f")
+	bind(plain((*Editor).moveWordBackward), "ctrl+left", "alt+left", "alt+b")
+	bind(plain((*Editor).moveWordForward), "ctrl+right", "alt+right", "alt+f")
+	bind(func(e *Editor, width, _ int) { e.moveVertical(-1, width) }, "up", "ctrl+p")
+	bind(func(e *Editor, width, _ int) { e.moveVertical(1, width) }, "down", "ctrl+n")
 	bind(vertical(-1), "pgup")
 	bind(vertical(1), "pgdown")
-	bind(plain((*editor).moveLineStart), "home", "ctrl+a")
-	bind(plain((*editor).moveLineEnd), "end", "ctrl+e")
-	bind(func(e *editor, _, _ int) { e.cursor = 0 }, "ctrl+home")
-	bind(func(e *editor, _, _ int) { e.cursor = len(e.text) }, "ctrl+end")
+	bind(plain((*Editor).moveLineStart), "home", "ctrl+a")
+	bind(plain((*Editor).moveLineEnd), "end", "ctrl+e")
+	bind(func(e *Editor, _, _ int) { e.Cursor = 0 }, "ctrl+home")
+	bind(func(e *Editor, _, _ int) { e.Cursor = len(e.Text) }, "ctrl+end")
 	return keys
 }()
 
-// handleKey applies an editing key or inserts typed text.
-func (e *editor) handleKey(msg tea.KeyMsg, width, height int) {
+// HandleKey applies an editing key or inserts typed text.
+func (e *Editor) HandleKey(msg tea.KeyMsg, width, height int) {
 	if action, ok := editorKeys[msg.String()]; ok {
 		action(e, width, height)
 	} else if msg.Type == tea.KeyRunes {
@@ -325,17 +325,17 @@ func (e *editor) handleKey(msg tea.KeyMsg, width, height int) {
 	e.ensureVisible(width, height)
 }
 
-// viewLinesCursor returns at most height wrapped lines, scrolled so the cursor
+// View returns at most height wrapped lines, scrolled so the cursor
 // is visible, and optionally draws the cursor at its byte position within the
 // visible text. A draft that does not hold focus keeps its scroll position
 // without showing a caret.
-func (e editor) viewLinesCursor(width, height int, drawCursor bool) []string {
+func (e Editor) View(width, height int, drawCursor bool) []string {
 	width = max(1, width)
 	height = max(1, height)
 	e.clamp()
-	lines := wrapEditor(e.text, width)
-	current := editorCursorLine(lines, e.cursor)
-	start := min(max(0, e.scroll), max(0, len(lines)-height))
+	lines := wrapEditor(e.Text, width)
+	current := editorCursorLine(lines, e.Cursor)
+	start := min(max(0, e.Scroll), max(0, len(lines)-height))
 	if current < start {
 		start = current
 	}
@@ -348,12 +348,15 @@ func (e editor) viewLinesCursor(width, height int, drawCursor bool) []string {
 	for i := start; i < end; i++ {
 		line := lines[i].text
 		if i == current && drawCursor {
-			line = insertEditorCursor(line, editorCursorColumn(e.text, lines[i], e.cursor))
+			line = insertEditorCursor(line, editorCursorColumn(e.Text, lines[i], e.Cursor))
 		}
 		result = append(result, line)
 	}
 	return result
 }
+
+// LineCount is how many wrapped lines the draft fills at width.
+func (e Editor) LineCount(width int) int { return len(wrapEditor(e.Text, width)) }
 
 func wrapEditor(text string, width int) []editorLine {
 	width = max(1, width)

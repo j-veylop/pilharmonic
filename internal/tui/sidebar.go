@@ -10,8 +10,16 @@ import (
 
 // taskState gives a task one glyph, status word and colour. The sidebar shows
 // only the glyph; other surfaces pair it with the word so status never relies
-// on colour alone.
-func taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
+// on colour alone. A running parent whose child is still queued, running or
+// merging is waiting for that subagent, which only the task list knows.
+func (m model) taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
+	if task.ID != "" && task.Status == orchestrator.Running && task.Stage() == orchestrator.StageWorking {
+		for _, child := range m.tasks {
+			if child.ParentID == task.ID && (child.Status == orchestrator.Queued || child.Status == orchestrator.Running || child.MergeStatus == orchestrator.MergeWaiting) {
+				return "◷", "WAITING FOR SUBAGENTS", statusWaiting
+			}
+		}
+	}
 	if task.Status == orchestrator.Queued && task.ScheduleRequested {
 		return "◷", "WAITING", statusWaiting
 	}
@@ -48,19 +56,6 @@ func statusState(status orchestrator.Status) (glyph, label string, color lipglos
 func statusLabel(status orchestrator.Status) string {
 	_, label, color := statusState(status)
 	return lipgloss.NewStyle().Foreground(color).Bold(true).Render("● " + label)
-}
-
-// taskState adds the state only the task list knows: a running parent whose
-// child is still queued, running or merging is waiting for that subagent.
-func (m model) taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
-	if task.ID != "" && task.Status == orchestrator.Running && task.Stage() == orchestrator.StageWorking {
-		for _, child := range m.tasks {
-			if child.ParentID == task.ID && (child.Status == orchestrator.Queued || child.Status == orchestrator.Running || child.MergeStatus == orchestrator.MergeWaiting) {
-				return "◷", "WAITING FOR SUBAGENTS", statusWaiting
-			}
-		}
-	}
-	return taskState(task)
 }
 
 func (m model) taskLabel(task orchestrator.Task) string {
@@ -146,12 +141,12 @@ func (m model) taskTitleRow(task orchestrator.Task, width int, selected bool) st
 // toolStatusStyle gives tool activity a consistent visual language in the
 // output transcript and the activity panel. The glyph is the only status the
 // terminal prints, so each status needs a distinct shape as well as colour.
-// Running rows use a placeholder that the renderer replaces with the current
-// Bubble Tea spinner frame.
-func toolStatusStyle(status string) (lipgloss.Style, string) {
+// Running rows show the caller's running glyph: the current spinner frame, or
+// a placeholder the transcript renderer replaces with it.
+func toolStatusStyle(status, running string) (lipgloss.Style, string) {
 	switch status {
 	case orchestrator.ActivityRunning:
-		return lipgloss.NewStyle().Foreground(statusRunning), runningGlyphPlaceholder
+		return lipgloss.NewStyle().Foreground(statusRunning), running
 	case orchestrator.ActivityFinished:
 		return lipgloss.NewStyle().Foreground(statusCompleted), "✓"
 	case orchestrator.ActivityFailed:
@@ -170,13 +165,6 @@ func (m model) runningGlyph() string {
 		return defaultRunningGlyph
 	}
 	return m.spinner.View()
-}
-
-func (m model) toolStatusStyle(status string) (lipgloss.Style, string) {
-	if status == orchestrator.ActivityRunning {
-		return lipgloss.NewStyle().Foreground(statusRunning), m.runningGlyph()
-	}
-	return toolStatusStyle(status)
 }
 
 // fit limits the rendered surface to the terminal's cells, including ANSI styles.
@@ -244,8 +232,4 @@ func workspaceBadgeFor(task orchestrator.Task) workspaceBadge {
 
 func (b workspaceBadge) render() string {
 	return lipgloss.NewStyle().Foreground(b.color).Render(b.glyph) + mutedStyle.Render(" "+b.label)
-}
-
-func (b workspaceBadge) glyphOnly() string {
-	return lipgloss.NewStyle().Foreground(b.color).Render(b.glyph)
 }

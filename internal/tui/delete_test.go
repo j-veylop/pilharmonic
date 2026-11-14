@@ -32,46 +32,11 @@ func awaitCompleted(t *testing.T, s *orchestrator.Service, id string) orchestrat
 	return orchestrator.Task{}
 }
 
-func TestDeleteConfirmation(t *testing.T) {
-	s, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	task, err := s.CreateTask("test task", "prompt", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := model{service: s, tasks: s.ListTasks(), width: 80, height: 24}
-	update := func(key string) {
-		result, cmd := m.Update(runeKey(key))
-		m = result.(model)
-		if cmd != nil {
-			result, _ := m.Update(cmd())
-			m = result.(model)
-		}
-	}
-	update("d")
-	if !strings.Contains(m.View(), "DELETE TASK + HISTORY") {
-		t.Fatal("missing confirmation")
-	}
-	update("n")
-	if _, ok := s.GetTask(task.ID); !ok {
-		t.Fatal("cancel deleted task")
-	}
-	update("d")
-	update("y")
-	if _, ok := s.GetTask(task.ID); ok {
-		t.Fatal("confirmed task still exists")
-	}
-}
-
-func TestDeleteCompletedConfirmationAndAction(t *testing.T) {
+// Single and bulk deletes ask first, cancel cleanly, and a bulk delete covers
+// only the tasks that were complete when its confirmation opened.
+func TestDeleteConfirmations(t *testing.T) {
 	dir := t.TempDir()
-	s, err := orchestrator.Open(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Shutdown() }()
+	s := newTestService(t)
 	s.RegisterRunner("general", finishedRunner{})
 	done, err := s.CreateTask("done", "completed work", dir)
 	if err != nil {
@@ -85,8 +50,27 @@ func TestDeleteCompletedConfirmationAndAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	single, err := s.CreateTask("single", "prompt", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
+	selectTask(t, &m, single.ID)
+	m = key(m, runeKey("d"))
+	if !strings.Contains(m.View(), "DELETE TASK + HISTORY") {
+		t.Fatal("missing confirmation")
+	}
+	m = key(m, runeKey("n"))
+	if _, ok := s.GetTask(single.ID); !ok {
+		t.Fatal("cancel deleted task")
+	}
+	m = key(m, runeKey("d"))
+	m = runCleanup(t, m)
+	if _, ok := s.GetTask(single.ID); ok {
+		t.Fatal("confirmed task still exists")
+	}
+
 	m = key(m, runeKey("D"))
 	if !strings.Contains(m.View(), "DELETE 1 COMPLETED TASK(S)") {
 		t.Fatalf("missing bulk-delete confirmation: %s", m.View())
@@ -125,7 +109,7 @@ func TestFollowUpComposerRecordsContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35}
-	m = key(m, runeKey("F"))
+	m = key(m, runeKey("f"))
 	if !strings.Contains(m.View(), "FOLLOW UP") {
 		t.Fatalf("follow-up composer not shown: %s", m.View())
 	}

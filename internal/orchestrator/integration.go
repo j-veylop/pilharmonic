@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"pilharmonic/internal/worktree"
 )
 
 // Merge outcomes are recorded separately from the execution attempt. A merge
@@ -15,8 +17,6 @@ const (
 	MergeFailed   = "failed"
 	MergeWaiting  = "waiting_for_subagents"
 )
-
-const mergeTimeout = 30 * time.Second
 
 // blockerMergeError prefixes a merge failure caused by an unsuccessful
 // descendant subagent rather than by Git. It marks a failure an operator can
@@ -34,13 +34,7 @@ type mergeOutcome struct {
 	Warning string
 }
 
-// preparationOutcome records the commit prepared for review. UpToDate means the
-// worktree has nothing the source does not already contain.
-type preparationOutcome struct {
-	WorktreeCommit string
-	SourceCommit   string
-	UpToDate       bool
-}
+type preparationOutcome = worktree.Preparation
 
 // integrationBlockerLocked reports worktree state that prevents preparing or
 // merging an isolated task. Caller holds mu. An active descendant still uses the
@@ -67,9 +61,9 @@ func (s *Service) integrationBlockerLocked(owner Task) (mergeOutcome, bool) {
 func (s *Service) prepareIsolatedCommit(t Task) (preparationOutcome, error) {
 	s.mergeMu.Lock()
 	defer s.mergeMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), worktree.MergeTimeout)
 	defer cancel()
-	return prepareWorkspaceCommit(ctx, s.path, t)
+	return worktree.Commit(ctx, s.worktreeSpec(t))
 }
 
 // mergeApprovedCommit integrates exactly the reviewed commit. It deliberately
@@ -79,12 +73,19 @@ func (s *Service) prepareIsolatedCommit(t Task) (preparationOutcome, error) {
 func (s *Service) mergeApprovedCommit(t Task) mergeOutcome {
 	s.mergeMu.Lock()
 	defer s.mergeMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
+	reviewed := strings.TrimSpace(t.ReviewCommit)
+	if reviewed == "" || reviewed != t.ReviewCommit {
+		return mergeOutcome{Status: MergeFailed, Error: "reviewed commit does not match the task review"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), worktree.MergeTimeout)
 	defer cancel()
-	outcome, err := mergeReviewedWorkspace(ctx, s.path, t, t.ReviewCommit)
+	result, err := worktree.Merge(ctx, s.worktreeSpec(t), reviewed)
 	if err != nil {
-		outcome.Status = MergeFailed
-		outcome.Error = err.Error()
+		return mergeOutcome{Status: MergeFailed, Error: err.Error(), WorktreeCommit: result.WorktreeCommit}
+	}
+	outcome := mergeOutcome{Status: MergeMerged, WorktreeCommit: result.WorktreeCommit, MergeCommit: result.MergeCommit, Warning: result.Warning}
+	if result.UpToDate {
+		outcome.Status = MergeUpToDate
 	}
 	return outcome
 }
@@ -285,4 +286,14 @@ func (t *Task) recordPreparation(preparation preparationOutcome) {
 		return
 	}
 	t.Events = append(t.Events, Event{t.UpdatedAt, "review_pending", "Prepared worktree commit " + preparation.WorktreeCommit + " awaits review"})
+}
+
+// MergeConflict reports whether a failed approved merge was caused by a
+// conflict. The merge is always aborted, so this is an operator-facing
+// classification of the retained error, not a separate merge outcome.
+func (t Task) MergeConflict() bool {
+	if t.MergeStatus != MergeFailed {
+		return false
+	}
+	return strings.Contains(strings.ToLower(t.MergeError), "conflict")
 }

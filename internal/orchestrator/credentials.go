@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+
+	"pilharmonic/internal/instance"
+	"pilharmonic/internal/providers"
 )
 
 // ProviderCredential reports whether a provider has a stored API key. The key
@@ -58,7 +60,7 @@ func saveCredentials(path string, providers map[string]string) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, ".credentials-*", b)
+	return instance.WriteFileAtomic(path, ".credentials-*", b)
 }
 
 // SetProviderCredential stores an API key for a provider prefix, replacing any
@@ -66,11 +68,11 @@ func saveCredentials(path string, providers map[string]string) error {
 func (s *Service) SetProviderCredential(provider, key string) error {
 	provider = strings.TrimSpace(provider)
 	key = strings.TrimSpace(key)
-	if _, known := fantasyEndpoints[provider]; !known {
-		return fmt.Errorf("unknown provider %q (supported: %s)", provider, supportedFantasyProviders())
+	if !providers.Known(provider) {
+		return fmt.Errorf("unknown provider %q (supported: %s)", provider, strings.Join(providers.Names(), ", "))
 	}
 	if key == "" {
-		if provider == bedrockProvider {
+		if provider == providers.Bedrock {
 			return errors.New("bearer token is required (Bedrock without a stored key uses the AWS credential chain)")
 		}
 		return errors.New("API key is required")
@@ -95,14 +97,10 @@ func (s *Service) RemoveProviderCredential(provider string) error {
 // variable. Keys are never returned. The AWS probe runs before the lock is
 // taken so no file read happens while the service mutex is held.
 func (s *Service) ProviderCredentials() []ProviderCredential {
-	bedrockConfigured := bedrockAWSConfigured()
+	bedrockConfigured := providers.BedrockAWSConfigured()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	names := make([]string, 0, len(fantasyEndpoints))
-	for name := range fantasyEndpoints {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := providers.Names()
 	result := make([]ProviderCredential, 0, len(names))
 	for _, name := range names {
 		result = append(result, ProviderCredential{Provider: name, Configured: s.providerConfiguredLocked(name, bedrockConfigured)})
@@ -114,10 +112,10 @@ func (s *Service) ProviderCredentials() []ProviderCredential {
 // now, either through a stored key or an environment variable. The terminal
 // forces the login menu while this is false.
 func (s *Service) AnyProviderConfigured() bool {
-	bedrockConfigured := bedrockAWSConfigured()
+	bedrockConfigured := providers.BedrockAWSConfigured()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for name := range fantasyEndpoints {
+	for _, name := range providers.Names() {
 		if s.providerConfiguredLocked(name, bedrockConfigured) {
 			return true
 		}
@@ -132,8 +130,8 @@ func (s *Service) providerConfiguredLocked(name string, bedrockConfigured bool) 
 	if s.creds[name] != "" {
 		return true
 	}
-	if strings.TrimSpace(os.Getenv(fantasyEndpoints[name].envVar)) != "" {
+	if providers.EnvCredential(name) != "" {
 		return true
 	}
-	return name == bedrockProvider && bedrockConfigured
+	return name == providers.Bedrock && bedrockConfigured
 }

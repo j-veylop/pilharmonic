@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"pilharmonic/internal/worktree"
 )
 
 // DefaultConcurrency is the default number of simultaneous agent runs.
@@ -75,7 +77,9 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 		s.grantControlLocked(t, profile)
 		t.SpecialistTools = ceiling
 		attempt := Attempt{ID: id, Agent: t.Agent, Tools: profile.Tools, Profile: profile.Name, Status: Running, StartedAt: t.UpdatedAt}
-		if selector, ok := runner.(interface{ RequestedModel(*Profile) string }); ok {
+		if _, ok := runner.(FantasyRunner); ok {
+			attempt.RequestedModel = s.fantasyModelLocked(t.Agent, &profile)
+		} else if selector, ok := runner.(interface{ RequestedModel(*Profile) string }); ok {
 			attempt.RequestedModel = selector.RequestedModel(&profile)
 		}
 		t.Attempts = append(t.Attempts, attempt)
@@ -96,6 +100,7 @@ func (s *Service) startLocked(ctx context.Context, t *Task) error {
 	}
 	snapshot := clone(*t)
 	snapshot.ProfileSpec = cloneProfileRef(&profile)
+	snapshot.model = t.Attempts[len(t.Attempts)-1].RequestedModel
 	s.wg.Add(1)
 	go s.run(runCtx, snapshot, runner)
 	return nil
@@ -108,7 +113,7 @@ func (t *Task) reconcileAutoIsolation() {
 	if !t.IsolationAuto || t.ExecutionWorkspace != "" {
 		return
 	}
-	isolated := taskMakesChanges(t.Prompt)
+	isolated := worktree.RequestsChanges(t.Prompt)
 	if isolated == t.Isolated {
 		return
 	}
@@ -169,11 +174,11 @@ func (s *Service) scheduleLocked() error {
 		case err == nil:
 			continue
 		case ctx.Err() != nil:
-			err = s.cancelQueuedLocked(task, ctx.Err())
+			err = s.settleQueuedLocked(task, Canceled, "Scheduled request canceled", ctx.Err())
 		case isProfileError(err):
 			// An ineligible profile fails its own task instead of wedging the
 			// queue behind a start that can never succeed.
-			err = s.failIneligibleLocked(task, err)
+			err = s.settleQueuedLocked(task, Failed, "Execution parameters rejected", err)
 		}
 		if err != nil {
 			s.persistErr = err
@@ -211,7 +216,7 @@ func (s *Service) failUnavailableAgentsLocked() error {
 		if _, ok := s.runners[t.Agent]; ok {
 			continue
 		}
-		if err := s.failIneligibleLocked(t, fmt.Errorf("agent %q unavailable", t.Agent)); err != nil {
+		if err := s.settleQueuedLocked(t, Failed, "Execution parameters rejected", fmt.Errorf("agent %q unavailable", t.Agent)); err != nil {
 			return err
 		}
 	}
@@ -229,15 +234,18 @@ func isProfileError(err error) bool {
 	return errors.As(err, &target)
 }
 
-// settleQueuedLocked durably ends a queued request that will not start.
-func (s *Service) settleQueuedLocked(t *Task, status Status, reason, message string) error {
+// settleQueuedLocked durably ends a queued request that will not start. A
+// cause becomes the task error and completes the event label.
+func (s *Service) settleQueuedLocked(t *Task, status Status, label string, cause error) error {
 	if err := s.mutateTaskLocked(t, func(t *Task) error {
 		t.Status = status
 		t.ScheduleRequested = false
 		t.ScheduledAt = time.Time{}
 		t.UpdatedAt = time.Now().UTC()
-		if reason != "" {
-			t.Error = reason
+		message := label
+		if cause != nil {
+			t.Error = cause.Error()
+			message += ": " + t.Error
 		}
 		t.Events = append(t.Events, Event{t.UpdatedAt, string(status), message})
 		return nil
@@ -246,17 +254,6 @@ func (s *Service) settleQueuedLocked(t *Task, status Status, reason, message str
 	}
 	s.removePendingLocked(t.ID)
 	return nil
-}
-
-func (s *Service) failIneligibleLocked(t *Task, cause error) error {
-	return s.settleQueuedLocked(t, Failed, cause.Error(), "Execution parameters rejected: "+cause.Error())
-}
-
-func (s *Service) cancelQueuedLocked(t *Task, cause error) error {
-	if cause == nil {
-		return s.settleQueuedLocked(t, Canceled, "", "Canceled before start")
-	}
-	return s.settleQueuedLocked(t, Canceled, cause.Error(), "Scheduled request canceled: "+cause.Error())
 }
 
 func (s *Service) watchPending(id string, request *pendingRequest) {
@@ -271,7 +268,7 @@ func (s *Service) watchPending(id string, request *pendingRequest) {
 		return
 	}
 	if t := s.taskLocked(id); t != nil && t.Status == Queued && t.ScheduleRequested {
-		if err := s.cancelQueuedLocked(t, request.ctx.Err()); err != nil {
+		if err := s.settleQueuedLocked(t, Canceled, "Scheduled request canceled", request.ctx.Err()); err != nil {
 			s.persistErr = err
 		} else if schedErr := s.scheduleLocked(); schedErr != nil {
 			s.persistErr = schedErr

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
+	"pilharmonic/internal/tui/editor"
 )
 
 // errTestCredential stands in for an orchestrator rejection during login.
@@ -39,8 +39,6 @@ type fakeLoginService struct {
 	models        map[string][]string
 	setModelCalls []string // recorded as "class=selector"
 	setModelErr   error
-	agentClasses  []orchestrator.AgentClass
-	setClassCalls []string // recorded as "agent=class"
 }
 
 func (f *fakeLoginService) ListTasks() []orchestrator.Task       { return f.tasks }
@@ -113,23 +111,6 @@ func (f *fakeLoginService) FetchModels(_ context.Context, provider string) ([]st
 	return f.models[provider], nil
 }
 
-func (f *fakeLoginService) SetAgentClass(agent, class string) error {
-	f.setClassCalls = append(f.setClassCalls, agent+"="+class)
-	for i := range f.agentClasses {
-		if f.agentClasses[i].Agent == agent {
-			f.agentClasses[i].Class = class
-			f.agentClasses[i].Overridden = class != ""
-			return nil
-		}
-	}
-	f.agentClasses = append(f.agentClasses, orchestrator.AgentClass{Agent: agent, Class: class, Overridden: class != ""})
-	return nil
-}
-
-func (f *fakeLoginService) AgentClasses() []orchestrator.AgentClass {
-	return f.agentClasses
-}
-
 // typeSlash types a command in the router form and submits it.
 func typeSlash(m model, command string) model {
 	m = key(m, runeKey(command))
@@ -198,8 +179,8 @@ func TestSlashCommandsSetNotices(t *testing.T) {
 					t.Fatalf("remove calls = %v, want %v", fake.removeCalls, tc.wantRemoved)
 				}
 			}
-			if m.router.text != "" || m.router.cursor != 0 {
-				t.Fatalf("command left the draft behind: draft=%q cursor=%d", m.router.text, m.router.cursor)
+			if m.router.Text != "" || m.router.Cursor != 0 {
+				t.Fatalf("command left the draft behind: draft=%q cursor=%d", m.router.Text, m.router.Cursor)
 			}
 			if !m.router.open {
 				t.Fatal("slash command closed the router")
@@ -229,7 +210,7 @@ func TestSlashHelpOpensTheOverlay(t *testing.T) {
 	plain := ansi.Strip(strings.Join(helpLines(helpTopics[m.help.page], 70), "\n"))
 	// The commands sit in the key column and their argument forms are documented
 	// once, in the topic intro, so the table stays aligned.
-	for _, want := range []string{"/login", "/logout", "/providers", "/model", "/agents", "/help", "/login <provider>", "/model [big|small]"} {
+	for _, want := range []string{"/login", "/logout", "/providers", "/model", "/help", "/login <provider>", "/model [big|small]"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("help overlay missing %q: %q", want, plain)
 		}
@@ -252,8 +233,8 @@ func TestLoginModeMasksAndSubmitsKey(t *testing.T) {
 	if m.login.key != secret {
 		t.Fatalf("typed key = %q, want %q", m.login.key, secret)
 	}
-	if m.router.text != "" {
-		t.Fatalf("typed key leaked into the draft: %q", m.router.text)
+	if m.router.Text != "" {
+		t.Fatalf("typed key leaked into the draft: %q", m.router.Text)
 	}
 	if masked := ansi.Strip(m.View()); strings.Contains(masked, secret) || !strings.Contains(masked, strings.Repeat("*", len(secret))) {
 		t.Fatalf("prompt did not mask the key: %s", masked)
@@ -279,21 +260,6 @@ func TestLoginModeMasksAndSubmitsKey(t *testing.T) {
 	}
 	if strings.Contains(m.notice.text, secret) {
 		t.Fatalf("notice leaked the key: %q", m.notice.text)
-	}
-}
-
-func TestLoginPromptFitsTerminal(t *testing.T) {
-	for _, size := range [][2]int{{120, 35}, {80, 24}, {40, 12}, {30, 10}} {
-		m := model{router: routerState{open: true}, width: size[0],
-			height: size[1], login: loginState{provider: "openai", key: strings.Repeat("k", 40)},
-		}
-		view := m.View()
-		if width, height := lipgloss.Width(view), lipgloss.Height(view); width > size[0] || height > size[1] {
-			t.Fatalf("%v: rendered %dx%d", size, width, height)
-		}
-		if plain := ansi.Strip(view); !strings.Contains(plain, "Enter API key") {
-			t.Fatalf("%v: login prompt missing: %s", size, plain)
-		}
 	}
 }
 
@@ -389,33 +355,94 @@ func TestProviderMenuEscapeClosesWithoutQuitting(t *testing.T) {
 	}
 }
 
-func TestLoginMenuViewListsProvidersAndHidesKeys(t *testing.T) {
+// Login and model menus fit every size, list their choices and never render a
+// typed API key.
+func TestLoginAndModelMenuViews(t *testing.T) {
 	const secret = "sk-should-not-render"
-	fake := &fakeLoginService{creds: []orchestrator.ProviderCredential{
+	small := [][2]int{{120, 35}, {80, 24}, {40, 12}}
+	loginFake := &fakeLoginService{creds: []orchestrator.ProviderCredential{
 		{Provider: "deepseek"},
 		{Provider: "openai", Configured: true},
 	}}
-	for _, size := range [][2]int{{120, 35}, {80, 24}, {40, 12}} {
-		m := model{service: fake, width: size[0], height: size[1], login: loginState{menu: true, index: 1, key: secret}}
-		view := m.View()
-		plain := ansi.Strip(view)
-		for _, want := range []string{"LOGIN", "Select a provider", "openai", "deepseek", "configured", "no key", "j/k select"} {
-			if !strings.Contains(plain, want) {
-				t.Fatalf("%v: menu missing %q: %s", size, want, plain)
+	models := modelMenuService()
+	cases := []struct {
+		name     string
+		m        model
+		sizes    [][2]int
+		want     []string
+		wideWant []string // only where the footer hint fits
+		unwanted []string
+	}{
+		{
+			name:  "login prompt",
+			m:     model{router: routerState{open: true}, login: loginState{provider: "openai", key: strings.Repeat("k", 40)}},
+			sizes: append(small, [2]int{30, 10}),
+			want:  []string{"Enter API key"},
+		},
+		{
+			name:     "login menu",
+			m:        model{service: loginFake, login: loginState{menu: true, index: 1, key: secret}},
+			sizes:    small,
+			want:     []string{"LOGIN", "Select a provider", "openai", "deepseek", "configured", "no key", "j/k select"},
+			unwanted: []string{secret},
+		},
+		{
+			name:     "model class step",
+			m:        model{service: models, login: loginState{key: secret}, models: modelMenuState{menu: true}},
+			sizes:    small[:1],
+			want:     []string{"MODEL", "Select a model class", "big", "small", "default", "j/k select"},
+			unwanted: []string{secret},
+		},
+		{
+			name:     "model provider step",
+			m:        model{service: models, login: loginState{key: secret}, models: modelMenuState{menu: true, step: modelStepProvider, class: "big"}},
+			sizes:    small[:1],
+			want:     []string{"Select a provider for big", "openai"},
+			unwanted: []string{secret, "deepseek"},
+		},
+		{
+			name:     "model step",
+			m:        model{service: models, login: loginState{key: secret}, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}},
+			sizes:    small,
+			want:     []string{"MODEL", "Select a model (openai)", "gpt-5", "gpt-5-mini", customModelChoice, "j/k select"},
+			wideWant: []string{"esc back"},
+			unwanted: []string{secret},
+		},
+		{
+			name:  "rate-tagged model rows",
+			m:     model{service: deepSeekMenuService(), models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "deepseek"}},
+			sizes: small,
+			want:  []string{"deepseek-chat"},
+		},
+	}
+	for _, tc := range cases {
+		for _, size := range tc.sizes {
+			m := tc.m
+			m.width, m.height = size[0], size[1]
+			view := m.View()
+			assertFits(t, view, size[0], size[1])
+			plain := ansi.Strip(view)
+			want := tc.want
+			if size[0] >= 80 {
+				want = append(append([]string{}, want...), tc.wideWant...)
 			}
-		}
-		if strings.Contains(plain, secret) {
-			t.Fatalf("%v: menu rendered the API key: %s", size, plain)
-		}
-		if width, height := lipgloss.Width(view), lipgloss.Height(view); width > size[0] || height > size[1] {
-			t.Fatalf("%v: rendered %dx%d", size, width, height)
+			for _, w := range want {
+				if !strings.Contains(plain, w) {
+					t.Fatalf("%s %v: missing %q: %s", tc.name, size, w, plain)
+				}
+			}
+			for _, u := range tc.unwanted {
+				if strings.Contains(plain, u) {
+					t.Fatalf("%s %v: rendered %q: %s", tc.name, size, u, plain)
+				}
+			}
 		}
 	}
 }
 
 func TestRouterSubmitForcesLoginWithoutProvider(t *testing.T) {
 	fake := &fakeLoginService{}
-	m := model{service: fake, router: routerState{open: true, editor: editor{text: "write tests", cursor: len("write tests")}}, width: 120, height: 35}
+	m := model{service: fake, router: routerState{open: true, Editor: editor.Editor{Text: "write tests", Cursor: len("write tests")}}, width: 120, height: 35}
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if !m.login.menu || m.login.index != 0 {
 		t.Fatalf("submit without a provider did not open the menu: menu=%v index=%d", m.login.menu, m.login.index)
@@ -423,15 +450,15 @@ func TestRouterSubmitForcesLoginWithoutProvider(t *testing.T) {
 	if !strings.Contains(m.notice.text, "No provider configured") {
 		t.Fatalf("forced login notice missing: %q", m.notice.text)
 	}
-	if m.router.text != "write tests" {
-		t.Fatalf("blocked submit discarded the draft: %q", m.router.text)
+	if m.router.Text != "write tests" {
+		t.Fatalf("blocked submit discarded the draft: %q", m.router.Text)
 	}
 	if len(fake.submitCalls) != 0 {
 		t.Fatalf("blocked submit reached the service: %+v", fake.submitCalls)
 	}
 
 	configured := &fakeLoginService{anyConfigured: true}
-	m = model{service: configured, router: routerState{open: true, editor: editor{text: "write tests", cursor: len("write tests")}}, width: 120, height: 35}
+	m = model{service: configured, router: routerState{open: true, Editor: editor.Editor{Text: "write tests", Cursor: len("write tests")}}, width: 120, height: 35}
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.login.menu {
 		t.Fatal("submit re-opened the menu with a provider configured")
@@ -547,58 +574,6 @@ func TestModelMenuEscapeStepsBackAndCloses(t *testing.T) {
 	}
 }
 
-func TestModelMenuViewListsChoicesAndHidesKeys(t *testing.T) {
-	const secret = "sk-should-not-render"
-	fake := modelMenuService()
-
-	agents := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true}, login: loginState{key: secret}}
-	plain := ansi.Strip(agents.View())
-	for _, want := range []string{"MODEL", "Select a model class", "big", "small", "default", "j/k select"} {
-		if !strings.Contains(plain, want) {
-			t.Fatalf("class step missing %q: %s", want, plain)
-		}
-	}
-	if strings.Contains(plain, secret) {
-		t.Fatalf("class step rendered an API key: %s", plain)
-	}
-
-	providers := agents
-	providers.models.step = modelStepProvider
-	providers.models.class = "big"
-	plain = ansi.Strip(providers.View())
-	for _, want := range []string{"Select a provider for big", "openai"} {
-		if !strings.Contains(plain, want) {
-			t.Fatalf("provider step missing %q: %s", want, plain)
-		}
-	}
-	if strings.Contains(plain, "deepseek") {
-		t.Fatalf("provider step offered an unconfigured provider: %s", plain)
-	}
-
-	for _, size := range [][2]int{{120, 35}, {80, 24}, {40, 12}} {
-		m := model{service: fake, width: size[0], height: size[1], login: loginState{key: secret}, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}
-		view := m.View()
-		plain := ansi.Strip(view)
-		wants := []string{"MODEL", "Select a model (openai)", "gpt-5", "gpt-5-mini", customModelChoice, "j/k select"}
-		// The footer hint is clipped on a narrow modal, so only require it
-		// where it fits.
-		if size[0] >= 80 {
-			wants = append(wants, "esc back")
-		}
-		for _, want := range wants {
-			if !strings.Contains(plain, want) {
-				t.Fatalf("%v: model step missing %q: %s", size, want, plain)
-			}
-		}
-		if strings.Contains(plain, secret) {
-			t.Fatalf("%v: model step rendered an API key: %s", size, plain)
-		}
-		if width, height := lipgloss.Width(view), lipgloss.Height(view); width > size[0] || height > size[1] {
-			t.Fatalf("%v: rendered %dx%d", size, width, height)
-		}
-	}
-}
-
 func TestModelMenuCustomEntryPinsComposedSelector(t *testing.T) {
 	fake := modelMenuService()
 	m := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}
@@ -654,49 +629,61 @@ func deepSeekMenuService() *fakeLoginService {
 	}
 }
 
-// modelRateLabel names a window only for a model the price table says is
-// charged differently at different hours, and reads the window from the
-// orchestrator rather than deciding it here.
-func TestModelRateLabelOnlyNamesTimeOfDayModels(t *testing.T) {
+// Only models the price table charges by time of day name a window: in the
+// label itself, the model rows, the pinned class and the confirmation notice.
+func TestModelRateWindows(t *testing.T) {
 	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
-	if got := modelRateLabel("deepseek/deepseek-chat", peak); got != orchestrator.RatePeak {
-		t.Fatalf("peak label = %q, want %q", got, orchestrator.RatePeak)
-	}
-	if got := modelRateLabel("deepseek/deepseek-reasoner", offPeak); got != orchestrator.RateOffPeak {
-		t.Fatalf("off-peak label = %q, want %q", got, orchestrator.RateOffPeak)
-	}
-	for _, selector := range []string{"openai/gpt-5", "deepseek/deepseek-unlisted", "custom/model"} {
-		if got := modelRateLabel(selector, offPeak); got != "" {
-			t.Errorf("%s named the window %q without a time-of-day price", selector, got)
+	for _, tc := range []struct {
+		selector string
+		at       time.Time
+		want     string
+	}{
+		{"deepseek/deepseek-chat", peak, orchestrator.RatePeak},
+		{"deepseek/deepseek-reasoner", offPeak, orchestrator.RateOffPeak},
+		{"openai/gpt-5", offPeak, ""},
+		{"deepseek/deepseek-unlisted", offPeak, ""},
+		{"custom/model", offPeak, ""},
+	} {
+		if got := modelRateLabel(tc.selector, tc.at); got != tc.want {
+			t.Errorf("%s at %s: label %q, want %q", tc.selector, tc.at.Format("15:04"), got, tc.want)
 		}
 	}
-}
 
-// Pinning a time-of-day model confirms the rate in force, because that is what
-// the next attempt will be charged.
-func TestModelSelectionNoticeNamesDeepSeekWindow(t *testing.T) {
-	fake := deepSeekMenuService()
-	m := model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "deepseek"}}
-	now := time.Now()
-	label := modelRateLabel("deepseek/deepseek-chat", now)
+	// The menu reads the clock itself, so render everything inside one window
+	// and skip if a boundary passed meanwhile.
+	label := modelRateLabel("deepseek/deepseek-chat", time.Now())
+	deepseek := deepSeekMenuService()
+	deepseek.overrides = orchestrator.ModelSelection{Big: "deepseek/deepseek-chat"}
+	modelStep := modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "deepseek"}
+	rows := ansi.Strip(model{service: deepseek, width: 120, height: 35, models: modelStep}.View())
+	class := ansi.Strip(model{service: deepseek, width: 120, height: 35, models: modelMenuState{menu: true}}.View())
+	pinnedFake := deepSeekMenuService()
+	pinned := key(model{service: pinnedFake, width: 120, height: 35, models: modelStep}, tea.KeyMsg{Type: tea.KeyEnter})
+	modelStep.provider = "openai"
+	openaiRows := ansi.Strip(model{service: modelMenuService(), width: 120, height: 35, models: modelStep}.View())
+	openai := key(model{service: modelMenuService(), width: 120, height: 35, models: modelStep}, tea.KeyMsg{Type: tea.KeyEnter})
 	if after := modelRateLabel("deepseek/deepseek-chat", time.Now()); after != label {
-		t.Skipf("pricing window closed while selecting: %s then %s", label, after)
-	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(fake.setModelCalls) != 1 || fake.setModelCalls[0] != "big=deepseek/deepseek-chat" {
-		t.Fatalf("model step pinned %v, want big=deepseek/deepseek-chat", fake.setModelCalls)
-	}
-	if want := "Model for big: deepseek/deepseek-chat · " + label + " now"; !strings.Contains(m.notice.text, want) {
-		t.Fatalf("confirmation notice missing %q: %q", want, m.notice.text)
+		t.Skipf("pricing window changed during the test: %s then %s", label, after)
 	}
 
-	// A model with no window, or one the price table does not know, keeps the
-	// plain confirmation.
-	plain := model{service: modelMenuService(), width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}
-	plain = key(plain, tea.KeyMsg{Type: tea.KeyEnter})
-	if plain.notice.text != "Model for big: openai/gpt-5" {
-		t.Fatalf("all-day confirmation = %q, want no window", plain.notice.text)
+	if !strings.Contains(rows, "deepseek-chat") || strings.Count(rows, label) != 2 {
+		t.Fatalf("model rows lost the %q window: %s", label, rows)
+	}
+	if !strings.Contains(class, "deepseek/deepseek-chat · "+label+" now") || strings.Count(class, label) != 1 {
+		t.Fatalf("class step did not label only the pinned class: %s", class)
+	}
+	if len(pinnedFake.setModelCalls) != 1 || pinnedFake.setModelCalls[0] != "big=deepseek/deepseek-chat" {
+		t.Fatalf("model step pinned %v, want big=deepseek/deepseek-chat", pinnedFake.setModelCalls)
+	}
+	if want := "Model for big: deepseek/deepseek-chat · " + label + " now"; !strings.Contains(pinned.notice.text, want) {
+		t.Fatalf("confirmation notice missing %q: %q", want, pinned.notice.text)
+	}
+	if strings.Contains(openaiRows, orchestrator.RatePeak) || strings.Contains(openaiRows, orchestrator.RateOffPeak) {
+		t.Fatalf("all-day provider named a window: %s", openaiRows)
+	}
+	if openai.notice.text != "Model for big: openai/gpt-5" {
+		t.Fatalf("all-day confirmation = %q, want no window", openai.notice.text)
 	}
 }
 
@@ -750,28 +737,5 @@ func TestLoginKeyEntryOutcomes(t *testing.T) {
 	m := key(model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}, tea.KeyMsg{Type: tea.KeyEnter})
 	if !strings.Contains(m.notice.text, "not a known agent") || m.models.menu {
 		t.Fatalf("model error: notice=%q menu=%v", m.notice.text, m.models.menu)
-	}
-}
-
-// DeepSeek rows name the pricing window in force; all-day providers name none.
-func TestModelMenuLabelsRateWindows(t *testing.T) {
-	label := modelRateLabel("deepseek/deepseek-chat", time.Now())
-	fake := deepSeekMenuService()
-	fake.overrides = orchestrator.ModelSelection{Big: "deepseek/deepseek-chat"}
-	for _, size := range [][2]int{{120, 35}, {80, 24}, {40, 12}} {
-		m := model{service: fake, width: size[0], height: size[1], models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "deepseek"}}
-		view := m.View()
-		assertFits(t, view, size[0], size[1])
-		if plain := ansi.Strip(view); !strings.Contains(plain, "deepseek-chat") || size[0] == 120 && strings.Count(plain, label) != 2 {
-			t.Fatalf("%v: model rows lost the %q window: %s", size, label, plain)
-		}
-	}
-	class := ansi.Strip(model{service: fake, width: 120, height: 35, models: modelMenuState{menu: true}}.View())
-	if !strings.Contains(class, "deepseek/deepseek-chat · "+label+" now") || strings.Count(class, label) != 1 {
-		t.Fatalf("class step did not label only the pinned class: %s", class)
-	}
-	openai := ansi.Strip(model{service: modelMenuService(), width: 120, height: 35, models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "openai"}}.View())
-	if strings.Contains(openai, orchestrator.RatePeak) || strings.Contains(openai, orchestrator.RateOffPeak) {
-		t.Fatalf("all-day provider named a window: %s", openai)
 	}
 }

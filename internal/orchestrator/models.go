@@ -1,18 +1,25 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+	"sync"
+	"time"
+
+	"charm.land/fantasy"
+
+	"pilharmonic/internal/instance"
+	"pilharmonic/internal/providers"
 )
 
-// Model class labels. An agent runs on either the "big" (planning, heavy
-// changes) model or the "small" (fast, focused) model, both chosen by the
-// operator.
+// Model class labels: the operator's "big" (planning, heavy changes) and
+// "small" (fast, focused) models. A profile or specialist model may name a
+// class instead of a selector.
 const (
 	ModelClassBig   = "big"
 	ModelClassSmall = "small"
@@ -65,16 +72,8 @@ type ModelSelection struct {
 	Small string
 }
 
-// AgentClass reports the class an agent runs on and whether the operator chose
-// it explicitly (overriding the default).
-type AgentClass struct {
-	Agent      string
-	Class      string
-	Overridden bool
-}
-
-// modelConfig is the on-disk shape of models.json: the big/small model
-// selectors plus per-agent class overrides.
+// modelConfig is the on-disk shape of models.json. Agents holds the retired
+// per-agent classes and is read only to warn about them.
 type modelConfig struct {
 	Big    string            `json:"big,omitempty"`
 	Small  string            `json:"small,omitempty"`
@@ -86,18 +85,19 @@ func modelSelectionPathFor(statePath string) string {
 	return filepath.Join(filepath.Dir(statePath), "models.json")
 }
 
-func loadModelConfig(path string) (map[string]string, map[string]string, error) {
-	empty := map[string]string{}
+// loadModelConfig returns the class selection and whether the file still
+// carries per-agent classes.
+func loadModelConfig(path string) (map[string]string, bool, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return empty, empty, nil
+		return map[string]string{}, false, nil
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, false, err
 	}
 	var raw modelConfig
 	if err := json.Unmarshal(b, &raw); err != nil {
-		return nil, nil, fmt.Errorf("read model config: %w", err)
+		return nil, false, fmt.Errorf("read model config: %w", err)
 	}
 	selection := map[string]string{}
 	if raw.Big != "" {
@@ -106,25 +106,21 @@ func loadModelConfig(path string) (map[string]string, map[string]string, error) 
 	if raw.Small != "" {
 		selection[ModelClassSmall] = raw.Small
 	}
-	if raw.Agents == nil {
-		raw.Agents = map[string]string{}
-	}
-	return selection, raw.Agents, nil
+	return selection, len(raw.Agents) > 0, nil
 }
 
-func saveModelConfig(path string, selection, agents map[string]string) error {
+func saveModelConfig(path string, selection map[string]string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
 	b, err := json.Marshal(modelConfig{
-		Big:    selection[ModelClassBig],
-		Small:  selection[ModelClassSmall],
-		Agents: agents,
+		Big:   selection[ModelClassBig],
+		Small: selection[ModelClassSmall],
 	})
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, ".models-*", b)
+	return instance.WriteFileAtomic(path, ".models-*", b)
 }
 
 // SetModel pins a model class ("big" or "small") to a provider/model selector.
@@ -151,35 +147,9 @@ func (s *Service) SetModel(class, model string) error {
 	})
 }
 
-// SetAgentClass pins an agent to a model class ("big" or "small"), overriding
-// the default. An empty class reverts the agent to its default.
-func (s *Service) SetAgentClass(agent, class string) error {
-	agent = strings.TrimSpace(agent)
-	class = strings.TrimSpace(class)
-	return s.whileOpen(func() error {
-		if _, ok := s.runners[agent].(FantasyRunner); !ok {
-			return fmt.Errorf("%q is not a known agent", agent)
-		}
-		if class != "" && class != ModelClassBig && class != ModelClassSmall {
-			return fmt.Errorf("model class must be %q or %q", ModelClassBig, ModelClassSmall)
-		}
-		if class == "" {
-			delete(s.agentClasses, agent)
-		} else {
-			s.agentClasses[agent] = class
-		}
-		return s.saveModelConfigLocked()
-	})
-}
-
-// saveModelConfigLocked persists models.json and applies the selection to
-// the runners. Caller holds mu.
+// saveModelConfigLocked persists models.json. Caller holds mu.
 func (s *Service) saveModelConfigLocked() error {
-	if err := saveModelConfig(s.modelSelectionPath, s.modelSelection, s.agentClasses); err != nil {
-		return err
-	}
-	s.applyModelSelectionLocked()
-	return nil
+	return saveModelConfig(s.modelSelectionPath, s.modelSelection)
 }
 
 // ModelSelection returns the operator's chosen big and small models (empty means
@@ -193,44 +163,32 @@ func (s *Service) ModelSelection() ModelSelection {
 	}
 }
 
-// AgentClasses returns every Fantasy agent, its effective class, and whether the
-// operator overrode the default, ordered by name.
-func (s *Service) AgentClasses() []AgentClass {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	names := make([]string, 0, len(modelClassFor))
-	for name := range modelClassFor {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	result := make([]AgentClass, 0, len(names))
-	for _, name := range names {
-		class, overridden := s.agentClasses[name]
-		if !overridden {
-			class = modelClassFor[name]
+// fantasyModelLocked resolves the selector a Fantasy attempt runs with: the
+// task profile model, the agent's class model (models.json), the specialist
+// model (profiles.json), then -model. A "big" or "small" alias stands for that
+// class's model and resolves to nothing while the class is unset, so an alias
+// never reaches a provider. Caller holds mu.
+func (s *Service) fantasyModelLocked(agent string, profile *Profile) string {
+	resolve := func(model string) string {
+		if model == ModelClassBig || model == ModelClassSmall {
+			return s.modelSelection[model]
 		}
-		result = append(result, AgentClass{Agent: name, Class: class, Overridden: overridden})
+		return model
 	}
-	return result
-}
-
-// applyModelSelectionLocked resolves each agent's effective class and writes
-// the corresponding model override onto the Fantasy runners. The caller holds
-// s.mu.
-func (s *Service) applyModelSelectionLocked() {
-	for name, r := range s.runners {
-		fr, ok := r.(FantasyRunner)
-		if !ok {
-			continue
-		}
-		class := s.agentClasses[name]
-		if class == "" {
-			class = modelClassFor[name]
-		}
-		fr.modelClass = class
-		fr.modelOverride = s.modelSelection[class]
-		s.runners[name] = fr
+	class, specialist := modelClassFor[agent], s.agentModels[agent]
+	if specialist == ModelClassBig || specialist == ModelClassSmall {
+		class = specialist
 	}
+	var profileModel string
+	if profile != nil {
+		profileModel = profile.Model
+	}
+	for _, model := range []string{resolve(profileModel), s.modelSelection[class], resolve(specialist), resolve(s.defaultModel)} {
+		if model != "" {
+			return model
+		}
+	}
+	return ""
 }
 
 // validateModelSelector reports whether a model is a well-formed provider/model
@@ -240,15 +198,15 @@ func validateModelSelector(model string) error {
 	if !ok || provider == "" {
 		return fmt.Errorf("model must be provider/model, got %q", model)
 	}
-	if _, known := fantasyEndpoints[provider]; !known {
-		return fmt.Errorf("unknown provider %q (supported: %s)", provider, supportedFantasyProviders())
+	if !providers.Known(provider) {
+		return fmt.Errorf("unknown provider %q (supported: %s)", provider, strings.Join(providers.Names(), ", "))
 	}
 	return nil
 }
 
 // modelClassFor returns the default class an agent belongs to. Only the
-// coordinator (general) is big by default; every specialist is small unless the
-// operator overrides it.
+// coordinator (general) is big; every specialist is small unless its
+// profiles.json entry names the big class.
 var modelClassFor = map[string]string{
 	DefaultRouteAgent: ModelClassBig,
 	"debugger":        ModelClassSmall,
@@ -257,4 +215,89 @@ var modelClassFor = map[string]string{
 	"gitter":          ModelClassSmall,
 	"reviewer":        ModelClassSmall,
 	"tester":          ModelClassSmall,
+}
+
+// ModelFactory resolves a model selector such as "openai/gpt-4.1-mini" to a
+// fantasy.LanguageModel. Tests inject a factory so the adapter never needs
+// credentials or a network connection.
+type ModelFactory func(ctx context.Context, modelID string) (fantasy.LanguageModel, error)
+
+// DefaultFantasyModelFactory resolves a model with the credential from the
+// local environment only. The service injects a factory that also consults
+// stored credentials.
+func DefaultFantasyModelFactory(ctx context.Context, modelID string) (fantasy.LanguageModel, error) {
+	return providers.Resolve(ctx, modelID, providers.EnvCredential)
+}
+
+// fantasyModelFactory resolves a model using the stored provider credential
+// first, falling back to the environment variable. The operator's key is never
+// written to task state.
+func (s *Service) fantasyModelFactory(ctx context.Context, modelID string) (fantasy.LanguageModel, error) {
+	return providers.Resolve(ctx, modelID, s.credentialFor)
+}
+
+// credentialFor returns the stored API key for a provider, falling back to the
+// environment variable. It never returns anything but the credential.
+func (s *Service) credentialFor(provider string) string {
+	s.mu.Lock()
+	key := s.creds[provider]
+	s.mu.Unlock()
+	if key != "" {
+		return key
+	}
+	return providers.EnvCredential(provider)
+}
+
+// modelListTTL bounds how long a fetched model list is reused before the next
+// menu open refreshes it. Providers change their catalogs slowly, so a short
+// TTL keeps the menu fresh without hammering the endpoint.
+const modelListTTL = 10 * time.Minute
+
+// modelListEntry is one cached provider catalog.
+type modelListEntry struct {
+	models    []string
+	fetchedAt time.Time
+}
+
+// modelListCache memoizes fetched provider catalogs in memory for the process
+// lifetime.
+type modelListCache struct {
+	mu    sync.Mutex
+	lists map[string]modelListEntry
+}
+
+// FetchModels returns the models a provider currently offers, fetched from the
+// provider. Results are cached for modelListTTL; the
+// curated catalog in providerModels is only the fallback the UI uses, and says
+// so, when the fetch fails, so an unreachable endpoint never blocks model
+// selection. Bedrock is listed through the AWS control plane instead.
+func (s *Service) FetchModels(ctx context.Context, provider string) ([]string, error) {
+	provider = strings.TrimSpace(provider)
+	if !providers.Known(provider) {
+		return nil, fmt.Errorf("unknown provider %q", provider)
+	}
+
+	s.modelCache.mu.Lock()
+	if entry, ok := s.modelCache.lists[provider]; ok && time.Since(entry.fetchedAt) < modelListTTL {
+		models := append([]string(nil), entry.models...)
+		s.modelCache.mu.Unlock()
+		return models, nil
+	}
+	s.modelCache.mu.Unlock()
+
+	models, err := s.listModels(ctx, provider, s.credentialFor(provider))
+	if err != nil {
+		return nil, err
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("provider %q returned no models", provider)
+	}
+
+	s.modelCache.mu.Lock()
+	if s.modelCache.lists == nil {
+		s.modelCache.lists = make(map[string]modelListEntry)
+	}
+	s.modelCache.lists[provider] = modelListEntry{models: models, fetchedAt: time.Now()}
+	s.modelCache.mu.Unlock()
+	return append([]string(nil), models...), nil
 }

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
 
@@ -14,11 +16,12 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35}
+	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35, tab: infoTab}
 	if !strings.Contains(m.View(), "shared workspace") {
 		t.Fatal("initial workspace state not shown")
 	}
-	next, cmd := m.Update(runeKey("w"))
+	m = key(key(key(m, runeKey("o")), runeKey("j")), runeKey("j"))
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 	if cmd == nil {
 		t.Fatal("isolation toggle produced no command")
@@ -29,11 +32,15 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if !got.Isolated {
 		t.Fatal("isolation was not enabled")
 	}
-	if !strings.Contains(m.notice.text, "Isolation enabled") || !strings.Contains(m.View(), "isolated worktree requested") {
+	if m.setup.target != task.ID || !strings.Contains(ansi.Strip(m.View()), "Isolation") {
+		t.Fatal("the setup popup closed after toggling isolation")
+	}
+	if m.setup = (setupState{}); !strings.Contains(m.notice.text, "Isolation enabled") || !strings.Contains(m.View(), "isolated worktree requested") {
 		t.Fatalf("isolation state not surfaced: notice=%q view=%s", m.notice.text, m.View())
 	}
 
-	next, cmd = m.Update(runeKey("w"))
+	m = key(key(key(key(m, runeKey("o")), runeKey("j")), runeKey("j")), runeKey("j"))
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 	if cmd == nil {
 		t.Fatal("isolation toggle off produced no command")
@@ -44,7 +51,7 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if got.Isolated {
 		t.Fatal("isolation was not disabled")
 	}
-	if !strings.Contains(m.notice.text, "Isolation off") || !strings.Contains(m.View(), "shared workspace") {
+	if m.setup = (setupState{}); !strings.Contains(m.notice.text, "Isolation off") || !strings.Contains(m.View(), "shared workspace") {
 		t.Fatalf("disabled state not surfaced: notice=%q view=%s", m.notice.text, m.View())
 	}
 }
@@ -54,7 +61,7 @@ func TestDetailShowsAutomaticMergeResult(t *testing.T) {
 		ID: "task", Title: "merged", Prompt: "work", Status: orchestrator.Completed,
 		Isolated: true, ExecutionWorkspace: "/state/workspaces/task/tree", IsolationCommit: "abc123",
 		MergeStatus: orchestrator.MergeMerged, MergeCommit: "def456",
-	}}}
+	}}, tab: infoTab}
 	view := m.View()
 	for _, text := range []string{"Merge: merged", "def456"} {
 		if !strings.Contains(view, text) {
@@ -85,7 +92,7 @@ func TestDetailShowsPreparedIsolatedWorkspace(t *testing.T) {
 		Isolated:           true,
 		ExecutionWorkspace: "/state/workspaces/task/tree",
 		IsolationCommit:    "abc123",
-	}}}
+	}}, tab: infoTab}
 	view := m.View()
 	for _, text := range []string{"Execution: /state/workspaces/task/tree", "Isolated worktree", "abc123"} {
 		if !strings.Contains(view, text) {

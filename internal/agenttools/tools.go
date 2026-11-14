@@ -1,4 +1,7 @@
-package orchestrator
+// Package agenttools implements the workspace tools an in-process agent may
+// call. Every tool is confined to the task workspace and returns bounded,
+// sanitized text; none composes shell text from task input.
+package agenttools
 
 import (
 	"context"
@@ -9,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"charm.land/fantasy"
@@ -24,43 +28,46 @@ const (
 	maxToolOutputBytes = 64 << 10
 )
 
-// fantasyToolNames is the complete palette this adapter can expose. A profile
-// or a role's default palette narrows it; nothing outside the list is available.
-var fantasyToolNames = []string{"read", "bash", "write", "edit", "grep", "find", "ls"}
+// names is the complete palette, in display order. A profile or a role's
+// default palette narrows it; nothing outside the list is available.
+var names = []string{"read", "bash", "write", "edit", "grep", "find", "ls"}
 
-// fantasyTools builds the agent-side tool set for one attempt. The palette
-// selects a subset of fantasyToolNames; unknown names are ignored so a profile
-// that mentions a tool this adapter lacks still runs with the rest.
+// Names returns the complete tool palette.
+func Names() []string { return append([]string(nil), names...) }
+
+// Tools builds the agent-side tool set for one attempt. The palette selects a
+// subset of Names; unknown names are ignored so a profile that mentions a tool
+// this package lacks still runs with the rest.
 // Every tool is confined to workspace: file paths are resolved inside it and
 // commands run with it as their working directory.
-func fantasyTools(workspace string, palette []string, env []string) []fantasy.AgentTool {
+func Tools(workspace string, palette []string, env []string) []fantasy.AgentTool {
 	selected := make(map[string]bool, len(palette))
 	if len(palette) == 0 {
-		palette = fantasyToolNames
+		palette = names
 	}
 	for _, name := range palette {
 		selected[name] = true
 	}
 	tools := make([]fantasy.AgentTool, 0, len(palette))
-	for _, name := range fantasyToolNames {
+	for _, name := range names {
 		if !selected[name] {
 			continue
 		}
 		switch name {
 		case "read":
-			tools = append(tools, fantasyReadTool(workspace))
+			tools = append(tools, readTool(workspace))
 		case "bash":
-			tools = append(tools, fantasyBashTool(workspace, env))
+			tools = append(tools, bashTool(workspace, env))
 		case "write":
-			tools = append(tools, fantasyWriteTool(workspace))
+			tools = append(tools, writeTool(workspace))
 		case "edit":
-			tools = append(tools, fantasyEditTool(workspace))
+			tools = append(tools, editTool(workspace))
 		case "grep":
-			tools = append(tools, fantasyGrepTool(workspace, env))
+			tools = append(tools, grepTool(workspace, env))
 		case "find":
-			tools = append(tools, fantasyFindTool(workspace, env))
+			tools = append(tools, findTool(workspace, env))
 		case "ls":
-			tools = append(tools, fantasyLsTool(workspace, env))
+			tools = append(tools, lsTool(workspace, env))
 		}
 	}
 	return tools
@@ -102,7 +109,7 @@ func runWorkspaceCommand(ctx context.Context, workspace string, env []string, na
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", ctxErr
 	}
-	return sanitizeTranscript(output.String()), err
+	return Sanitize(output.String()), err
 }
 
 // commandResponse renders a bounded command result for the model. A failing
@@ -154,7 +161,7 @@ type lsToolInput struct {
 	Path string `json:"path,omitempty" description:"Optional workspace-relative directory to list; defaults to the workspace root"`
 }
 
-func fantasyReadTool(workspace string) fantasy.AgentTool {
+func readTool(workspace string) fantasy.AgentTool {
 	return fantasy.NewAgentTool("read", "Read a file from the workspace. Returns at most 256 KiB.",
 		func(_ context.Context, in readToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			path, err := workspacePath(workspace, in.Path)
@@ -184,7 +191,7 @@ func fantasyReadTool(workspace string) fantasy.AgentTool {
 		})
 }
 
-func fantasyBashTool(workspace string, env []string) fantasy.AgentTool {
+func bashTool(workspace string, env []string) fantasy.AgentTool {
 	return fantasy.NewAgentTool("bash", "Run a shell command with the workspace as its working directory and return its combined output.",
 		func(ctx context.Context, in bashToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			// This is the adapter's only shell path:
@@ -196,7 +203,7 @@ func fantasyBashTool(workspace string, env []string) fantasy.AgentTool {
 		})
 }
 
-func fantasyWriteTool(workspace string) fantasy.AgentTool {
+func writeTool(workspace string) fantasy.AgentTool {
 	return fantasy.NewAgentTool("write", "Write a file in the workspace, replacing it if it exists.",
 		func(_ context.Context, in writeToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			path, err := workspacePath(workspace, in.Path)
@@ -213,7 +220,7 @@ func fantasyWriteTool(workspace string) fantasy.AgentTool {
 		})
 }
 
-func fantasyEditTool(workspace string) fantasy.AgentTool {
+func editTool(workspace string) fantasy.AgentTool {
 	return fantasy.NewAgentTool("edit", "Replace the first occurrence of exact text in a workspace file.",
 		func(_ context.Context, in editToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			path, err := workspacePath(workspace, in.Path)
@@ -239,7 +246,7 @@ func fantasyEditTool(workspace string) fantasy.AgentTool {
 		})
 }
 
-func fantasyGrepTool(workspace string, env []string) fantasy.AgentTool {
+func grepTool(workspace string, env []string) fantasy.AgentTool {
 	return fantasy.NewAgentTool("grep", "Search workspace files recursively for a regular expression and return matching lines as file:line:text. Git metadata is skipped.",
 		func(ctx context.Context, in grepToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			pattern := strings.TrimSpace(in.Pattern)
@@ -264,7 +271,7 @@ func fantasyGrepTool(workspace string, env []string) fantasy.AgentTool {
 				// grep exits 1 to mean "selected no lines". Reporting that as a
 				// failure made an ordinary empty search look like a broken tool.
 				return fantasy.NewTextResponse(fmt.Sprintf("grep: no matches for %q in %s",
-					sanitizeTranscript(pattern), sanitizeTranscript(search))), nil
+					Sanitize(pattern), Sanitize(search))), nil
 			}
 			return commandResponse("grep", text, err), nil
 		})
@@ -278,7 +285,7 @@ func isGrepNoMatch(err error) bool {
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
-func fantasyFindTool(workspace string, env []string) fantasy.AgentTool {
+func findTool(workspace string, env []string) fantasy.AgentTool {
 	return fantasy.NewAgentTool("find", "Find workspace entries by name or glob pattern.",
 		func(ctx context.Context, in findToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			name := strings.TrimSpace(in.Name)
@@ -290,7 +297,7 @@ func fantasyFindTool(workspace string, env []string) fantasy.AgentTool {
 		})
 }
 
-func fantasyLsTool(workspace string, env []string) fantasy.AgentTool {
+func lsTool(workspace string, env []string) fantasy.AgentTool {
 	return fantasy.NewAgentTool("ls", "List a workspace directory.",
 		func(ctx context.Context, in lsToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			path := strings.TrimSpace(in.Path)
@@ -303,4 +310,61 @@ func fantasyLsTool(workspace string, env []string) fantasy.AgentTool {
 			text, err := runWorkspaceCommand(ctx, workspace, env, "ls", "-la", path)
 			return commandResponse("ls", text, err), nil
 		})
+}
+
+// Sanitize strips terminal control bytes from agent-supplied text.
+// Newlines and tabs are kept; C0/C1 controls, DEL and ESC are removed so output
+// cannot rewrite the terminal.
+func Sanitize(text string) string {
+	var clean strings.Builder
+	clean.Grow(len(text))
+	for i := 0; i < len(text); {
+		r, size := utf8.DecodeRuneInString(text[i:])
+		if r == utf8.RuneError && size == 1 {
+			// An invalid byte is kept unless it falls in a control range.
+			if c := text[i]; c >= 0x20 && (c < 0x7f || c > 0x9f) {
+				clean.WriteByte(c)
+			}
+		} else if r == '\n' || r == '\t' || r >= 0x20 && (r < 0x7f || r > 0x9f) {
+			clean.WriteRune(r)
+		}
+		i += size
+	}
+	return clean.String()
+}
+
+// cappedBuffer bounds captured command output while keeping both its beginning
+// and its end, where the useful diagnostic often is. os/exec writes from its
+// own goroutine, hence the mutex.
+type cappedBuffer struct {
+	mu         sync.Mutex
+	head, tail []byte
+	max        int
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	written := len(p)
+	if len(b.head) < b.max {
+		take := min(b.max-len(b.head), len(p))
+		b.head = append(b.head, p[:take]...)
+		p = p[take:]
+	}
+	if len(p) > 0 {
+		b.tail = append(b.tail, p...)
+		if len(b.tail) > b.max {
+			b.tail = b.tail[len(b.tail)-b.max:]
+		}
+	}
+	return written, nil
+}
+
+func (b *cappedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.tail) == 0 {
+		return string(b.head)
+	}
+	return string(b.head) + "\n[...]\n" + string(b.tail)
 }

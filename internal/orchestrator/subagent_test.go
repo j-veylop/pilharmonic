@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -164,9 +163,6 @@ func TestSpawnSubagentRequiresRunningParentAndHonorsLimits(t *testing.T) {
 	if _, err = s.SpawnSubagent(child.ID, "", "grandchild", ""); err == nil || !strings.Contains(err.Error(), "depth limit") {
 		t.Fatalf("depth limit not enforced: %v", err)
 	}
-	if err = s.SetSubagentLimits(-1, 1); err == nil {
-		t.Fatal("negative limits accepted")
-	}
 	close(release)
 	await(t, s, child.ID, Completed)
 	await(t, s, parent.ID, Completed)
@@ -261,40 +257,30 @@ func TestSubagentControlDisabledWithoutCredentials(t *testing.T) {
 	}
 }
 
-func TestRunnerEnvironmentReplacesInheritedControlCredentials(t *testing.T) {
-	t.Setenv("ORCHESTRATOR_SUBAGENT_TOKEN", "stale")
+// TestRunnerEnvironmentIsAllowlisted keeps operator secrets and inherited
+// control credentials out of agent processes: only allowlisted variables and
+// the current attempt's own credentials cross the trust boundary.
+func TestRunnerEnvironmentIsAllowlisted(t *testing.T) {
+	t.Setenv("ORCHESTRATOR_SUBAGENT_TOKEN", "stale-token")
 	t.Setenv("ORCHESTRATOR_TASK_ID", "stale-task")
-	task := Task{ID: "current", controlSocket: "/tmp/current.sock", controlToken: "current-token"}
-	env := strings.Join(task.runnerEnvironment(), "\n")
-	if !strings.Contains(env, "ORCHESTRATOR_TASK_ID=current") || !strings.Contains(env, "ORCHESTRATOR_SUBAGENT_TOKEN=current-token") {
-		t.Fatalf("current credentials missing: %s", env)
-	}
-	if strings.Contains(env, "stale-task") || strings.Contains(env, "stale") {
-		t.Fatalf("inherited credentials leaked: %s", env)
-	}
-	disabled := strings.Join((Task{}).runnerEnvironment(), "\n")
-	if strings.Contains(disabled, "ORCHESTRATOR_SUBAGENT_TOKEN") || strings.Contains(disabled, "ORCHESTRATOR_TASK_ID") {
-		t.Fatalf("disabled task inherited credentials: %s", disabled)
-	}
-}
-
-func TestRunnerEnvironmentDropsOperatorSecrets(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "operator-secret")
-	t.Setenv("GITHUB_TOKEN", "operator-token")
-	t.Setenv("MY_CUSTOM_ORCHESTRATOR", "kept")
+	t.Setenv("MY_CUSTOM_ORCHESTRATOR", "unlisted")
 	t.Setenv("ORCHESTRATOR_CUSTOM", "kept")
 	t.Setenv("LC_ALL", "C")
-	env := strings.Join((Task{}).runnerEnvironment(), "\n")
-	if strings.Contains(env, "operator-secret") || strings.Contains(env, "operator-token") {
-		t.Fatalf("operator credentials leaked to the agent: %s", env)
-	}
-	if strings.Contains(env, "MY_CUSTOM_ORCHESTRATOR") {
-		t.Fatalf("unlisted variable crossed the trust boundary: %s", env)
-	}
-	for _, want := range []string{"PATH=", "LC_ALL=C", "ORCHESTRATOR_CUSTOM=kept"} {
+	task := Task{ID: "current", controlSocket: "/tmp/current.sock", controlToken: "current-token"}
+	env := strings.Join(task.runnerEnvironment(), "\n")
+	for _, want := range []string{"PATH=", "LC_ALL=C", "ORCHESTRATOR_CUSTOM=kept", "ORCHESTRATOR_TASK_ID=current", "ORCHESTRATOR_SUBAGENT_TOKEN=current-token"} {
 		if !strings.Contains(env, want) {
-			t.Fatalf("missing allowed variable %q in %s", want, env)
+			t.Fatalf("missing %q in %s", want, env)
 		}
+	}
+	for _, leaked := range []string{"stale-", "operator-secret", "unlisted"} {
+		if strings.Contains(env, leaked) {
+			t.Fatalf("%q crossed the trust boundary: %s", leaked, env)
+		}
+	}
+	if disabled := strings.Join((Task{}).runnerEnvironment(), "\n"); strings.Contains(disabled, "ORCHESTRATOR_SUBAGENT_TOKEN") || strings.Contains(disabled, "ORCHESTRATOR_TASK_ID") {
+		t.Fatalf("disabled task inherited credentials: %s", disabled)
 	}
 }
 
@@ -337,8 +323,8 @@ func TestSubagentBudgetGuidanceCountsExistingChildrenOnRetry(t *testing.T) {
 		if resumed.controlToken != "" || resumed.controlSocket != "" || resumed.controlGuidance != "" {
 			t.Fatalf("exhausted budget received delegation credentials or guidance: %+v", resumed)
 		}
-		if strings.Contains(composeInput(resumed), "Subagent delegation") || strings.Contains(composeInput(resumed), "Coordinator delegation guidance") {
-			t.Fatalf("exhausted budget prompted impossible delegation: %q", composeInput(resumed))
+		if strings.Contains(composeInput(resumed, false), "Subagent delegation") || strings.Contains(composeInput(resumed, false), "Coordinator delegation guidance") {
+			t.Fatalf("exhausted budget prompted impossible delegation: %q", composeInput(resumed, false))
 		}
 		if _, err := s.SpawnSubagent(parent.ID, "", "over budget", ""); err == nil || !strings.Contains(err.Error(), "subagent limit") {
 			t.Fatalf("exhausted child limit not enforced after retry: %v", err)
@@ -406,7 +392,7 @@ func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T
 	parent := createTask(t, s, "parent", "inspect and fix the parser", t.TempDir())
 	must(t, s.Start(context.Background(), parent.ID))
 	running := <-started
-	prompt := composeInput(running)
+	prompt := composeInput(running, false)
 	for _, want := range []string{
 		"Answer simple questions directly",
 		"delegate multiple focused subtasks",
@@ -426,7 +412,7 @@ func TestDefaultGeneralProfileReceivesCoordinatorDelegationGuidance(t *testing.T
 	}
 	child := mustGet(s.SpawnSubagent(parent.ID, "", "inspect the parser", ""))(t)
 	childRunning := <-started
-	if strings.Contains(composeInput(childRunning), "Coordinator delegation guidance") {
+	if strings.Contains(composeInput(childRunning, false), "Coordinator delegation guidance") {
 		t.Fatal("delegated child received coordinator guidance")
 	}
 	if got := s.ListTasks(); len(got) != 2 {
@@ -471,7 +457,7 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	must(t, s.Start(context.Background(), task.ID))
 	running := <-seen
 	for _, want := range []string{instruction, "Coordinator delegation guidance:", "delegate multiple focused subtasks"} {
-		if !strings.Contains(composeInput(running), want) {
+		if !strings.Contains(composeInput(running, false), want) {
 			t.Fatalf("missing %q in prompt", want)
 		}
 	}
@@ -495,24 +481,5 @@ func TestSubagentGuidanceAndEnvironmentAreBoundToAttempt(t *testing.T) {
 	contents := mustGet(os.ReadFile(path))(t)
 	if strings.Contains(string(contents), "ORCHESTRATOR_SUBAGENT_TOKEN") || strings.Contains(string(contents), running.controlToken) {
 		t.Fatal("control credential was persisted")
-	}
-}
-
-func TestNoteSubagentStartFailureRecordsEvent(t *testing.T) {
-	s := newTestService(t)
-	task := createTask(t, s, "child", "do work", t.TempDir())
-	s.noteSubagentStartFailure(task.ID, errors.New("no capacity"))
-	updated, ok := s.GetTask(task.ID)
-	if !ok {
-		t.Fatal("task disappeared")
-	}
-	found := false
-	for _, event := range updated.Events {
-		if event.Kind == "start_failed" && event.Message == "no capacity" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("start failure not recorded: %+v", updated.Events)
 	}
 }

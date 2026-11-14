@@ -4,10 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
+
+	"pilharmonic/internal/agenttools"
 )
 
 const (
@@ -258,9 +261,8 @@ func (s *Service) LoadProfiles(path string) error {
 			s.routeProfile = config.DefaultProfile
 		}
 		for _, specialist := range config.Specialists {
-			if runner, ok := s.runners[specialist.Name].(FantasyRunner); ok && specialist.Model != "" {
-				runner.model = specialist.Model
-				s.runners[specialist.Name] = runner
+			if specialist.Model != "" {
+				s.agentModels[specialist.Name] = specialist.Model
 			}
 			if specialist.Tools != nil {
 				if s.specialistTools == nil {
@@ -270,7 +272,6 @@ func (s *Service) LoadProfiles(path string) error {
 			}
 		}
 		maps.Copy(s.profiles, loaded)
-		s.applyModelSelectionLocked()
 		return nil
 	})
 }
@@ -297,6 +298,21 @@ func (s *Service) checkSpecialistsLocked(specialists []specialistConfig) error {
 			if err := validateSpecialistTools(name, specialist.Tools); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func validateSpecialistTools(name string, tools []string) error {
+	if len(tools) == 0 {
+		return fmt.Errorf("specialist %q must have a nonempty tool list", name)
+	}
+	if err := (Profile{Name: name, Tools: tools}).validate(); err != nil {
+		return err
+	}
+	for _, tool := range tools {
+		if !slices.Contains(agenttools.Names(), tool) {
+			return fmt.Errorf("specialist %q uses unsupported tool %q", name, tool)
 		}
 	}
 	return nil
@@ -440,4 +456,36 @@ func checkDelegatedProfile(parent, child Profile) error {
 		return fmt.Errorf("delegated profile %q may delegate work that parent profile %q may not", child.Name, parent.Name)
 	}
 	return nil
+}
+
+// An unspecified list leaves the other list in effect. Reject disjoint lists
+// because an empty tool list means the executor defaults.
+func intersectTools(tools, limit []string) ([]string, error) {
+	if len(limit) == 0 {
+		return tools, nil
+	}
+	if len(tools) == 0 {
+		return slices.Clone(limit), nil
+	}
+	var allowed []string
+	for _, tool := range tools {
+		if slices.Contains(limit, tool) {
+			allowed = append(allowed, tool)
+		}
+	}
+	if len(allowed) == 0 {
+		return nil, fmt.Errorf("no tools in common between %v and %v", tools, limit)
+	}
+	return allowed, nil
+}
+
+func (s *Service) limitTaskProfileLocked(t Task, profile Profile) (Profile, error) {
+	for _, limit := range [][]string{t.InheritedTools, t.SpecialistTools, s.specialistTools[t.Agent]} {
+		var err error
+		profile.Tools, err = intersectTools(profile.Tools, limit)
+		if err != nil {
+			return Profile{}, fmt.Errorf("executor %q profile %q: %w", t.Agent, profile.Name, err)
+		}
+	}
+	return profile, nil
 }

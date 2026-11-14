@@ -1,4 +1,7 @@
-package orchestrator
+// Package providers resolves provider/model selectors to Fantasy language
+// models and lists provider catalogs. Callers supply credentials; nothing here
+// stores them.
+package providers
 
 import (
 	"context"
@@ -15,15 +18,10 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 )
 
-// ModelFactory resolves a model selector such as "openai/gpt-4.1-mini" to a
-// fantasy.LanguageModel. Tests inject a factory so the adapter never needs
-// credentials or a network connection.
-type ModelFactory func(ctx context.Context, modelID string) (fantasy.LanguageModel, error)
-
-// bedrockProvider is the provider prefix for AWS Bedrock. Unlike the other
+// Bedrock is the provider prefix for AWS Bedrock. Unlike the other
 // prefixes it speaks the Bedrock API rather than an OpenAI-compatible one, and
 // it authenticates through AWS rather than a single API key.
-const bedrockProvider = "bedrock"
+const Bedrock = "bedrock"
 
 // bedrockDefaultRegion is the region Bedrock uses when neither the AWS
 // environment nor the shared AWS config names one. It matches the default the
@@ -35,17 +33,17 @@ const bedrockDefaultRegion = "us-east-1"
 // is read while deciding whether Bedrock looks configured.
 const awsSharedFileLimit = 64 << 10
 
-// fantasyEndpoint names the OpenAI-compatible base URL and the environment
+// endpoint names the OpenAI-compatible base URL and the environment
 // variable holding the credential for one provider prefix. Credentials are read
 // from the local environment only; they are never written to task state. A
-// provider with no baseURL is built by newFantasyProvider instead of the
+// provider with no baseURL is built by newProvider instead of the
 // OpenAI-compatible client.
-type fantasyEndpoint struct {
+type endpoint struct {
 	baseURL string
 	envVar  string
 }
 
-var fantasyEndpoints = map[string]fantasyEndpoint{
+var endpoints = map[string]endpoint{
 	"openai":     {baseURL: "https://api.openai.com/v1", envVar: "OPENAI_API_KEY"},
 	"deepseek":   {baseURL: "https://api.deepseek.com/v1", envVar: "DEEPSEEK_API_KEY"},
 	"openrouter": {baseURL: "https://openrouter.ai/api/v1", envVar: "OPENROUTER_API_KEY"},
@@ -53,63 +51,48 @@ var fantasyEndpoints = map[string]fantasyEndpoint{
 	"hyper":      {baseURL: "https://hyper.charm.land/api/v1/fantasy", envVar: "HYPER_API_KEY"},
 	// Bedrock needs no key when the AWS credential chain supplies one; the
 	// environment variable names the bearer token that chain can carry.
-	bedrockProvider: {envVar: "AWS_BEARER_TOKEN_BEDROCK"},
+	Bedrock: {envVar: "AWS_BEARER_TOKEN_BEDROCK"},
 }
 
-// supportedFantasyProviders lists the provider prefixes in a stable order for
-// error messages.
-func supportedFantasyProviders() string {
-	names := make([]string, 0, len(fantasyEndpoints))
-	for name := range fantasyEndpoints {
+// Known reports whether name is a supported provider prefix.
+func Known(name string) bool {
+	_, ok := endpoints[name]
+	return ok
+}
+
+// Names lists the provider prefixes in a stable order.
+func Names() []string {
+	names := make([]string, 0, len(endpoints))
+	for name := range endpoints {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return strings.Join(names, ", ")
+	return names
 }
 
-// DefaultFantasyModelFactory builds the provider for the prefix of modelID and
-// asks it for the named model, reading the credential from the local
-// environment only. The service injects a factory that also consults stored
-// credentials.
-func DefaultFantasyModelFactory(ctx context.Context, modelID string) (fantasy.LanguageModel, error) {
-	return resolveFantasyModel(ctx, modelID, func(providerName string) string {
-		return os.Getenv(fantasyEndpoints[providerName].envVar)
-	})
+// EnvCredential reads a provider's credential from its environment variable.
+func EnvCredential(provider string) string {
+	return strings.TrimSpace(os.Getenv(endpoints[provider].envVar))
 }
 
-// fantasyModelFactory resolves a model using the stored provider credential
-// first, falling back to the environment variable. The operator's key is never
-// written to task state.
-func (s *Service) fantasyModelFactory(ctx context.Context, modelID string) (fantasy.LanguageModel, error) {
-	return resolveFantasyModel(ctx, modelID, func(providerName string) string {
-		s.mu.Lock()
-		key := s.creds[providerName]
-		s.mu.Unlock()
-		if key != "" {
-			return key
-		}
-		return os.Getenv(fantasyEndpoints[providerName].envVar)
-	})
-}
-
-// resolveFantasyModel is the shared provider-resolution path. credential
-// returns the API key (or, for Bedrock, the bearer token) for a provider
+// Resolve builds the provider for the prefix of modelID and asks it for the
+// named model. credential returns the API key (or, for Bedrock, the bearer token) for a provider
 // prefix; an empty value may still be usable for Bedrock through the AWS
 // credential chain.
-func resolveFantasyModel(ctx context.Context, modelID string, credential func(string) string) (fantasy.LanguageModel, error) {
+func Resolve(ctx context.Context, modelID string, credential func(string) string) (fantasy.LanguageModel, error) {
 	providerName, model, ok := strings.Cut(modelID, "/")
 	if !ok || providerName == "" || model == "" {
 		return nil, fmt.Errorf("model must be provider/model, got %q", modelID)
 	}
-	endpoint, known := fantasyEndpoints[providerName]
+	endpoint, known := endpoints[providerName]
 	if !known {
-		return nil, fmt.Errorf("unknown fantasy provider %q (supported: %s)", providerName, supportedFantasyProviders())
+		return nil, fmt.Errorf("unknown fantasy provider %q (supported: %s)", providerName, strings.Join(Names(), ", "))
 	}
 	key := strings.TrimSpace(credential(providerName))
-	if key == "" && providerName != bedrockProvider {
+	if key == "" && providerName != Bedrock {
 		return nil, fmt.Errorf("fantasy provider %q requires an API key (set %s or use /login %s)", providerName, endpoint.envVar, providerName)
 	}
-	provider, err := newFantasyProvider(ctx, providerName, endpoint, key)
+	provider, err := newProvider(ctx, providerName, endpoint, key)
 	if err != nil {
 		return nil, err
 	}
@@ -120,10 +103,10 @@ func resolveFantasyModel(ctx context.Context, modelID string, credential func(st
 	return languageModel, nil
 }
 
-// newFantasyProvider builds the fantasy provider for a prefix. Bedrock uses its
+// newProvider builds the fantasy provider for a prefix. Bedrock uses its
 // AWS-native provider; every other prefix is an OpenAI-compatible endpoint.
-func newFantasyProvider(ctx context.Context, providerName string, endpoint fantasyEndpoint, key string) (fantasy.Provider, error) {
-	if providerName == bedrockProvider {
+func newProvider(ctx context.Context, providerName string, endpoint endpoint, key string) (fantasy.Provider, error) {
+	if providerName == Bedrock {
 		return newBedrockProvider(ctx, key)
 	}
 	provider, err := openaicompat.New(openaicompat.WithAPIKey(key), openaicompat.WithBaseURL(endpoint.baseURL))
@@ -145,7 +128,7 @@ func newBedrockProvider(ctx context.Context, bearerToken string) (fantasy.Provid
 	}
 	provider, err := bedrock.New(options...)
 	if err != nil {
-		return nil, fmt.Errorf("fantasy provider %q: %w", bedrockProvider, err)
+		return nil, fmt.Errorf("fantasy provider %q: %w", Bedrock, err)
 	}
 	return provider, nil
 }
@@ -169,11 +152,11 @@ func bedrockRegion(ctx context.Context) string {
 	return bedrockDefaultRegion
 }
 
-// bedrockAWSConfigured reports whether Bedrock can likely authenticate without
+// BedrockAWSConfigured reports whether Bedrock can likely authenticate without
 // a stored bearer token, using only sources the AWS SDK reads without a
 // network probe (instance metadata is not probed). It only gates the login
 // prompt; model resolution still defers to the AWS SDK.
-func bedrockAWSConfigured() bool {
+func BedrockAWSConfigured() bool {
 	if os.Getenv("AWS_ACCESS_KEY_ID") != "" && os.Getenv("AWS_SECRET_ACCESS_KEY") != "" {
 		return true
 	}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -8,49 +9,38 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
+	"pilharmonic/internal/tui/editor"
 )
 
 // TestComposerStandardShortcutsReachTheDraft checks the screen-level key
 // routing: composers accept printable shortcuts as text, so the word-editing
 // keys must arrive at the editor rather than be treated as commands.
 func TestComposerStandardShortcutsReachTheDraft(t *testing.T) {
-	m := model{width: 80, height: 24, input: composer{kind: newTaskInput, editor: editor{text: "keep drop", cursor: len("keep drop")}}}
+	m := model{width: 80, height: 24, input: composer{kind: reportInput, Editor: editor.Editor{Text: "keep drop", Cursor: len("keep drop")}}}
 	m = key(m, tea.KeyMsg{Type: tea.KeyCtrlW})
-	if m.input.text != "keep " || m.input.cursor != len("keep ") {
-		t.Fatalf("task composer ctrl+w left %q at %d", m.input.text, m.input.cursor)
+	if m.input.Text != "keep " || m.input.Cursor != len("keep ") {
+		t.Fatalf("task composer ctrl+w left %q at %d", m.input.Text, m.input.Cursor)
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
 	m = next.(model)
-	if m.input.text != "" {
-		t.Fatalf("alt+backspace left %q", m.input.text)
+	if m.input.Text != "" {
+		t.Fatalf("alt+backspace left %q", m.input.Text)
 	}
 
-	r := model{width: 80, height: 24, router: routerState{open: true, editor: editor{text: "keep drop", cursor: len("keep drop")}}}
+	r := model{width: 80, height: 24, router: routerState{open: true, Editor: editor.Editor{Text: "keep drop", Cursor: len("keep drop")}}}
 	r = key(r, tea.KeyMsg{Type: tea.KeyCtrlW})
-	if r.router.text != "keep " || r.router.cursor != len("keep ") {
-		t.Fatalf("request form ctrl+w left %q at %d", r.router.text, r.router.cursor)
+	if r.router.Text != "keep " || r.router.Cursor != len("keep ") {
+		t.Fatalf("request form ctrl+w left %q at %d", r.router.Text, r.router.Cursor)
 	}
 	if !r.router.open {
 		t.Fatal("ctrl+w closed the request form")
 	}
 }
 
-func TestEditorCursorColumnCountsWideRunes(t *testing.T) {
-	e := editor{text: "日本 ab 語", cursor: len("日本 ")}
-	line := ansi.Strip(e.viewLinesCursor(20, 2, true)[0])
-	at := strings.Index(line, "▏")
-	if at < 0 {
-		t.Fatalf("no cursor in %q", line)
-	}
-	if column := lipgloss.Width(line[:at]); column != 5 {
-		t.Fatalf("cursor sits at column %d, want 5: %q", column, line)
-	}
-}
-
 func TestComposerBoxKeepsCellWidthForWideText(t *testing.T) {
 	m := model{width: 40, height: 20, tasks: []orchestrator.Task{{ID: "task", Title: "work"}}}
 	text := strings.Repeat("日本語のテキスト ", 6)
-	m.input = composer{kind: newTaskInput, editor: editor{text: text, cursor: len(text)}}
+	m.input = composer{kind: reportInput, Editor: editor.Editor{Text: text, Cursor: len(text)}}
 	for _, row := range m.composerBlock(m.composerHeight()) {
 		if width := lipgloss.Width(ansi.Strip(row)); width != 40 {
 			t.Fatalf("box row is %d cells: %q", width, ansi.Strip(row))
@@ -106,18 +96,18 @@ func TestVimMotionsAndFocus(t *testing.T) {
 	}
 }
 func TestVimKeysRemainTextInComposer(t *testing.T) {
-	m := model{input: composer{kind: newTaskInput}}
+	m := model{input: composer{kind: reportInput}}
 	for _, r := range "ggGhjkl123" {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = next.(model)
 	}
-	if m.input.text != "ggGhjkl123" || m.vimG || m.vimCount != 0 {
+	if m.input.Text != "ggGhjkl123" || m.vimG || m.vimCount != 0 {
 		t.Fatalf("composer consumed motions: %+v", m)
 	}
 }
 
 func TestCancelComposerClearsTargetAndDraft(t *testing.T) {
-	m := model{input: composer{kind: threadInput, target: "previous", editor: editor{text: "discard me"}}}
+	m := model{input: composer{kind: threadInput, target: "previous", Editor: editor.Editor{Text: "discard me"}}}
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.input != (composer{}) {
 		t.Fatalf("canceled input retained state: %+v", m.input)
@@ -127,15 +117,39 @@ func TestCancelComposerClearsTargetAndDraft(t *testing.T) {
 func TestBracketedPasteEntersComposers(t *testing.T) {
 	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q?\nsecond line"), Paste: true}
 
-	m := model{input: composer{kind: newTaskInput}}
+	m := model{input: composer{kind: reportInput}}
 	m = key(m, paste)
-	if m.input.text != "q?\nsecond line" || m.help.open {
-		t.Fatalf("composer did not retain pasted text: %q", m.input.text)
+	if m.input.Text != "q?\nsecond line" || m.help.open {
+		t.Fatalf("composer did not retain pasted text: %q", m.input.Text)
 	}
 
 	m = model{router: routerState{open: true}}
 	m = key(m, paste)
-	if m.router.text != "q?\nsecond line" || !m.router.open {
-		t.Fatalf("router did not retain pasted text: %q", m.router.text)
+	if m.router.Text != "q?\nsecond line" || !m.router.open {
+		t.Fatalf("router did not retain pasted text: %q", m.router.Text)
+	}
+}
+
+type runRecorder struct {
+	fakeLoginService
+	calls []string
+}
+
+func (r *runRecorder) Retry(id string) error { r.calls = append(r.calls, "retry "+id); return nil }
+func (r *runRecorder) Start(_ context.Context, id string) error {
+	r.calls = append(r.calls, "start "+id)
+	return nil
+}
+
+func TestRunStartsHeldTasksAndRetriesFailedOnes(t *testing.T) {
+	for _, tc := range []struct {
+		status orchestrator.Status
+		want   string
+	}{{orchestrator.Queued, "start task"}, {orchestrator.Failed, "retry task,start task"}} {
+		service := &runRecorder{fakeLoginService: fakeLoginService{tasks: []orchestrator.Task{{ID: "task", Status: tc.status}}}}
+		key(model{service: service, tasks: service.tasks}, runeKey("r"))
+		if got := strings.Join(service.calls, ","); got != tc.want {
+			t.Fatalf("%s: r called %q, want %q", tc.status, got, tc.want)
+		}
 	}
 }

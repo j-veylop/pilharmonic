@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"pilharmonic/internal/worktree"
 )
 
 // migrateStartupState upgrades legacy durable state before recovery interprets
@@ -46,7 +48,7 @@ func recoverStartupState(s *Service) (bool, error) {
 	for i := range s.data.Tasks {
 		t := &s.data.Tasks[i]
 		if t.DiscardPending {
-			gone, err := reconcileDiscard(s.path, *t)
+			gone, err := worktree.ReconcileDiscard(s.worktreeSpec(*t))
 			if err != nil {
 				return false, fmt.Errorf("recover worktree discard for task %s: %w", t.ID, err)
 			}

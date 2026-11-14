@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
 
@@ -127,7 +128,10 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	approved := startIsolatedReviewTask(t, s, repo, "approve")
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selectTask(t, &m, approved.ID)
-	m = key(m, runeKey("v"))
+	if m = key(m, runeKey("v")); m.review.target != approved.ID || !strings.Contains(ansi.Strip(m.footer(120)), "approve + merge (y)") {
+		t.Fatalf("v did not open the review prompt: %+v", m.review)
+	}
+	m = key(m, runeKey("y"))
 	got, _ := s.GetTask(approved.ID)
 	if got.ReviewStatus != orchestrator.ReviewApproved || got.ReviewedBy != orchestrator.LocalActor {
 		t.Fatalf("approval key did not record a decision: %+v", got)
@@ -143,11 +147,11 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	rejected := startIsolatedReviewTask(t, s, repo, "reject")
 	m.tasks = s.ListTasks()
 	selectTask(t, &m, rejected.ID)
-	m = key(m, runeKey("V"))
+	m = key(key(m, runeKey("v")), runeKey("n"))
 	if m.input.kind != rejectReviewInput || m.input.target != rejected.ID {
 		t.Fatalf("rejection key did not open a reason input: %+v", m)
 	}
-	if !strings.Contains(m.notice.text, "worktree") || !strings.Contains(m.notice.text, "F") {
+	if !strings.Contains(m.notice.text, "worktree") || !strings.Contains(m.notice.text, "f follow-up") {
 		t.Fatalf("rejection prompt did not mention retained work: %q", m.notice.text)
 	}
 	m = key(m, runeKey("not needed"))
@@ -156,16 +160,16 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	if got.ReviewStatus != orchestrator.ReviewRejected || got.ReviewNote != "not needed" {
 		t.Fatalf("rejection key did not record a decision: %+v", got)
 	}
-	if m.input.kind != "" || !strings.Contains(m.notice.text, "Review rejected") || !strings.Contains(m.notice.text, "F") {
+	if m.input.kind != "" || !strings.Contains(m.notice.text, "Review rejected") || !strings.Contains(m.notice.text, "press f") {
 		t.Fatalf("rejection not acknowledged with follow-up: input=%v notice=%q", m.input, m.notice.text)
 	}
-	if view := m.View(); !strings.Contains(view, "F adds follow-up") {
-		t.Fatalf("rejected detail does not suggest follow-up: %s", view)
+	if m.tab = infoTab; !strings.Contains(m.View(), "f adds follow-up") {
+		t.Fatalf("rejected detail does not suggest follow-up: %s", m.View())
 	}
 
 	// Rejection keeps the worktree and allows a follow-up that requeues the
 	// task without changing its original mandate.
-	m = key(m, runeKey("F"))
+	m = key(m, runeKey("f"))
 	if m.input.kind != followUpInput || m.input.target != rejected.ID {
 		t.Fatalf("rejected task did not open a follow-up composer: %+v", m.input)
 	}
@@ -185,16 +189,19 @@ func TestReviewKeysRefuseStaleCommit(t *testing.T) {
 	s := newTestService(t)
 	s.RegisterRunner("general", reviewChangeRunner{})
 	task := startIsolatedReviewTask(t, s, repo, "updated review")
-	for _, name := range []string{"v", "V"} {
+	for _, name := range []string{"y", "n"} {
 		m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 		selectTask(t, &m, task.ID)
 		// The screen still shows the commit from an earlier attempt.
 		m.tasks[m.selected].ReviewCommit = "earlier-commit"
+		m = key(m, runeKey("v"))
+		// The task list refreshes while the prompt is open.
+		m.tasks = s.ListTasks()
 		m = key(m, runeKey(name))
-		if name == "V" {
+		if name == "n" {
 			// The task list refreshes while the rejection composer is open.
 			m.tasks = s.ListTasks()
-			m.input.text = "reviewed the earlier commit"
+			m.input.Text = "reviewed the earlier commit"
 			m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 		}
 		got, _ := s.GetTask(task.ID)
@@ -212,10 +219,7 @@ func TestReviewKeysRequirePreparedWork(t *testing.T) {
 	}
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selectTask(t, &m, task.ID)
-	for _, name := range []string{"v", "V"} {
-		m = key(m, runeKey(name))
-		if m.input.kind != "" || !strings.Contains(m.notice.text, "No worktree commit") {
-			t.Fatalf("%s: input=%v notice=%q", name, m.input, m.notice.text)
-		}
+	if m = key(m, runeKey("v")); m.review.target != "" || !strings.Contains(m.notice.text, "No worktree commit") {
+		t.Fatalf("review prompt opened without prepared work: %+v notice=%q", m.review, m.notice.text)
 	}
 }

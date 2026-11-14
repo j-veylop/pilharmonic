@@ -46,21 +46,16 @@ func (m model) selectedActivity() (orchestrator.ToolActivity, int, bool) {
 	return activities[0], 0, true
 }
 func (m *model) activityKey(key string) bool {
-	if !m.activity.open {
+	if m.tab != activityTab {
 		return false
-	}
-	if key == "f" {
-		m.activity.filter = (m.activity.filter + 1) % 3
-		m.resetActivitySelection()
-		m.historyOffset = 0
-		return true
 	}
 	if key == "esc" && m.activity.expanded {
 		m.activity.expanded = false
 		m.historyOffset = 0
 		return true
 	}
-	if key == "enter" {
+	focused := m.detailFocus || m.fullscreen
+	if key == "enter" && focused {
 		a, _, ok := m.selectedActivity()
 		if ok {
 			m.activity.id = a.ID
@@ -68,9 +63,9 @@ func (m *model) activityKey(key string) bool {
 			m.activity.expanded = !m.activity.expanded
 			m.historyOffset = m.maxScroll()
 		}
-		return true
+		return ok
 	}
-	if m.activity.expanded || (!m.detailFocus && !m.fullscreen) {
+	if m.activity.expanded || !focused {
 		return false
 	}
 	if key != "j" && key != "k" && key != "up" && key != "down" {
@@ -118,7 +113,7 @@ func (m model) activityContent(width int) []string {
 	}
 	activities := m.visibleActivities()
 	scope := []string{"all attempts", "latest attempt", "errors only"}[int(m.activity.filter)]
-	add(mutedStyle.Render("Filter: " + scope + " (f)"))
+	add(mutedStyle.Render("Filter: " + scope + " (e)"))
 	if len(activities) == 0 {
 		if m.activity.filter == activityFilterAll {
 			add("No tool calls yet.")
@@ -134,7 +129,7 @@ func (m model) activityContent(width int) []string {
 		if isSelected {
 			marker = "▸ "
 		}
-		style, glyph := m.toolStatusStyle(a.Status)
+		style, glyph := toolStatusStyle(a.Status, m.runningGlyph())
 		stamp := a.StartedAt.Local().Format("15:04:05")
 		summary := terminalText(a.Summary())
 		duration := ""
@@ -165,7 +160,7 @@ func (m model) activityDetail(add func(...string)) {
 		add("This call is no longer retained. Esc returns to the list.")
 		return
 	}
-	statusStyle, glyph := m.toolStatusStyle(a.Status)
+	statusStyle, glyph := toolStatusStyle(a.Status, m.runningGlyph())
 	add(titleStyle.Render(terminalText(a.Name))+"  "+statusStyle.Bold(true).Render(glyph),
 		mutedStyle.Render("Attempt "+a.AttemptID+"  ·  "+a.StartedAt.Local().Format("15:04:05")))
 	if a.DurationMS != nil {

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"pilharmonic/internal/agenttools"
 )
 
 // supportingRunner is a fake adapter that can translate profile parameters.
@@ -185,7 +187,8 @@ func TestRelatedTaskRunsWithAcceptedProfile(t *testing.T) {
 
 func TestProfileConfigValidationIsAtomic(t *testing.T) {
 	s := newTestService(t)
-	must(t, s.LoadProfiles(writeProfileConfig(t, `{"profiles":[{"name":"gitter"}]}`)))
+	s.LoadBuiltinSpecialists()
+	must(t, s.LoadProfiles(writeProfileConfig(t, `{"profiles":[{"name":"gitter"}],"specialists":[{"name":"reviewer","tools":["read"]}]}`)))
 	tooLong := strings.Repeat("x", maxProfileInstructions+1)
 	for _, text := range []string{
 		`{"profiles":[]}`,
@@ -199,12 +202,21 @@ func TestProfileConfigValidationIsAtomic(t *testing.T) {
 		`{"profiles":[{"name":"ok","bogus":true}]}`,
 		`{"profiles":[{"name":"ok","instructions":"` + tooLong + `"}]}`,
 		`{"profiles":[]} {}`,
+		`{"profiles":[{"name":"ok"}],"specialists":[{"name":"reviewer","tools":["unknown"]}]}`,
+		`{"specialists":[{"name":"tester","tools":["read"]},{"name":"tester","tools":["bash"]}]}`,
+		`{"specialists":[{"name":"tester","tools":["read","read"]}]}`,
+		`{"specialists":[{"name":"tester"}]}`,
+		`{"specialists":[{"name":"general","tools":["read"]}]}`,
+		`{"profiles":[{"name":"ok"}]}` + strings.Repeat(" ", maxConfigSize),
 	} {
 		if err := s.LoadProfiles(writeProfileConfig(t, text)); err == nil {
-			t.Fatalf("accepted %s", text)
+			t.Fatalf("accepted %.200s", text)
 		}
 		if _, ok := profileNamed(s.ListProfiles(), "ok"); ok {
-			t.Fatalf("partial registration after %s", text)
+			t.Fatalf("partial registration after %.200s", text)
+		}
+		if len(s.specialistTools) != 1 || !slices.Equal(s.specialistTools["reviewer"], []string{"read"}) {
+			t.Fatalf("invalid config mutated specialist limits: %v", s.specialistTools)
 		}
 	}
 	if _, ok := profileNamed(s.ListProfiles(), "gitter"); !ok {
@@ -384,11 +396,11 @@ func TestFantasyToolPaletteAndModel(t *testing.T) {
 	if got := (FantasyRunner{}).toolPalette(profile); !slices.Equal(got, []string{"read", "grep"}) {
 		t.Fatalf("profile tool palette = %v", got)
 	}
-	if got := (FantasyRunner{}).RequestedModel(profile); got != "provider/model" {
+	if got := requestedModel(newTestService(t), "explorer", profile); got != "provider/model" {
 		t.Fatalf("profile model = %q, want provider/model", got)
 	}
-	if got := (FantasyRunner{}).toolPalette(nil); !slices.Equal(got, fantasyToolNames) {
-		t.Fatalf("default tool palette = %v, want %v", got, fantasyToolNames)
+	if got := (FantasyRunner{}).toolPalette(nil); !slices.Equal(got, agenttools.Names()) {
+		t.Fatalf("default tool palette = %v, want %v", got, agenttools.Names())
 	}
 	if prompt := (FantasyRunner{}).systemPrompt(&Profile{Name: "explorer", Instructions: "Read only; never edit."}); !strings.Contains(prompt, "Read only; never edit.") {
 		t.Fatalf("profile guidance missing from system prompt: %q", prompt)
@@ -396,25 +408,117 @@ func TestFantasyToolPaletteAndModel(t *testing.T) {
 }
 
 func TestSpecialistAndProfileCompose(t *testing.T) {
-	runner := FantasyRunner{instructions: "Locate the regression.", model: "specialist/model"}
+	runner := FantasyRunner{instructions: "Locate the regression."}
 	prompt := runner.systemPrompt(&Profile{Name: "audit", Instructions: "Record evidence."})
 	for _, want := range []string{"Locate the regression.", "Record evidence.", toolGuidance} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("missing %q in system prompt %q", want, prompt)
 		}
 	}
-	if got := runner.RequestedModel(&Profile{Name: "audit", Model: "profile/model"}); got != "specialist/model" {
-		t.Fatalf("runner model = %q, want specialist/model", got)
+	s := newTestService(t)
+	s.SetDefaultModel("default/model")
+	if got := requestedModel(s, "audit", &Profile{Name: "audit", Model: "profile/model"}); got != "profile/model" {
+		t.Fatalf("configured model = %q, want profile/model", got)
 	}
 }
 
-func TestProfileErrorReportsCauseAndIsRecognized(t *testing.T) {
-	cause := errors.New("executor cannot honor profile")
-	wrapped := profileError{err: cause}
-	if wrapped.Error() != cause.Error() {
-		t.Fatalf("profile error text %q", wrapped.Error())
+func TestSpecialistLimitsAcrossDelegation(t *testing.T) {
+	s := newTestService(t)
+	s.LoadBuiltinSpecialists()
+	must(t, s.LoadProfiles(writeProfileConfig(t, `{"specialists":[{"name":"reviewer","tools":["read","grep","ls"]}]}`)))
+	must(t, s.SetConcurrencyLimit(3))
+	must(t, s.EnableSubagentControl(testSocketPath(t)))
+	const lead = "Delegate repository inspection to explorer."
+	registerProfileForTest(t, s, Profile{Name: "project", CoordinatorInstructions: lead, Tools: []string{"read", "bash", "grep"}})
+	started := make(chan Task, 3)
+	release := make(chan struct{})
+	defer close(release)
+	fake := supportingRunner{runnerFunc(func(ctx context.Context, task Task, _ io.Writer) error {
+		started <- task
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})}
+	s.RegisterRunner("implementer", fake)
+	s.RegisterRunner("reviewer", fake)
+	check := func(id, agent, tools string) {
+		t.Helper()
+		select {
+		case run := <-started:
+			if strings.Contains(composeInput(run, false), lead) {
+				t.Fatal("specialist received parent coordinator instructions")
+			}
+			got := strings.Join((FantasyRunner{}).toolPalette(run.ProfileSpec), ",")
+			if run.ID != id || run.Agent != agent || got != tools {
+				t.Fatalf("unexpected worker %s, executor %q, tools %q", run.ID, run.Agent, got)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("worker did not start")
+		}
 	}
-	if !isProfileError(wrapped) {
-		t.Fatal("profile error not recognised by isProfileError")
+	parent := mustGet(s.CreateTaskWithProfile("parent", "implement a parser", t.TempDir(), "project"))(t)
+	if parent.Agent != DefaultRouteAgent {
+		t.Fatalf("top-level request without a mention selected %q, want %q", parent.Agent, DefaultRouteAgent)
+	}
+	// This test exercises implementer limits, so select it explicitly.
+	must(t, s.SetTaskAgent(parent.ID, "implementer"))
+	must(t, s.Start(context.Background(), parent.ID))
+	check(parent.ID, "implementer", "read,bash,grep")
+	child := mustGet(s.SpawnSubagent(parent.ID, "", "review the parser", ""))(t)
+	check(child.ID, "reviewer", "read,grep")
+	grandchild := mustGet(s.SpawnSubagent(child.ID, "", "trace the parser", "implementer"))(t)
+	check(grandchild.ID, "implementer", "read,grep")
+}
+
+func TestDisjointSpecialistToolsPreventLaunch(t *testing.T) {
+	var err error
+	s := newTestService(t)
+	s.LoadBuiltinSpecialists()
+	must(t, s.LoadProfiles(writeProfileConfig(t, `{"specialists":[{"name":"reviewer","tools":["read"]}]}`)))
+	registerProfileForTest(t, s, Profile{Name: "shell", Tools: []string{"bash"}})
+	task := mustGet(s.CreateTaskWithProfile("review", "@reviewer review the changes", t.TempDir(), "shell"))(t)
+	s.RegisterRunner("reviewer", supportingRunner{runnerFunc(func(context.Context, Task, io.Writer) error {
+		t.Error("runner launched with disjoint limits")
+		return nil
+	})})
+	if err = s.Start(context.Background(), task.ID); err == nil || !strings.Contains(err.Error(), "no tools in common") {
+		t.Fatalf("disjoint tools: %v", err)
+	}
+	got, _ := s.GetTask(task.ID)
+	if got.Status != Queued || len(got.Attempts) != 0 {
+		t.Fatalf("incompatible task started: %+v", got)
+	}
+}
+
+func TestAcceptedSpecialistCeilingSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := openTestService(t, path)
+	s.LoadBuiltinSpecialists()
+	must(t, s.LoadProfiles(writeProfileConfig(t, `{"specialists":[{"name":"reviewer","tools":["read"]}]}`)))
+	task := createTask(t, s, "review", "@reviewer review the parser", t.TempDir())
+	if task.Agent != "reviewer" || !slices.Equal(task.SpecialistTools, []string{"read"}) {
+		t.Fatalf("unexpected accepted limits: %+v", task)
+	}
+	task.SpecialistTools[0] = "bash"
+	_ = s.Shutdown()
+
+	restarted := openTestService(t, path)
+	started := make(chan Task, 1)
+	restarted.RegisterRunner("reviewer", supportingRunner{runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		started <- task
+		return nil
+	})})
+	must(t, restarted.Start(context.Background(), task.ID))
+	run := <-started
+	if !slices.Equal(run.ProfileSpec.Tools, []string{"read"}) {
+		t.Fatalf("restarted worker received %v", run.ProfileSpec.Tools)
+	}
+	run.ProfileSpec.Tools[0] = "edit"
+	done := await(t, restarted, task.ID, Completed)
+	if !slices.Equal(done.Attempts[0].Tools, []string{"read"}) {
+		t.Fatalf("attempt history changed: %v", done.Attempts[0].Tools)
 	}
 }

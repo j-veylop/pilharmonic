@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestReviewTransitionValidation(t *testing.T) {
@@ -51,17 +50,6 @@ func TestReviewTransitionValidation(t *testing.T) {
 	must(t, rejected.settleReview(ReviewRejected, "fedcba", LocalActor, "not needed"))
 	if rejected.ReviewStatus != ReviewRejected || rejected.ReviewNote != "not needed" || rejected.ReviewedAt.IsZero() {
 		t.Fatalf("rejection not recorded: %+v", rejected)
-	}
-}
-
-func TestResetReviewClearsDecisionOnly(t *testing.T) {
-	task := Task{Isolated: true, ExecutionWorkspace: "/tmp/tree", ReviewStatus: ReviewApproved, ReviewCommit: "abc123", ReviewedBy: LocalActor, ReviewedAt: time.Now().UTC(), ReviewNote: "ok"}
-	task.resetReview()
-	if task.ReviewStatus != "" || task.ReviewCommit != "" || task.ReviewedBy != "" || !task.ReviewedAt.IsZero() || task.ReviewNote != "" {
-		t.Fatalf("review decision not cleared: %+v", task)
-	}
-	if !task.Isolated || task.ExecutionWorkspace != "/tmp/tree" {
-		t.Fatalf("resetReview touched workspace state: %+v", task)
 	}
 }
 
@@ -153,56 +141,27 @@ func assertReviewCleared(t *testing.T, s *Service, id string) {
 	}
 }
 
-func TestIsolatedCompletionOpensReview(t *testing.T) {
-	repo := committedRepo(t)
-	s := newTestService(t)
-	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
-		return os.WriteFile(filepath.Join(task.Workspace, "reviewed.txt"), []byte("work\n"), 0600)
-	}))
-	task := startIsolated(t, s, "review", "prepare work", repo)
-	done := await(t, s, task.ID, Completed)
-	if done.ReviewStatus != ReviewPending || done.ReviewCommit == "" || done.ReviewCommit != done.WorktreeCommit {
-		t.Fatalf("prepared commit was not opened for review: %+v", done)
-	}
-	if done.Stage() != "awaiting review" {
-		t.Fatalf("pending review does not need attention: %q", done.Stage())
-	}
-	opened := false
-	for _, event := range done.Events {
-		if event.Kind == "review_pending" && strings.Contains(event.Message, done.ReviewCommit) {
-			opened = true
+func TestCompletionWithoutReviewableWorkSkipsReview(t *testing.T) {
+	for _, isolated := range []bool{true, false} {
+		s := newTestService(t)
+		s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
+		var task Task
+		if isolated {
+			task = startIsolated(t, s, "noop", "do nothing", committedRepo(t))
+		} else {
+			task = createTask(t, s, "shared", "do work", t.TempDir())
+			if task.Isolated {
+				t.Fatal("test workspace unexpectedly isolated")
+			}
+			must(t, s.Start(context.Background(), task.ID))
 		}
-	}
-	if !opened {
-		t.Fatalf("review pending event missing: %+v", done.Events)
-	}
-}
-
-func TestCompletionWithoutNewWorkSkipsReview(t *testing.T) {
-	repo := committedRepo(t)
-	s := newTestService(t)
-	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-	task := startIsolated(t, s, "noop", "do nothing", repo)
-	done := await(t, s, task.ID, Completed)
-	if done.MergeStatus != MergeUpToDate {
-		t.Fatalf("unexpected merge result: %+v", done)
-	}
-	if done.ReviewStatus != "" || done.ReviewCommit != "" {
-		t.Fatalf("up-to-date completion opened a review: %+v", done)
-	}
-}
-
-func TestSharedCompletionSkipsReview(t *testing.T) {
-	s := newTestService(t)
-	s.RegisterRunner("general", runnerFunc(func(context.Context, Task, io.Writer) error { return nil }))
-	task := createTask(t, s, "shared", "do work", t.TempDir())
-	if task.Isolated {
-		t.Fatal("test workspace unexpectedly isolated")
-	}
-	must(t, s.Start(context.Background(), task.ID))
-	done := await(t, s, task.ID, Completed)
-	if done.ReviewStatus != "" {
-		t.Fatalf("shared completion opened a review: %+v", done)
+		done := await(t, s, task.ID, Completed)
+		if isolated && done.MergeStatus != MergeUpToDate {
+			t.Fatalf("unexpected merge result: %+v", done)
+		}
+		if done.ReviewStatus != "" || done.ReviewCommit != "" {
+			t.Fatalf("isolated=%v completion opened a review: %+v", isolated, done)
+		}
 	}
 }
 

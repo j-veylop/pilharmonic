@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-
 	"pilharmonic/internal/orchestrator"
 )
 
@@ -124,4 +123,73 @@ func (r cleanupRequest) run(service Service) string {
 		return fmt.Sprintf("Discarded %d merged worktree(s).", count)
 	}
 	return "Unknown cleanup request."
+}
+
+// reviewPrompt asks how to decide a review. The task and the displayed commit
+// are captured when it opens, so a newer attempt is never approved by mistake.
+type reviewPrompt struct {
+	target, commit, title string
+}
+
+func (m model) reviewKey(key string) (model, tea.Cmd) {
+	r := m.review
+	switch key {
+	case "y":
+		m.review = reviewPrompt{}
+		return m, serviceCmd("Review approved for commit "+r.commit+"; merge scheduled.", func(s Service) error { return s.ApproveReview(r.target, r.commit, "") }, m.service)
+	case "n":
+		m.review = reviewPrompt{}
+		m.openComposer(rejectReviewInput, r.target, "Enter a reason to reject; the worktree is kept for f follow-up.")
+		m.input.reviewCommit = r.commit
+	case "esc":
+		m.review = reviewPrompt{}
+		m.notice.text = "Review canceled."
+	case "ctrl+c":
+		return m.requestQuit(), nil
+	}
+	return m, nil
+}
+
+// Every exit key on every surface asks in the footer first, so a stray q or
+// Ctrl-c never ends a run with work in flight. Only an explicit yes quits;
+// backing out leaves the screen underneath exactly as it was.
+
+func (m model) requestQuit() model {
+	m.quitConfirm = true
+	m.notice.text = ""
+	m.vimG, m.vimCount = false, 0
+	return m
+}
+
+// quitKey answers the prompt; a paste never does.
+func (m model) quitKey(msg tea.KeyMsg) (model, tea.Cmd) {
+	if msg.Paste {
+		return m, nil
+	}
+	switch msg.String() {
+	case "y", "Y", "enter", "ctrl+c":
+		return m, tea.Quit
+	case "n", "N", "esc":
+		m.quitConfirm = false
+		m.notice.text = "Quit canceled."
+	}
+	return m, nil
+}
+
+// quitCountLine states how many attempts quitting cancels. It counts process
+// status, not the displayed stage: a task waiting for subagents is still live.
+func (m model) quitCountLine() string {
+	running := 0
+	for _, task := range m.tasks {
+		if task.Status == orchestrator.Running {
+			running++
+		}
+	}
+	switch running {
+	case 0:
+		return "Nothing is running."
+	case 1:
+		return "1 running task stops when you quit."
+	}
+	return fmt.Sprintf("%d running tasks stop when you quit.", running)
 }

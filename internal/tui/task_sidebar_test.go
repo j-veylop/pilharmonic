@@ -10,27 +10,26 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
-func TestTaskSidebarStatusIconsAndColors(t *testing.T) {
+func TestTaskSidebarStatusIconsAndLabels(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
 		name  string
 		task  orchestrator.Task
 		glyph string
 		label string
-		color lipgloss.Color
 	}{
-		{name: "running", task: orchestrator.Task{Status: orchestrator.Running}, glyph: "●", label: "RUNNING", color: statusRunning},
-		{name: "completed", task: orchestrator.Task{Status: orchestrator.Completed}, glyph: "✓", label: "COMPLETED", color: statusCompleted},
-		{name: "failed", task: orchestrator.Task{Status: orchestrator.Failed}, glyph: "✗", label: "FAILED", color: statusFailed},
-		{name: "interrupted", task: orchestrator.Task{Status: orchestrator.Interrupted}, glyph: "⊘", label: "INTERRUPTED", color: statusFailed},
-		{name: "canceled", task: orchestrator.Task{Status: orchestrator.Canceled}, glyph: "⊘", label: "CANCELED", color: muted},
-		{name: "queued", task: orchestrator.Task{Status: orchestrator.Queued}, glyph: "◷", label: "QUEUED", color: statusWaiting},
-		{name: "scheduled", task: orchestrator.Task{Status: orchestrator.Queued, ScheduleRequested: true}, glyph: "◷", label: "WAITING", color: statusWaiting},
-		{name: "blocked report", task: orchestrator.Task{Status: orchestrator.Running, Reports: []orchestrator.Report{{Kind: "blocked", Message: "need input", CreatedAt: now}}}, glyph: "✗", label: "BLOCKED", color: statusFailed},
-		{name: "waiting report", task: orchestrator.Task{Status: orchestrator.Running, Reports: []orchestrator.Report{{Kind: "waiting", Message: "waiting", CreatedAt: now}}}, glyph: "◷", label: "WAITING", color: statusWaiting},
-		{name: "waiting for subagents", task: orchestrator.Task{Status: orchestrator.Completed, MergeStatus: orchestrator.MergeWaiting}, glyph: "◷", label: "WAITING FOR SUBAGENTS", color: statusWaiting},
-		{name: "merge failed", task: orchestrator.Task{Status: orchestrator.Completed, MergeStatus: orchestrator.MergeFailed}, glyph: "✗", label: "MERGE FAILED", color: statusFailed},
-		{name: "awaiting review", task: orchestrator.Task{Status: orchestrator.Completed, ReviewStatus: orchestrator.ReviewPending}, glyph: "◆", label: "AWAITING REVIEW", color: cyan},
+		{name: "running", task: orchestrator.Task{Status: orchestrator.Running}, glyph: "●", label: "RUNNING"},
+		{name: "completed", task: orchestrator.Task{Status: orchestrator.Completed}, glyph: "✓", label: "COMPLETED"},
+		{name: "failed", task: orchestrator.Task{Status: orchestrator.Failed}, glyph: "✗", label: "FAILED"},
+		{name: "interrupted", task: orchestrator.Task{Status: orchestrator.Interrupted}, glyph: "⊘", label: "INTERRUPTED"},
+		{name: "canceled", task: orchestrator.Task{Status: orchestrator.Canceled}, glyph: "⊘", label: "CANCELED"},
+		{name: "queued", task: orchestrator.Task{Status: orchestrator.Queued}, glyph: "◷", label: "QUEUED"},
+		{name: "scheduled", task: orchestrator.Task{Status: orchestrator.Queued, ScheduleRequested: true}, glyph: "◷", label: "WAITING"},
+		{name: "blocked report", task: orchestrator.Task{Status: orchestrator.Running, Reports: []orchestrator.Report{{Kind: "blocked", Message: "need input", CreatedAt: now}}}, glyph: "✗", label: "BLOCKED"},
+		{name: "waiting report", task: orchestrator.Task{Status: orchestrator.Running, Reports: []orchestrator.Report{{Kind: "waiting", Message: "waiting", CreatedAt: now}}}, glyph: "◷", label: "WAITING"},
+		{name: "waiting for subagents", task: orchestrator.Task{Status: orchestrator.Completed, MergeStatus: orchestrator.MergeWaiting}, glyph: "◷", label: "WAITING FOR SUBAGENTS"},
+		{name: "merge failed", task: orchestrator.Task{Status: orchestrator.Completed, MergeStatus: orchestrator.MergeFailed}, glyph: "✗", label: "MERGE FAILED"},
+		{name: "awaiting review", task: orchestrator.Task{Status: orchestrator.Completed, ReviewStatus: orchestrator.ReviewPending}, glyph: "◆", label: "AWAITING REVIEW"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,18 +39,13 @@ func TestTaskSidebarStatusIconsAndColors(t *testing.T) {
 			if got := ansi.Strip((model{}).taskStatusIcon(tc.task)); got != tc.glyph {
 				t.Fatalf("status icon = %q, want %q", got, tc.glyph)
 			}
-			wantStyle := lipgloss.NewStyle().Foreground(tc.color).Bold(true).Render(tc.glyph)
-			if icon := (model{}).taskStatusIcon(tc.task); !strings.Contains(icon, wantStyle) {
-				t.Fatalf("status icon %q lacks expected colour style %q", icon, wantStyle)
-			}
 			label := ansi.Strip((model{}).taskLabel(tc.task))
 			if !strings.Contains(label, tc.label) || !strings.Contains(label, "●") {
 				t.Fatalf("labelled status = %q, want %q after the shared glyph", label, tc.label)
 			}
-			// The sidebar row starts with the styled glyph alone, never the word.
-			row := (model{}).taskTitleRow(tc.task, 60, false)
-			if plain := ansi.Strip(row); !strings.HasPrefix(plain, "  "+tc.glyph+" work") || strings.Contains(plain, tc.label) || !strings.Contains(row, wantStyle) {
-				t.Fatalf("title row %q does not lead with the styled status glyph", plain)
+			// The sidebar row starts with the glyph alone, never the word.
+			if plain := ansi.Strip((model{}).taskTitleRow(tc.task, 60, false)); !strings.HasPrefix(plain, "  "+tc.glyph+" work") || strings.Contains(plain, tc.label) {
+				t.Fatalf("title row %q does not lead with the status glyph", plain)
 			}
 		})
 	}
@@ -100,41 +94,6 @@ func TestTaskStateKeepsAttentionReportOverSubagentWait(t *testing.T) {
 	m := model{tasks: []orchestrator.Task{parent, child}}
 	if _, label, _ := m.taskState(parent); label != "BLOCKED" {
 		t.Fatalf("blocked parent = %q, want BLOCKED", label)
-	}
-}
-
-func TestTaskTitleRowSelectionFitsAndKeepsStatus(t *testing.T) {
-	task := orchestrator.Task{ID: "task", Title: "work", Agent: "general", Status: orchestrator.Running}
-	for _, width := range []int{1, 2, 5, 20, 34} {
-		row := (model{}).taskTitleRow(task, width, true)
-		if got := lipgloss.Width(row); got != width {
-			t.Fatalf("width %d rendered %d cells: %q", width, got, ansi.Strip(row))
-		}
-		if strings.Contains(row, "\n") {
-			t.Fatalf("selected row wrapped at width %d", width)
-		}
-	}
-	plain := ansi.Strip((model{}).taskTitleRow(task, 20, true))
-	if !strings.Contains(plain, "▌ ● work") {
-		t.Fatalf("selection lost the status-first layout: %q", plain)
-	}
-	if row := (model{}).taskTitleRow(task, 20, true); !strings.Contains(row, (model{}).taskStatusIcon(task)) {
-		t.Fatalf("selection lost the coloured status icon: %q", row)
-	}
-	child := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Running}
-	if selected := ansi.Strip((model{}).taskTitleRow(child, 40, true)); !strings.Contains(selected, "▌   ● child") {
-		t.Fatalf("selected child row lost its indented status: %q", selected)
-	}
-}
-
-func TestTaskMetaLineOmitsRedundantChildSuffix(t *testing.T) {
-	task := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 1, Title: "work", Agent: "explorer"}
-	plain := ansi.Strip(taskMetaLine(task, 80))
-	if strings.Contains(plain, "subagent") {
-		t.Fatalf("child meta line repeats ownership: %q", plain)
-	}
-	if !strings.Contains(plain, "explorer") || !strings.Contains(plain, "inherited") {
-		t.Fatalf("child meta line lost executor or workspace: %q", plain)
 	}
 }
 
@@ -201,8 +160,25 @@ func TestTaskSelectionFollowsGroupedRows(t *testing.T) {
 	}
 }
 
-func TestTaskSidebarCompactLayoutKeepsStatusAndExecutor(t *testing.T) {
-	task := orchestrator.Task{
+// Selected rows fill their width exactly and compact panels still lead with
+// status, then title and executor.
+func TestTaskSidebarRowsFitAndLeadWithStatus(t *testing.T) {
+	task := orchestrator.Task{ID: "task", Title: "work", Agent: "general", Status: orchestrator.Running}
+	for _, width := range []int{1, 2, 5, 20, 34} {
+		row := (model{}).taskTitleRow(task, width, true)
+		if got := lipgloss.Width(row); got != width || strings.Contains(row, "\n") {
+			t.Fatalf("width %d rendered %d cells: %q", width, got, ansi.Strip(row))
+		}
+	}
+	if plain := ansi.Strip((model{}).taskTitleRow(task, 20, true)); !strings.Contains(plain, "▌ ● work") {
+		t.Fatalf("selection lost the status-first layout: %q", plain)
+	}
+	child := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Running}
+	if selected := ansi.Strip((model{}).taskTitleRow(child, 40, true)); !strings.Contains(selected, "▌   ● child") {
+		t.Fatalf("selected child row lost its indented status: %q", selected)
+	}
+
+	task = orchestrator.Task{
 		ID: "task", Title: "Fix narrow sidebar status visibility", Prompt: "work",
 		Status: orchestrator.Running, Agent: "implementer",
 	}

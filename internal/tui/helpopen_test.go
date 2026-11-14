@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
+	"pilharmonic/internal/tui/editor"
 )
 
 // f1Key is the key press the terminal reports for the help shortcut.
@@ -31,41 +32,42 @@ func helpSurfaces() map[string]model {
 	surfaces["fullscreen details"] = s
 
 	s = base
-	s.activity.open = true
+	s.tab = activityTab
 	s.detailFocus = true
 	surfaces["activity list"] = s
 
 	s = base
-	s.activity.open = true
+	s.tab = activityTab
 	s.detailFocus = true
 	s.activity.expanded = true
 	surfaces["expanded tool call"] = s
 
 	s = base
 	s.router.open = true
-	s.router.text = "do work"
-	s.router.cursor = len(s.router.text)
+	s.router.Text = "do work"
+	s.router.Cursor = len(s.router.Text)
 	surfaces["request form"] = s
 
 	s = base
-	s.router.open = true
-	s.router.focus = routerFocusRecent
-	surfaces["request form recent list"] = s
+	s.input = composer{kind: followUpInput, target: "task", Editor: editor.Editor{Text: "draft"}}
+	surfaces["follow-up composer"] = s
 
 	s = base
-	s.input = composer{kind: newTaskInput, editor: editor{text: "draft"}}
-	surfaces["new task composer"] = s
-
-	s = base
-	s.input = composer{kind: reportInput, target: "task", editor: editor{text: "blocked need access"}}
+	s.input = composer{kind: reportInput, target: "task", Editor: editor.Editor{Text: "blocked need access"}}
 	surfaces["report composer"] = s
 
 	s = base
+	s.setup.target = "task"
+	surfaces["setup popup"] = s
+
+	s = base
+	s.setup.target = "task"
 	s.agentPicker.target = "task"
 	s.agentPicker.choices = []orchestrator.AgentInfo{{Name: "general"}}
 	surfaces["agent picker"] = s
 
 	s = base
+	s.setup.target = "task"
 	s.profilePicker.target = "task"
 	s.profilePicker.choices = []orchestrator.Profile{{Name: "review"}}
 	surfaces["profile picker"] = s
@@ -93,10 +95,6 @@ func helpSurfaces() map[string]model {
 	s.models.customInput = "custom-id"
 	surfaces["custom model entry"] = s
 
-	s = base
-	s.agentClass.menu = true
-	surfaces["agent class menu"] = s
-
 	return surfaces
 }
 
@@ -110,12 +108,7 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 	opening["board"] = base
 
 	s := base
-	s.router.open = true
-	s.router.focus = routerFocusRecent
-	opening["request form list"] = s
-
-	s = base
-	s.agentPicker.target = "task"
+	s.setup.target, s.agentPicker.target = "task", "task"
 	opening["agent picker"] = s
 
 	s = base
@@ -129,12 +122,12 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 
 	s = base
 	s.router.open = true
-	s.router.text = "keep"
-	s.router.cursor = len("keep")
+	s.router.Text = "keep"
+	s.router.Cursor = len("keep")
 	typing["request form"] = s
 
 	s = base
-	s.input = composer{kind: threadInput, target: "task", editor: editor{text: "keep", cursor: len("keep")}}
+	s.input = composer{kind: threadInput, target: "task", Editor: editor.Editor{Text: "keep", Cursor: len("keep")}}
 	typing["composer"] = s
 
 	s = base
@@ -161,27 +154,14 @@ func TestQuestionMarkOpensHelpOnlyOutsideTextEntry(t *testing.T) {
 				t.Fatalf("? was stolen from the %s", name)
 			}
 			switch {
-			case next.input.text == "keep?":
-			case next.router.text == "keep?":
+			case next.input.Text == "keep?":
+			case next.router.Text == "keep?":
 			case next.models.customInput == "?":
 			case next.login.key == "?":
 			default:
 				t.Fatalf("%s did not receive the character: %+v", name, next)
 			}
 		})
-	}
-}
-
-func TestPastedQuestionMarkIsNotAShortcut(t *testing.T) {
-	m := boardWithTask()
-	m.input = composer{kind: newTaskInput, editor: editor{text: "keep", cursor: len("keep")}}
-	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?"), Paste: true}
-	m = key(m, paste)
-	if m.help.open {
-		t.Fatal("a pasted ? opened help")
-	}
-	if m.input.text != "keep?" {
-		t.Fatalf("pasted text was dropped: %q", m.input.text)
 	}
 }
 

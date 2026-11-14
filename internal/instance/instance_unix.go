@@ -1,6 +1,6 @@
 //go:build unix
 
-package orchestrator
+package instance
 
 import (
 	"fmt"

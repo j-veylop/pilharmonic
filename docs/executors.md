@@ -13,7 +13,7 @@ The service, not the adapter, decides delegation credentials and integration fro
 
 ## Fantasy adapter
 
-`FantasyRunner` drives providers in-process through [Fantasy](https://charm.land/fantasy). It implements all interfaces above. A `provider/model` selector resolves to an OpenAI-compatible endpoint with a key from `credentials.json` (via `/login`) or the provider's environment variable (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `HYPER_API_KEY`). `bedrock` uses Fantasy's AWS provider with `AWS_BEARER_TOKEN_BEDROCK` or the AWS credential chain. An attempt with no model fails with an explanatory error. Credentials never enter task state.
+`FantasyRunner` drives providers in-process through [Fantasy](https://charm.land/fantasy). It implements all interfaces above. The service resolves the attempt's `provider/model` selector, records it on the attempt and passes it with the task; the selector resolves to an OpenAI-compatible endpoint with a key from `credentials.json` (via `/login`) or the provider's environment variable (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `HYPER_API_KEY`). `bedrock` uses Fantasy's AWS provider with `AWS_BEARER_TOKEN_BEDROCK` or the AWS credential chain. An attempt with no model fails with an explanatory error. Credentials never enter task state.
 
 It exposes seven workspace tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) and a trusted system instruction to prefer them over shell. `bash` is the only shell path and runs in the execution workspace. Unknown tool names are ignored; profile and specialist limits narrow the palette. Empty results (e.g. grep with no matches) are answers, not failures.
 

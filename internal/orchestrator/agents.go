@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // AgentCapabilities describes behavior an adapter actually implements. The
@@ -126,21 +128,18 @@ func (s *Service) LoadAgents(path string) error {
 		}
 		runners[a.Name] = CommandRunner{Command: resolved, Args: append([]string(nil), a.Args...)}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return errShuttingDown
-	}
-	for name := range runners {
-		if _, exists := s.runners[name]; exists {
-			return fmt.Errorf("agent %q already registered", name)
+	return s.whileOpen(func() error {
+		for name := range runners {
+			if _, exists := s.runners[name]; exists {
+				return fmt.Errorf("agent %q already registered", name)
+			}
 		}
-	}
-	for _, a := range config.Agents {
-		s.runners[a.Name] = runners[a.Name]
-		s.agentDescriptions[a.Name] = strings.Join(strings.Fields(a.Description), " ")
-	}
-	return nil
+		for _, a := range config.Agents {
+			s.runners[a.Name] = runners[a.Name]
+			s.agentDescriptions[a.Name] = strings.Join(strings.Fields(a.Description), " ")
+		}
+		return nil
+	})
 }
 
 // CommandRunner sends a complete mandate and contextual inputs to stdin. Args
@@ -163,25 +162,100 @@ func (CommandRunner) SupportsProfile(p Profile) error {
 }
 
 func (r CommandRunner) Run(ctx context.Context, t Task, out io.Writer) error {
-	var input strings.Builder
-	input.WriteString("Original mandate:\n" + t.Prompt + "\n")
-	if len(t.Context) > 0 {
-		input.WriteString("\nAdditional context (not authority to expand the mandate):\n")
-		for _, c := range t.Context {
-			input.WriteString("\n--- context ---\n" + c.Text + "\n")
-		}
-	}
-	if t.ProfileSpec != nil && t.ProfileSpec.Instructions != "" {
-		input.WriteString("\nRole instructions (orchestrator policy for profile " + t.ProfileSpec.Name + "; not authority to expand the mandate):\n" + t.ProfileSpec.Instructions + "\n")
-	}
-	input.WriteString(t.controlGuidance)
 	cmd := exec.CommandContext(ctx, r.Command, r.Args...)
 	// Bound cancellation when a grandchild keeps the inherited pipes open.
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = t.Workspace
 	cmd.Env = t.runnerEnvironment()
-	cmd.Stdin = strings.NewReader(input.String())
+	cmd.Stdin = strings.NewReader(composeInput(t, true))
 	cmd.Stdout = out
 	cmd.Stderr = out
 	return cmd.Run()
+}
+
+var (
+	//go:embed prompts/debugger.md
+	debuggerPrompt string
+	//go:embed prompts/explorer.md
+	explorerPrompt string
+	//go:embed prompts/implementer.md
+	implementerPrompt string
+	//go:embed prompts/gitter.md
+	gitterPrompt string
+	//go:embed prompts/reviewer.md
+	reviewerPrompt string
+	//go:embed prompts/tester.md
+	testerPrompt string
+)
+
+// builtinSpecialistRole describes one bundled specialist executor.
+type builtinSpecialistRole struct {
+	name, description, instructions string
+	tools                           []string
+}
+
+// builtinSpecialistRoles defines the bundled specialists: the role name,
+// description, compiled instructions and least-privilege tool palette.
+var builtinSpecialistRoles = []builtinSpecialistRole{
+	{"debugger", "Reproduce a failure and isolate its cause.", debuggerPrompt, []string{"read", "bash", "grep", "find", "ls"}},
+	{"explorer", "Trace code paths and explain how the repository works.", explorerPrompt, []string{"read", "grep", "find", "ls"}},
+	{"implementer", "Implement a scoped change and verify its behavior.", implementerPrompt, []string{"read", "edit", "write", "grep", "find", "ls", "bash"}},
+	{"gitter", "Inspect Git history and handle scoped branch, commit, and merge work.", gitterPrompt, []string{"read", "bash", "edit", "write", "grep", "find", "ls"}},
+	{"reviewer", "Review changes for bugs and missing tests.", reviewerPrompt, []string{"read", "grep", "find", "ls"}},
+	{"tester", "Design and run focused regression tests.", testerPrompt, []string{"read", "grep", "find", "ls", "bash"}},
+}
+
+// LoadBuiltinSpecialists fills unused executor names after loading the
+// operator's command configuration and before resuming queued work. Each
+// bundled role starts from a least-privilege tool palette so a specialist
+// cannot edit, write or run commands beyond what its charge needs.
+func (s *Service) LoadBuiltinSpecialists() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, role := range builtinSpecialistRoles {
+		if _, exists := s.runners[role.name]; exists {
+			continue
+		}
+		s.runners[role.name] = FantasyRunner{instructions: strings.TrimSpace(role.instructions), defaultTools: append([]string(nil), role.tools...), ModelFactory: s.fantasyModelFactory}
+		s.agentDescriptions[role.name] = role.description
+	}
+}
+
+// SetDefaultModel sets the model for Fantasy attempts that resolve no profile,
+// class or specialist model.
+func (s *Service) SetDefaultModel(model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.defaultModel = model
+}
+
+// selectAgentLocked matches the requested action at the start of the mandate.
+// Only registered executors can be selected; other requests keep the fallback.
+func (s *Service) selectAgentLocked(text, fallback string) string {
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	request := strings.Join(words, " ") + " "
+	for _, prefix := range []string{"can you ", "could you ", "please "} {
+		request = strings.TrimPrefix(request, prefix)
+	}
+	for _, rule := range []struct {
+		agent   string
+		actions []string
+	}{
+		{"tester", []string{"test", "write tests", "add tests", "add regression tests", "run tests", "run the tests"}},
+		{"debugger", []string{"debug", "diagnose", "reproduce", "investigate", "find out why"}},
+		{"reviewer", []string{"review", "audit", "check code quality"}},
+		{"gitter", []string{"git", "commit", "rebase", "merge", "cherry pick", "create a branch", "create a worktree"}},
+		{"explorer", []string{"explore", "explain", "locate", "trace", "find", "how does", "where is"}},
+		{"implementer", []string{"implement", "build", "add", "fix", "refactor", "update", "create", "remove"}},
+	} {
+		for _, action := range rule.actions {
+			if strings.HasPrefix(request, action+" ") {
+				if _, ok := s.runners[rule.agent]; ok {
+					return rule.agent
+				}
+				return fallback
+			}
+		}
+	}
+	return fallback
 }

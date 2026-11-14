@@ -5,13 +5,14 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
 )
 
 func activityModel() model {
-	return model{width: 100, height: 24, activity: activityState{open: true}, detailFocus: true, tasks: []orchestrator.Task{{ID: "task", Title: "work", Activities: []orchestrator.ToolActivity{
+	return model{width: 100, height: 24, tab: activityTab, detailFocus: true, tasks: []orchestrator.Task{{ID: "task", Title: "work", Activities: []orchestrator.ToolActivity{
 		{ID: "one", Name: "bash", AttemptID: "attempt-one", Status: "finished", Args: json.RawMessage(`{"command":"go test ./..."}`), Result: json.RawMessage(`{"content":[{"type":"text","text":"all passed"}]}`)},
 		{ID: "two", Name: "read", AttemptID: "attempt-one", Status: "running", Args: json.RawMessage(`{"path":"main.go"}`)},
 	}}}}
@@ -38,6 +39,32 @@ func TestActivitySelectExpandAndRetainIdentity(t *testing.T) {
 		t.Fatal("did not collapse")
 	}
 }
+func TestTabCyclesDetailTabsAndEnterExpandsOnlyWithFocus(t *testing.T) {
+	m := activityModel()
+	m.tab, m.detailFocus = outputTab, false
+	for _, want := range []detailTab{infoTab, activityTab, outputTab} {
+		if m = key(m, tea.KeyMsg{Type: tea.KeyTab}); m.tab != want {
+			t.Fatalf("tab = %d, want %d", m.tab, want)
+		}
+	}
+	if m = key(m, tea.KeyMsg{Type: tea.KeyShiftTab}); m.tab != activityTab {
+		t.Fatalf("shift+tab = %d, want ACTIVITY", m.tab)
+	}
+	if m = key(m, tea.KeyMsg{Type: tea.KeyEnter}); !m.detailFocus || m.activity.expanded {
+		t.Fatal("enter on the unfocused ACTIVITY tab did not just focus the pane")
+	}
+	if m = key(m, tea.KeyMsg{Type: tea.KeyEnter}); !m.activity.expanded || !m.detailFocus {
+		t.Fatal("enter in the focused pane did not expand the selected call")
+	}
+	if m = key(m, tea.KeyMsg{Type: tea.KeyEsc}); m.activity.expanded || !m.detailFocus {
+		t.Fatal("esc did not collapse the call first")
+	}
+	m.tasks[0].Activities = nil
+	if m = key(m, tea.KeyMsg{Type: tea.KeyEnter}); m.detailFocus {
+		t.Fatal("enter without a call did not fall through to the focus toggle")
+	}
+}
+
 func TestExpandedActivityScrollableAndFits(t *testing.T) {
 	for _, size := range [][2]int{{120, 30}, {80, 24}, {50, 20}} {
 		m := activityModel()
@@ -69,7 +96,7 @@ func TestReadableToolTextResult(t *testing.T) {
 }
 
 func TestActivityEmptyStateMentionsFilterOnlyWhenFiltered(t *testing.T) {
-	m := model{activity: activityState{open: true}, tasks: []orchestrator.Task{{ID: "task"}}}
+	m := model{tab: activityTab, tasks: []orchestrator.Task{{ID: "task"}}}
 	empty := ansi.Strip(strings.Join(m.activityContent(80), "\n"))
 	if !strings.Contains(empty, "No tool calls yet.") || strings.Contains(empty, "No calls match") {
 		t.Fatalf("unfiltered empty state is misleading: %q", empty)
@@ -110,11 +137,11 @@ func TestActivityFiltersAndCurrentAction(t *testing.T) {
 		{ID: "same", AttemptID: "old", Status: "failed"},
 		{ID: "same", AttemptID: "new", Name: "bash", Status: "running", Args: json.RawMessage(`{"command":"go test ./..."}`)},
 	}}
-	m := model{tasks: []orchestrator.Task{task}, activity: activityState{open: true}}
+	m := model{tasks: []orchestrator.Task{task}, tab: activityTab, detailFocus: true}
 	if m.currentAction(task) != "⠋ bash: go test ./..." {
 		t.Fatal(m.currentAction(task))
 	}
-	m.activityKey("f")
+	m, _ = m.boardKey("e")
 	if len(m.visibleActivities()) != 1 || m.visibleActivities()[0].AttemptID != "new" {
 		t.Fatal("latest filter")
 	}
@@ -122,11 +149,11 @@ func TestActivityFiltersAndCurrentAction(t *testing.T) {
 	if !m.activity.expanded || m.activity.attempt != "new" {
 		t.Fatal("wrong expanded attempt")
 	}
-	m.activityKey("f")
+	m, _ = m.boardKey("e")
 	if m.activity.expanded || len(m.visibleActivities()) != 1 || m.visibleActivities()[0].Status != "failed" {
 		t.Fatal("error filter")
 	}
-	m.activityKey("f")
+	m, _ = m.boardKey("e")
 	if len(m.visibleActivities()) != 2 {
 		t.Fatal("all filter")
 	}

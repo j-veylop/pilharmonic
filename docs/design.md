@@ -13,6 +13,9 @@ starts and runs the terminal. The service owns routing, scheduling, history and
 workspaces. The terminal displays snapshots and submits operator actions; it
 holds no authoritative task state. Each executor owns its own invocation and
 protocol behind a narrow interface (see the [executor contract](executors.md)).
+Git worktree operations, provider resolution, the agent workspace tools and the
+state-file lock live in leaf packages under `internal/` that never import the
+service; the service passes them plain values, not tasks.
 
 ## Requests and authority
 
@@ -26,7 +29,8 @@ protocol behind a narrow interface (see the [executor contract](executors.md)).
 - A leading `@NAME` selects a registered executor and is removed from the
   mandate; otherwise the router assigns `general`. Top-level routing never infers
   an executor from the request text. An unknown or incomplete mention is
-  rejected. A manual draft (`n`) waits for the operator.
+  rejected. A held request (**Ctrl-s** in the request box) is
+  accepted queued and waits for the operator.
 - A related task in the same thread has its own mandate and decision and
   snapshots the default profile at acceptance. A thread follow-up records the
   subscribed queued and running recipients at submission. Pausing a subscription
@@ -55,9 +59,14 @@ Specialist tool limits intersect with the task profile's tools; disjoint lists
 prevent the start. An executor that cannot honor a profile's tools or model
 fails the start instead of ignoring them. A profile is not a sandbox.
 
-The Fantasy adapter resolves an attempt's model as class model (`models.json`),
-else the runner's configured model, else the task profile model, and fixes the
-selector on the attempt. The provider prefix selects the endpoint and credential.
+The service resolves a Fantasy attempt's model as the task profile model, else
+the agent's class model (`models.json`; `general` is big, specialists small),
+else the specialist model (`profiles.json`), else `-model`. A profile or
+specialist model of `big` or `small` stands for that class's model, and a
+specialist alias also sets its class; an alias whose class is unset is skipped,
+never sent to a provider. It fixes the selector on the attempt and the adapter
+runs exactly that selector. The provider prefix selects the endpoint
+and credential.
 
 The compiled coordinator guidance is added only for a top-level `general`
 attempt with delegation credentials, bash, and remaining child budget. It grants

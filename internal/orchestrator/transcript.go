@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
-	"unicode/utf8"
 )
 
 const (
@@ -89,8 +87,9 @@ func adapterReport(out io.Writer, kind, message string) error {
 }
 
 // composeInput renders the mandate, later context and trusted control
-// guidance, keeping the policy-relevant wording in one place.
-func composeInput(t Task) string {
+// guidance, keeping the policy-relevant wording in one place. An adapter
+// without a system prompt asks for the profile's role instructions here too.
+func composeInput(t Task, roleInstructions bool) string {
 	var prompt strings.Builder
 	prompt.WriteString("Original mandate:\n" + t.Prompt)
 	if len(t.Context) > 0 {
@@ -99,63 +98,9 @@ func composeInput(t Task) string {
 			fmt.Fprintf(&prompt, "\n--- context ---\n%s\n", item.Text)
 		}
 	}
+	if p := t.ProfileSpec; roleInstructions && p != nil && p.Instructions != "" {
+		prompt.WriteString("\n\nRole instructions (orchestrator policy for profile " + p.Name + "; not authority to expand the mandate):\n" + p.Instructions + "\n")
+	}
 	prompt.WriteString(t.controlGuidance)
 	return prompt.String()
-}
-
-// sanitizeTranscript strips terminal control bytes from agent-supplied text.
-// Newlines and tabs are kept; C0/C1 controls, DEL and ESC are removed so output
-// cannot rewrite the terminal.
-func sanitizeTranscript(text string) string {
-	var clean strings.Builder
-	clean.Grow(len(text))
-	for i := 0; i < len(text); {
-		r, size := utf8.DecodeRuneInString(text[i:])
-		if r == utf8.RuneError && size == 1 {
-			// An invalid byte is kept unless it falls in a control range.
-			if c := text[i]; c >= 0x20 && (c < 0x7f || c > 0x9f) {
-				clean.WriteByte(c)
-			}
-		} else if r == '\n' || r == '\t' || r >= 0x20 && (r < 0x7f || r > 0x9f) {
-			clean.WriteRune(r)
-		}
-		i += size
-	}
-	return clean.String()
-}
-
-// cappedBuffer bounds captured command output while keeping both its beginning
-// and its end, where the useful diagnostic often is. os/exec writes from its
-// own goroutine, hence the mutex.
-type cappedBuffer struct {
-	mu         sync.Mutex
-	head, tail []byte
-	max        int
-}
-
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	written := len(p)
-	if len(b.head) < b.max {
-		take := min(b.max-len(b.head), len(p))
-		b.head = append(b.head, p[:take]...)
-		p = p[take:]
-	}
-	if len(p) > 0 {
-		b.tail = append(b.tail, p...)
-		if len(b.tail) > b.max {
-			b.tail = b.tail[len(b.tail)-b.max:]
-		}
-	}
-	return written, nil
-}
-
-func (b *cappedBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.tail) == 0 {
-		return string(b.head)
-	}
-	return string(b.head) + "\n[...]\n" + string(b.tail)
 }

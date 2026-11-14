@@ -11,6 +11,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"pilharmonic/internal/providers"
 )
 
 type Service struct {
@@ -21,12 +23,16 @@ type Service struct {
 	creds              map[string]string
 	modelSelectionPath string
 	modelSelection     map[string]string
-	agentClasses       map[string]string
-	modelCache         modelListCache
-	data               state
-	runners            map[string]Runner
-	specialistTools    map[string][]string
-	profiles           map[string]Profile
+	// agentModels and defaultModel are the configured Fantasy models; see
+	// fantasyModelLocked.
+	agentModels     map[string]string
+	defaultModel    string
+	modelCache      modelListCache
+	listModels      func(ctx context.Context, provider, key string) ([]string, error)
+	data            state
+	runners         map[string]Runner
+	specialistTools map[string][]string
+	profiles        map[string]Profile
 	// routeProfile is the profile the router assigns and the default for tasks
 	// created without an explicit choice.
 	routeProfile   string
@@ -68,6 +74,8 @@ func Open(path string) (*Service, error) {
 	s := &Service{
 		path:                path,
 		runners:             map[string]Runner{},
+		agentModels:         map[string]string{},
+		listModels:          providers.ListModels,
 		profiles:            builtinProfiles(),
 		routeProfile:        DefaultProfileName,
 		cancel:              make(map[string]context.CancelFunc),
@@ -93,12 +101,16 @@ func Open(path string) (*Service, error) {
 	if s.creds, err = loadCredentials(s.credentialsPath); err != nil {
 		return nil, err
 	}
-	if s.modelSelection, s.agentClasses, err = loadModelConfig(s.modelSelectionPath); err != nil {
+	var legacyClasses bool
+	if s.modelSelection, legacyClasses, err = loadModelConfig(s.modelSelectionPath); err != nil {
 		return nil, err
 	}
-	s.runners[DefaultRouteAgent] = FantasyRunner{ModelFactory: s.fantasyModelFactory, modelClass: ModelClassBig, modelOverride: s.modelSelection[ModelClassBig]}
+	s.runners[DefaultRouteAgent] = FantasyRunner{ModelFactory: s.fantasyModelFactory}
 	if err = s.loadState(); err != nil {
 		return nil, err
+	}
+	if legacyClasses {
+		s.addStartupWarning(`models.json per-agent classes are no longer supported and were ignored; set "model": "big" or "small" on the specialist in profiles.json`)
 	}
 	migrated := migrateStartupState(&s.data)
 	recovered, err := recoverStartupState(s)
@@ -111,6 +123,82 @@ func Open(path string) (*Service, error) {
 		}
 	}
 	return s, nil
+}
+
+// DefaultStatePath is the state file used when none is given: state stays
+// under the historical "orchestrator" directory of the user config dir.
+func DefaultStatePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "orchestrator", "state.json"), nil
+}
+
+// Options is the startup configuration applied once by Configure. Empty paths
+// default to files beside the state file.
+type Options struct {
+	AgentsPath     string // optional command agent definitions
+	ProfilesPath   string // profiles.json; required only when set explicitly
+	DefaultModel   string
+	RoutingProfile string
+	Isolation      bool
+	MaxConcurrent  int
+	IdleTimeout    time.Duration
+	// AttemptRetention is how many attempts keep their output; zero keeps all.
+	AttemptRetention int
+	Subagents        bool
+	MaxSubagentDepth int
+	MaxSubagents     int
+	SubagentSocket   string
+}
+
+// Configure registers executors and profiles and applies the execution
+// limits, in the order resumed starts depend on. It returns the profiles file
+// it loaded, or "" when the optional default file is absent.
+func (s *Service) Configure(o Options) (string, error) {
+	if err := s.SetDefaultIsolation(o.Isolation); err != nil {
+		return "", err
+	}
+	if o.AgentsPath != "" {
+		if err := s.LoadAgents(o.AgentsPath); err != nil {
+			return "", err
+		}
+	}
+	s.LoadBuiltinSpecialists()
+	profiles := o.ProfilesPath
+	if profiles == "" {
+		profiles = filepath.Join(filepath.Dir(s.path), "profiles.json")
+	}
+	if err := s.LoadProfiles(profiles); errors.Is(err, os.ErrNotExist) && o.ProfilesPath == "" {
+		profiles = ""
+	} else if err != nil {
+		return "", err
+	}
+	if o.DefaultModel != "" {
+		s.SetDefaultModel(o.DefaultModel)
+	}
+	if o.RoutingProfile != "" {
+		if err := s.SetRoutingProfile(o.RoutingProfile); err != nil {
+			return "", err
+		}
+	}
+	if !o.Subagents {
+		o.MaxSubagentDepth, o.MaxSubagents = 0, 0
+	}
+	if err := s.SetSubagentLimits(o.MaxSubagentDepth, o.MaxSubagents); err != nil {
+		return "", err
+	}
+	if o.MaxSubagentDepth > 0 && o.MaxSubagents > 0 {
+		socket := o.SubagentSocket
+		if socket == "" {
+			socket = filepath.Join(filepath.Dir(s.path), "subagent.sock")
+		}
+		if err := s.EnableSubagentControl(socket); err != nil {
+			return "", err
+		}
+	}
+	return profiles, errors.Join(s.SetConcurrencyLimit(o.MaxConcurrent), s.SetIdleTimeout(o.IdleTimeout), s.SetAttemptRetention(o.AttemptRetention))
 }
 
 func (s *Service) RegisterRunner(name string, runner Runner) {
@@ -196,7 +284,7 @@ func (s *Service) Cancel(id string) error {
 		return errTaskNotFound
 	}
 	if t.Status == Queued {
-		if err := s.cancelQueuedLocked(t, nil); err != nil {
+		if err := s.settleQueuedLocked(t, Canceled, "Canceled before start", nil); err != nil {
 			return err
 		}
 		s.resumeMergesLocked()

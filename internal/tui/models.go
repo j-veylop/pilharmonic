@@ -82,9 +82,10 @@ func (m model) modelMenuKey(key string) (model, tea.Cmd) {
 		return m.modelCustomKey(key), nil
 	}
 	choices := m.modelChoices()
+	if m.listMenuKey(key, &m.models.index, len(choices)) {
+		return m, nil
+	}
 	switch key {
-	case "ctrl+c":
-		return m.requestQuit(), nil
 	case "esc":
 		if m.models.step == modelStepClass {
 			m.models.menu = false
@@ -100,8 +101,6 @@ func (m model) modelMenuKey(key string) (model, tea.Cmd) {
 			return m, nil
 		}
 		return m.selectModelChoice(choices[max(0, min(len(choices)-1, m.models.index))])
-	default:
-		moveMenuIndex(key, &m.models.index, len(choices))
 	}
 	return m, nil
 }
@@ -285,46 +284,7 @@ func (m model) modelEmptyHint() string {
 	case modelStepClass:
 		return "No classes available."
 	case modelStepProvider:
-		return "No provider configured — press L to log in."
+		return "No provider configured; type /login to log in."
 	}
 	return "No curated models; use custom…"
-}
-
-// agentClassMenuKey drives the per-agent big/small menu. Enter toggles the
-// selected agent's class.
-func (m model) agentClassMenuKey(key string) model {
-	agents := m.service.AgentClasses()
-	switch key {
-	case "ctrl+c":
-		return m.requestQuit()
-	case "esc":
-		m.agentClass.menu = false
-		m.notice.text = "Agent classes closed"
-	case "enter":
-		if len(agents) == 0 {
-			return m
-		}
-		agent := agents[max(0, min(len(agents)-1, m.agentClass.index))]
-		class := orchestrator.ModelClassBig
-		if agent.Class == orchestrator.ModelClassBig {
-			class = orchestrator.ModelClassSmall
-		}
-		m.notice.text = resultFor(agent.Agent+" uses the "+class+" model", m.service.SetAgentClass(agent.Agent, class)).text()
-	default:
-		moveMenuIndex(key, &m.agentClass.index, len(agents))
-	}
-	return m
-}
-
-func (m model) agentClassMenuView(background string, w, h int) string {
-	agents := m.service.AgentClasses()
-	rows := make([]menuRow, len(agents))
-	for i, agent := range agents {
-		tag := mutedStyle.Render(agent.Class)
-		if agent.Overridden {
-			tag = accentStyle.Render(agent.Class)
-		}
-		rows[i] = menuRow{label: agent.Agent, tag: tag}
-	}
-	return menuView(background, w, h, "AGENTS", "big / small model", nil, rows, m.agentClass.index, "", "j/k select · enter toggle · f1 help · esc close", min(76, w-4), min(28, h-2))
 }

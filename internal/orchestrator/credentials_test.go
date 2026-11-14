@@ -100,17 +100,3 @@ func TestProviderCredentialFeedsModelFactory(t *testing.T) {
 		t.Fatalf("unexpected model: %q", model.Model())
 	}
 }
-
-func TestHyperProviderResolves(t *testing.T) {
-	dir := t.TempDir()
-	s := openTestService(t, filepath.Join(dir, "state.json"))
-
-	must(t, s.SetProviderCredential("hyper", "hk-test"))
-	model, err := s.fantasyModelFactory(t.Context(), "hyper/prism")
-	if err != nil {
-		t.Fatalf("hyper provider not resolved: %v", err)
-	}
-	if model.Model() != "prism" {
-		t.Fatalf("unexpected model: %q", model.Model())
-	}
-}

@@ -9,96 +9,49 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
+// Each workspace and merge state has its own badge on the board, also under
+// the request box, and the OUTPUT and INFO tabs explain what the state means.
 func TestWorkspaceBadgeDistinguishesWorkspaceAndMergeState(t *testing.T) {
+	conflict := "CONFLICT (content): Merge conflict in tracked.txt"
+	rejected := orchestrator.Task{Isolated: true, Status: orchestrator.Completed, ExecutionWorkspace: "/state/workspaces/task/tree", ReviewStatus: orchestrator.ReviewRejected,
+		ReviewedBy: orchestrator.LocalActor, ReviewedAt: time.Now(), ReviewNote: "not needed"}
 	cases := []struct {
-		name  string
-		task  orchestrator.Task
-		glyph string
-		label string
+		name   string
+		task   orchestrator.Task
+		glyph  string
+		label  string
+		detail []string
 	}{
-		{"shared", orchestrator.Task{}, glyphShared, "shared"},
-		{"isolated", orchestrator.Task{Isolated: true}, glyphWorktree, "isolated"},
-		{"inherited", orchestrator.Task{ParentID: "parent"}, glyphInherited, "inherited"},
-		{"merged", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeMerged}, glyphMerged, "merged"},
-		{"up to date", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeUpToDate}, glyphCheck, "up to date"},
-		{"merge failed", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeFailed, MergeError: "source repository already has an in-progress merge"}, glyphMergeError, "merge error"},
-		{"merge conflict", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeFailed, MergeError: "CONFLICT (content): Merge conflict in tracked.txt"}, glyphConflict, "conflict"},
-		{"review pending", orchestrator.Task{Isolated: true, ReviewStatus: orchestrator.ReviewPending}, glyphReview, "review"},
-		{"review rejected", orchestrator.Task{Isolated: true, ReviewStatus: orchestrator.ReviewRejected}, glyphMergeError, "rejected"},
+		{"shared", orchestrator.Task{}, glyphShared, "shared", nil},
+		{"isolated", orchestrator.Task{Isolated: true, Status: orchestrator.Running, ExecutionWorkspace: "/state/workspaces/task/tree", IsolationCommit: "abc123"}, glyphWorktree, "isolated", nil},
+		{"inherited", orchestrator.Task{ParentID: "parent"}, glyphInherited, "inherited", nil},
+		{"merged", orchestrator.Task{Isolated: true, Status: orchestrator.Completed, MergeStatus: orchestrator.MergeMerged, MergeCommit: "def456"}, glyphMerged, "merged", nil},
+		{"up to date", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeUpToDate}, glyphCheck, "up to date", nil},
+		{"merge failed", orchestrator.Task{Isolated: true, MergeStatus: orchestrator.MergeFailed, MergeError: "source repository already has an in-progress merge"}, glyphMergeError, "merge error", nil},
+		{"merge conflict", orchestrator.Task{Isolated: true, Status: orchestrator.Completed, MergeStatus: orchestrator.MergeFailed, MergeError: conflict}, glyphConflict, "conflict", []string{"MERGE FAILED (conflict)"}},
+		{"review pending", orchestrator.Task{Isolated: true, Status: orchestrator.Completed, ExecutionWorkspace: "/state/workspaces/task/tree", ReviewStatus: orchestrator.ReviewPending, ReviewCommit: "abc123"}, glyphReview, "review",
+			[]string{"REVIEW PENDING", "abc123", "merge blocked until approval", "v to review"}},
+		{"review rejected", rejected, glyphMergeError, "rejected",
+			[]string{"REVIEW REJECTED", orchestrator.LocalActor, "not needed", "Worktree retained", "f adds follow-up"}},
 	}
 	for _, tc := range cases {
-		badge := workspaceBadgeFor(tc.task)
-		if badge.glyph != tc.glyph || badge.label != tc.label {
-			t.Fatalf("%s: got %q %q, want %q %q", tc.name, badge.glyph, badge.label, tc.glyph, tc.label)
-		}
-		if rendered := ansi.Strip(badge.render()); !strings.Contains(rendered, tc.glyph) || !strings.Contains(rendered, tc.label) {
-			t.Fatalf("%s: rendered badge %q", tc.name, rendered)
-		}
-	}
-}
-
-func TestTaskBoardShowsWorkspaceAndMergeBadge(t *testing.T) {
-	task := orchestrator.Task{
-		ID: "task", Title: "isolated work", Prompt: "work", Status: orchestrator.Running,
-		Isolated: true, ExecutionWorkspace: "/state/workspaces/task/tree", IsolationCommit: "abc123",
-	}
-	m := model{width: 120, height: 35, tasks: []orchestrator.Task{task}}
-	view := ansi.Strip(m.View())
-	if !strings.Contains(view, glyphWorktree) || !strings.Contains(view, "isolated") {
-		t.Fatalf("isolated task badge missing: %s", view)
-	}
-
-	task.Status = orchestrator.Completed
-	task.MergeStatus = orchestrator.MergeMerged
-	task.MergeCommit = "def456"
-	m.tasks[0] = task
-	view = ansi.Strip(m.View())
-	if !strings.Contains(view, glyphMerged) || !strings.Contains(view, "merged") {
-		t.Fatalf("merged task badge missing: %s", view)
-	}
-
-	task.MergeStatus = orchestrator.MergeFailed
-	task.MergeError = "CONFLICT (content): Merge conflict in tracked.txt"
-	m.tasks[0] = task
-	view = ansi.Strip(m.View())
-	if !strings.Contains(view, glyphConflict) || !strings.Contains(view, "conflict") || !strings.Contains(view, "MERGE FAILED (conflict)") {
-		t.Fatalf("merge conflict badge missing: %s", view)
-	}
-}
-
-func TestRouterRecentRoutesShowWorkspaceBadge(t *testing.T) {
-	m := model{router: routerState{open: true}, width: 120, height: 35, tasks: []orchestrator.Task{{
-		ID: "task", Title: "merged work", Status: orchestrator.Completed, Agent: "general",
-		CreatedAt: time.Now(), Isolated: true, MergeStatus: orchestrator.MergeMerged, MergeCommit: "def456",
-	}}}
-	view := ansi.Strip(m.View())
-	if !strings.Contains(view, glyphMerged+" merged") {
-		t.Fatalf("recent route missing workspace badge: %s", view)
-	}
-}
-
-func TestTaskDetailShowsReviewState(t *testing.T) {
-	task := orchestrator.Task{
-		ID: "task", Title: "reviewed work", Prompt: "work", Status: orchestrator.Completed,
-		Isolated: true, ExecutionWorkspace: "/state/workspaces/task/tree",
-		ReviewStatus: orchestrator.ReviewPending, ReviewCommit: "abc123",
-	}
-	m := model{width: 120, height: 35, tasks: []orchestrator.Task{task}}
-	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "REVIEW PENDING") || !strings.Contains(view, "abc123") || !strings.Contains(view, "merge blocked until approval") || !strings.Contains(view, "v approve + merge") || !strings.Contains(view, "V reject") {
-		t.Fatalf("pending review not shown with its merge consequence: %s", view)
-	}
-
-	task.ReviewStatus = orchestrator.ReviewRejected
-	task.ReviewedBy = orchestrator.LocalActor
-	task.ReviewedAt = time.Now()
-	task.ReviewNote = "not needed"
-	m.tasks[0] = task
-	view = ansi.Strip(m.View())
-	if !strings.Contains(view, "REVIEW REJECTED") || !strings.Contains(view, orchestrator.LocalActor) || !strings.Contains(view, "not needed") {
-		t.Fatalf("rejection not shown: %s", view)
-	}
-	if !strings.Contains(view, "Worktree retained") || !strings.Contains(view, "F adds follow-up") {
-		t.Fatalf("rejection does not explain retained work and follow-up: %s", view)
+		t.Run(tc.name, func(t *testing.T) {
+			badge := workspaceBadgeFor(tc.task)
+			if badge.glyph != tc.glyph || badge.label != tc.label {
+				t.Fatalf("got %q %q, want %q %q", badge.glyph, badge.label, tc.glyph, tc.label)
+			}
+			tc.task.ID, tc.task.Title, tc.task.Prompt, tc.task.Agent, tc.task.CreatedAt = "task", "work", "work", "general", time.Now()
+			board := ansi.Strip(model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}}.View() +
+				model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}, tab: infoTab}.View())
+			for _, want := range append([]string{tc.glyph + " " + tc.label}, tc.detail...) {
+				if !strings.Contains(board, want) {
+					t.Fatalf("board missing %q: %s", want, board)
+				}
+			}
+			recent := ansi.Strip(model{router: routerState{open: true}, width: 120, height: 35, tasks: []orchestrator.Task{tc.task}}.View())
+			if !strings.Contains(recent, tc.glyph+" "+tc.label) {
+				t.Fatalf("recent task missing workspace badge: %s", recent)
+			}
+		})
 	}
 }

@@ -69,7 +69,7 @@ func parseInlineThinking(line string) (string, bool) {
 
 func appendThinking(out []string, block string, width int, showThinking bool) []string {
 	if !showThinking {
-		out = append(out, strings.Split(ansi.Hardwrap(mutedStyle.Render("▌ thinking hidden · T to show"), width, true), "\n")...)
+		out = append(out, strings.Split(ansi.Hardwrap(mutedStyle.Render("▌ thinking hidden · t to show"), width, true), "\n")...)
 		return append(out, "")
 	}
 	if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
@@ -384,7 +384,7 @@ func appendToolCalls(out []string, calls []transcriptToolCall, width int) []stri
 // toolCallLines renders one call as a status-coloured rail and glyph, the tool
 // name and a muted summary, indented apart from assistant prose.
 func toolCallLines(call transcriptToolCall, width int) []string {
-	style, glyph := toolStatusStyle(call.status)
+	style, glyph := toolStatusStyle(call.status, runningGlyphPlaceholder)
 	body := style.Bold(true).Render(glyph)
 	name, args := splitToolSummary(call.summary)
 	if name != "" {

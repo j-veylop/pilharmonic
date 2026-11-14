@@ -35,7 +35,7 @@ func TestScheduledAndHistoryPagination(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		task.Events = append(task.Events, orchestrator.Event{Kind: fmt.Sprintf("event-%02d", i)})
 	}
-	m := model{width: 120, height: 22, history: true, tasks: []orchestrator.Task{task}}
+	m := model{width: 120, height: 22, tab: infoTab, tasks: []orchestrator.Task{task}}
 	latest := m.View()
 	if !strings.Contains(latest, "WAITING") || !strings.Contains(latest, "event-29") {
 		t.Fatalf("missing waiting or latest event: %s", latest)
@@ -64,21 +64,6 @@ func TestPanelDoesNotRewrapViewportRows(t *testing.T) {
 	}
 }
 
-func TestDetailTabsOmitActivityTab(t *testing.T) {
-	task := orchestrator.Task{ID: "task", Title: "work", Prompt: "do work", Agent: "general"}
-	m := model{width: 120, height: 30, tasks: []orchestrator.Task{task}}
-	for _, activity := range []bool{false, true} {
-		m.activity.open = activity
-		tabs := ansi.Strip(m.detailTabRow(task, 100))
-		if strings.Contains(tabs, "ACTIVITY") {
-			t.Fatalf("activity tab still present: %q", tabs)
-		}
-		if !strings.Contains(tabs, "OUTPUT") || !strings.Contains(tabs, "HISTORY") {
-			t.Fatalf("missing output/history tabs: %q", tabs)
-		}
-	}
-}
-
 func TestThinkingToggleChangesOutputAndKeepsLayoutBounded(t *testing.T) {
 	service, err := orchestrator.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
@@ -91,11 +76,11 @@ func TestThinkingToggleChangesOutputAndKeepsLayoutBounded(t *testing.T) {
 	if strings.Contains(hidden, "private reasoning") || !strings.Contains(hidden, "thinking hidden") {
 		t.Fatalf("thinking should start hidden: %s", hidden)
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
 	m = next.(model)
 	m.tasks = []orchestrator.Task{task}
 	if !m.thinking {
-		t.Fatal("T did not enable thinking")
+		t.Fatal("t did not enable thinking")
 	}
 	shown := ansi.Strip(m.View())
 	if !strings.Contains(shown, "private reasoning") || !strings.Contains(shown, "THINKING") {
@@ -104,11 +89,11 @@ func TestThinkingToggleChangesOutputAndKeepsLayoutBounded(t *testing.T) {
 	if lipgloss.Width(m.View()) > m.width || lipgloss.Height(m.View()) > m.height {
 		t.Fatal("thinking output overflowed the terminal")
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
 	m = next.(model)
 	m.tasks = []orchestrator.Task{task}
 	if m.thinking {
-		t.Fatal("T did not hide thinking")
+		t.Fatal("t did not hide thinking")
 	}
 }
 
@@ -134,9 +119,9 @@ func TestDetailConfigurationHintsOnlyBeforeStart(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := model{width: 120, height: 30, tasks: []orchestrator.Task{tc.task}}
+			m := model{width: 120, height: 30, tasks: []orchestrator.Task{tc.task}, tab: infoTab}
 			detail := ansi.Strip(strings.Join(m.detailContent(100), "\n"))
-			for _, hint := range []string{"A to change", "P to change", "w to isolate before start"} {
+			for _, hint := range []string{"Agent: general · o to change", "Profile: default · o to change", "shared workspace (o to change)"} {
 				if got := strings.Contains(detail, hint); got != tc.want {
 					t.Fatalf("hint %q present=%v, want %v: %s", hint, got, tc.want, detail)
 				}
@@ -145,44 +130,7 @@ func TestDetailConfigurationHintsOnlyBeforeStart(t *testing.T) {
 	}
 }
 
-func TestTextUsesNoBackgroundColour(t *testing.T) {
-	m := model{width: 120, height: 30, tasks: []orchestrator.Task{{
-		ID: "task", Title: "work", Prompt: "do work", Agent: "general",
-		Output: "`inline code`\n\n```\ncode block\n```\n",
-	}}}
-	views := []string{m.View()}
-	m.help.open = true
-	views = append(views, m.View())
-	for _, view := range views {
-		if strings.Contains(view, "\x1b[48;") {
-			t.Fatal("text is rendered with a background colour")
-		}
-	}
-}
-
-func TestErgonomicLayoutPrioritizesDetails(t *testing.T) {
-	m := model{width: 120, height: 30, tasks: []orchestrator.Task{{ID: "x", Title: "task", Prompt: "work"}}}
-	w, h := m.detailGeometry()
-	if w < 80 || h < 25 {
-		t.Fatalf("detail pane too small: %dx%d", w, h)
-	}
-	m.fullscreen = true
-	w, _ = m.detailGeometry()
-	if w != 120 {
-		t.Fatal("fullscreen detail width", w)
-	}
-	m.width = 50
-	m.fullscreen = false
-	w, _ = m.detailGeometry()
-	if w != 50 {
-		t.Fatal("narrow detail width", w)
-	}
-	if strings.Contains(m.View(), "TASKS  01") {
-		t.Fatal("narrow layout wastes space on sidebar")
-	}
-}
-
-// The board fits every size, in output and history, with tool rows, tabs and
+// The board fits every size, in every detail tab, with tool rows, tabs and
 // terminal control sequences in untrusted task text.
 func TestViewFitsTerminalWithUntrustedText(t *testing.T) {
 	tasks := []orchestrator.Task{
@@ -193,8 +141,8 @@ func TestViewFitsTerminalWithUntrustedText(t *testing.T) {
 	}
 	for _, size := range [][2]int{{120, 35}, {80, 24}, {50, 20}, {30, 12}, {30, 10}, {20, 5}} {
 		for i := range tasks {
-			for _, history := range []bool{false, true} {
-				m := model{width: size[0], height: size[1], workspace: "/a/very/long/path", tasks: tasks, selected: i, history: history}
+			for _, history := range []detailTab{outputTab, infoTab, activityTab} {
+				m := model{width: size[0], height: size[1], workspace: "/a/very/long/path", tasks: tasks, selected: i, tab: history}
 				for offset := 0; offset <= m.maxScroll(); offset += 3 {
 					m.historyOffset = offset
 					view := m.View()
@@ -220,7 +168,7 @@ func TestHistoryShowsContextAndPerAttemptDeliveries(t *testing.T) {
 			{TriggerID: "trigger-1", AttemptID: "attempt-new", State: orchestrator.DeliveryAccepted},
 		},
 	}
-	view := (model{width: 120, height: 35, history: true, tasks: []orchestrator.Task{task}}).View()
+	view := (model{width: 120, height: 35, tab: infoTab, tasks: []orchestrator.Task{task}}).View()
 	for _, text := range []string{"trigger-1", "pending", "trigger-2", "not accepted", "DELIVERIES", "attempt-old", "queue full", "attempt-new", "accepted"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("missing %q in %s", text, view)

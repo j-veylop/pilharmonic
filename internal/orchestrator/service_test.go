@@ -293,3 +293,140 @@ func TestOutputBatchesUntilFlush(t *testing.T) {
 		t.Fatalf("output lost: got %d bytes, want %d", len(done.Output), len(small+large))
 	}
 }
+
+func TestIdleTimeoutCancelsSilentAgent(t *testing.T) {
+	s := newTestService(t)
+	must(t, s.SetIdleTimeout(40*time.Millisecond))
+	started := make(chan struct{})
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, _ io.Writer) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	task := createTask(t, s, "quiet", "run quietly", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
+	<-started
+	done := await(t, s, task.ID, Canceled)
+	if !strings.Contains(done.Error, "idle timeout") {
+		t.Fatalf("unexpected cancellation reason: %q", done.Error)
+	}
+}
+
+func TestIdleTimeoutAllowsStreamingAgent(t *testing.T) {
+	s := newTestService(t)
+	must(t, s.SetIdleTimeout(200*time.Millisecond))
+	s.RegisterRunner("general", runnerFunc(func(ctx context.Context, _ Task, out io.Writer) error {
+		for i := 0; i < 30; i++ {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(20 * time.Millisecond):
+			}
+			if _, err := io.WriteString(out, "."); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	task := createTask(t, s, "chatty", "stream output", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
+	done := await(t, s, task.ID, Completed)
+	if done.Output != strings.Repeat(".", 30) {
+		t.Fatalf("output %q", done.Output)
+	}
+}
+
+// TestAttemptRetention proves retries cannot grow the state file without bound
+// while attempt identity and outcome stay intact; zero keeps every output.
+func TestAttemptRetention(t *testing.T) {
+	for _, keep := range []int{1, 0} {
+		s := newTestService(t)
+		must(t, s.SetAttemptRetention(keep))
+		attempts := 0
+		s.RegisterRunner("general", runnerFunc(func(_ context.Context, _ Task, out io.Writer) error {
+			attempts++
+			if attempts == 1 {
+				_, _ = io.WriteString(out, "first attempt output")
+				return errors.New("failed first")
+			}
+			_, _ = io.WriteString(out, "second attempt output")
+			return nil
+		}))
+		task := createTask(t, s, "retry", "original mandate", t.TempDir())
+		must(t, s.Start(context.Background(), task.ID))
+		await(t, s, task.ID, Failed)
+		must(t, s.Retry(task.ID))
+		must(t, s.Start(context.Background(), task.ID))
+		done := await(t, s, task.ID, Completed)
+		if len(done.Attempts) != 2 {
+			t.Fatalf("attempts %+v", done.Attempts)
+		}
+		first := done.Attempts[0]
+		if keep == 0 {
+			if first.Output != "first attempt output" || first.OutputTruncated || hasEvent(t, done, "retention") {
+				t.Fatalf("disabled retention dropped output: %+v", first)
+			}
+			continue
+		}
+		if first.Output != "" || !first.OutputTruncated || first.Error != "failed first" {
+			t.Fatalf("older attempt not retained correctly: %+v", first)
+		}
+		if done.Attempts[1].Output != "second attempt output" || done.Attempts[1].OutputTruncated {
+			t.Fatalf("newest attempt output missing: %+v", done.Attempts[1])
+		}
+		if !hasEvent(t, done, "retention") {
+			t.Fatal("retention event not recorded")
+		}
+	}
+}
+
+func TestSettersRejectInvalidValues(t *testing.T) {
+	s := newTestService(t)
+	for name, err := range map[string]error{
+		"zero concurrency":        s.SetConcurrencyLimit(0),
+		"negative idle timeout":   s.SetIdleTimeout(-time.Second),
+		"negative retention":      s.SetAttemptRetention(-1),
+		"negative subagent depth": s.SetSubagentLimits(-1, 1),
+	} {
+		if err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// TestConfigureProfiles covers the startup profiles file: the default beside
+// the state file is optional, an explicit path is required, an invalid file
+// fails startup, and the shipped profiles.json leaves coordination guidance
+// to the compiled default.
+func TestConfigureProfiles(t *testing.T) {
+	dir := t.TempDir()
+	s := openTestService(t, filepath.Join(dir, "state.json"))
+	options := Options{MaxConcurrent: 1}
+	if loaded, err := s.Configure(options); err != nil || loaded != "" {
+		t.Fatalf("missing default profiles: %q, %v", loaded, err)
+	}
+	beside := filepath.Join(dir, "profiles.json")
+	must(t, os.WriteFile(beside, []byte(`{"profiles":[{"name":"local"}]}`), 0600))
+	if loaded, err := s.Configure(options); err != nil || loaded != beside {
+		t.Fatalf("default profiles: %q, %v", loaded, err)
+	}
+	if _, ok := profileNamed(s.ListProfiles(), "local"); !ok {
+		t.Fatal("profile from profiles.json missing")
+	}
+	must(t, os.WriteFile(beside, []byte("{"), 0600))
+	if _, err := s.Configure(options); err == nil {
+		t.Fatal("invalid profiles file ignored")
+	}
+	options.ProfilesPath = filepath.Join(dir, "missing.json")
+	if _, err := s.Configure(options); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing explicit path: %v", err)
+	}
+	options.ProfilesPath = filepath.Join("..", "..", "profiles.json")
+	if loaded, err := s.Configure(options); err != nil || loaded != options.ProfilesPath {
+		t.Fatalf("shipped profiles: %q, %v", loaded, err)
+	}
+	profile, ok := profileNamed(s.ListProfiles(), CoordinatorProfileName)
+	if !ok || profile.Model != "" || profile.CoordinatorInstructions != "" {
+		t.Fatalf("shipped coordinator profile: %+v", profile)
+	}
+}

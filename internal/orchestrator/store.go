@@ -1,16 +1,18 @@
 package orchestrator
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"slices"
-	"syscall"
 	"time"
+
+	"pilharmonic/internal/instance"
 )
 
 var (
@@ -43,7 +45,7 @@ func (s *Service) loadState() error {
 		if renameErr := os.Rename(s.path, corrupt); renameErr != nil {
 			return fmt.Errorf("read state: %w (preserving corrupt file failed: %v)", err, renameErr)
 		}
-		s.startupWarning = fmt.Sprintf("state file was corrupt (%v); preserved as %s and started empty", err, corrupt)
+		s.addStartupWarning(fmt.Sprintf("state file was corrupt (%v); preserved as %s and started empty", err, corrupt))
 		s.data = state{}
 	} else if s.data.Version > stateVersion {
 		return fmt.Errorf("state file version %d is newer than this build supports (%d)", s.data.Version, stateVersion)
@@ -57,52 +59,13 @@ func (s *Service) save() error {
 	if err != nil {
 		return err
 	}
-	if err = writeFileAtomic(s.path, ".state-*", b); err != nil {
+	if err = instance.WriteFileAtomic(s.path, ".state-*", b); err != nil {
 		return err
 	}
 	// A successful write also persisted any output the writer only buffered.
 	s.outputPending = 0
 	s.persistErr = nil
 	return nil
-}
-
-// writeFileAtomic replaces path through a temp file in the same directory,
-// fsyncing the file and the directory, so state, credentials, model selection
-// and ownership records are never observed half-written.
-func writeFileAtomic(path, pattern string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), pattern)
-	if err != nil {
-		return err
-	}
-	temp := f.Name()
-	defer func() { _ = os.Remove(temp) }()
-	if err = f.Chmod(0600); err == nil {
-		_, err = f.Write(data)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err = os.Rename(temp, path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	dirErr := dir.Sync()
-	closeErr := dir.Close()
-	// Some filesystems cannot fsync a directory. The rename already replaced
-	// the file, so rolling back in-memory state would be wrong.
-	if dirErr != nil && !errors.Is(dirErr, syscall.EINVAL) && !errors.Is(dirErr, syscall.ENOTSUP) {
-		return dirErr
-	}
-	return closeErr
 }
 
 // taskLocked returns the task with id, or nil. Caller holds mu.
@@ -194,9 +157,47 @@ func (s *Service) PersistenceError() error {
 	return s.persistErr
 }
 
-// StartupWarning reports a non-fatal problem opening the state file.
+// StartupWarning reports non-fatal problems opening the state and model files.
 func (s *Service) StartupWarning() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.startupWarning
+}
+
+func (s *Service) addStartupWarning(warning string) {
+	if s.startupWarning != "" {
+		warning = s.startupWarning + "; " + warning
+	}
+	s.startupWarning = warning
+}
+
+// maxConfigSize bounds every operator-supplied JSON configuration file so a
+// mistaken path (a disk image, a log) cannot be read into memory.
+const maxConfigSize = 1 << 20
+
+// decodeConfigFile decodes exactly one JSON object into dst, rejecting unknown
+// fields and trailing content so a typo fails loudly instead of being ignored.
+// An oversized file is reported rather than truncated.
+func decodeConfigFile(path, label string, dst any) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	body, err := io.ReadAll(io.LimitReader(f, maxConfigSize+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxConfigSize {
+		return fmt.Errorf("%s config exceeds 1 MiB", label)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return fmt.Errorf("%s config: %w", label, err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return fmt.Errorf("%s config must contain exactly one JSON object", label)
+	}
+	return nil
 }

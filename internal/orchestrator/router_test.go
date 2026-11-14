@@ -122,23 +122,6 @@ func TestSubmitRequestRejectsEmptyOrInvalid(t *testing.T) {
 	}
 }
 
-func TestRequestTitle(t *testing.T) {
-	cases := map[string]string{
-		"Fix the bug\nmore details": "Fix the bug",
-		"  spaced   words  ":        "spaced words",
-		"\n\n":                      "Untitled request",
-	}
-	for input, want := range cases {
-		if got := requestTitle(input); got != want {
-			t.Fatalf("requestTitle(%q) = %q, want %q", input, got, want)
-		}
-	}
-	long := strings.Repeat("x", 100)
-	if got := requestTitle(long); len([]rune(got)) != 60 || !strings.HasSuffix(got, "...") {
-		t.Fatalf("long title %q (%d runes)", got, len([]rune(got)))
-	}
-}
-
 func TestSubmitRequestUsesExplicitAgentMention(t *testing.T) {
 	dir := t.TempDir()
 	s := newTestService(t)

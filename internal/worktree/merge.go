@@ -1,4 +1,4 @@
-package orchestrator
+package worktree
 
 import (
 	"context"
@@ -7,18 +7,42 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-// prepareWorkspaceCommit commits all worktree changes and reports whether the
+// Preparation records the commit prepared for review. UpToDate means the
+// worktree has nothing the source does not already contain.
+type Preparation struct {
+	WorktreeCommit string
+	SourceCommit   string
+	UpToDate       bool
+}
+
+// MergeResult describes a merge of a reviewed commit. WorktreeCommit is set
+// once the worktree passed validation, also when the merge then fails.
+type MergeResult struct {
+	WorktreeCommit string
+	MergeCommit    string
+	UpToDate       bool // the source already contained the commit
+	// Warning records a successful merge that still left the source checkout
+	// needing attention, such as uncommitted source edits Git stashed but could
+	// not reapply. It never turns a merge into a failure.
+	Warning string
+}
+
+// MergeTimeout bounds one preparation, merge or abort.
+const MergeTimeout = 30 * time.Second
+
+// Commit commits all worktree changes and reports whether the
 // resulting commit already exists in the source checkout. It validates that the
 // worktree still belongs to the task and source recorded in owner.json before
 // touching either repository. The source checkout is never modified.
-func prepareWorkspaceCommit(ctx context.Context, statePath string, t Task) (preparationOutcome, error) {
-	owner, tree, err := validateMergeWorkspace(ctx, statePath, t)
+func Commit(ctx context.Context, spec Spec) (Preparation, error) {
+	owner, tree, err := validateMergeWorkspace(ctx, spec)
 	if err != nil {
-		return preparationOutcome{}, err
+		return Preparation{}, err
 	}
-	outcome := preparationOutcome{}
+	outcome := Preparation{}
 
 	dirty, err := gitOutput(ctx, tree, "status", "--porcelain")
 	if err != nil {
@@ -28,7 +52,7 @@ func prepareWorkspaceCommit(ctx context.Context, statePath string, t Task) (prep
 		if _, err = gitOutput(ctx, tree, "add", "-A"); err != nil {
 			return outcome, err
 		}
-		commitArgs := append(gitIdentityArgs(ctx, tree), "commit", "--no-gpg-sign", "-m", mergeSubject(t))
+		commitArgs := append(gitIdentityArgs(ctx, tree), "commit", "--no-gpg-sign", "-m", mergeSubject(spec))
 		if _, err = gitOutput(ctx, tree, commitArgs...); err != nil {
 			return outcome, err
 		}
@@ -50,21 +74,17 @@ func prepareWorkspaceCommit(ctx context.Context, statePath string, t Task) (prep
 	return outcome, nil
 }
 
-// mergeReviewedWorkspace merges exactly the reviewed commit into the source
+// Merge merges exactly the reviewed commit into the source
 // repository's current checkout. It verifies that the commit is still part of
 // the retained worktree history and descends from the isolation commit. A
 // failed merge is aborted so the source does not remain in a conflicted state;
 // uncommitted worktree content is left untouched by the merge.
-func mergeReviewedWorkspace(ctx context.Context, statePath string, t Task, reviewed string) (mergeOutcome, error) {
-	reviewed = strings.TrimSpace(reviewed)
-	if reviewed == "" || reviewed != t.ReviewCommit {
-		return mergeOutcome{}, errors.New("reviewed commit does not match the task review")
-	}
-	owner, tree, err := validateMergeWorkspace(ctx, statePath, t)
+func Merge(ctx context.Context, spec Spec, reviewed string) (MergeResult, error) {
+	owner, tree, err := validateMergeWorkspace(ctx, spec)
 	if err != nil {
-		return mergeOutcome{}, err
+		return MergeResult{}, err
 	}
-	outcome := mergeOutcome{Status: MergeFailed, WorktreeCommit: reviewed}
+	outcome := MergeResult{WorktreeCommit: reviewed}
 
 	resolved, err := gitOutput(ctx, tree, "rev-parse", "--verify", reviewed+"^{commit}")
 	if err != nil {
@@ -87,7 +107,7 @@ func mergeReviewedWorkspace(ctx context.Context, statePath string, t Task, revie
 	// A restart can repeat an approval whose merge already completed. An
 	// ancestor check is also used when another task merged this commit.
 	if _, err = gitOutput(ctx, owner.Source, "merge-base", "--is-ancestor", reviewed, sourceHead); err == nil {
-		outcome.Status = MergeUpToDate
+		outcome.UpToDate = true
 		outcome.MergeCommit = sourceHead
 		return outcome, nil
 	}
@@ -101,13 +121,13 @@ func mergeReviewedWorkspace(ctx context.Context, statePath string, t Task, revie
 	// edits, merges, and applies them again. When they cannot be reapplied it
 	// keeps the stash entry instead of losing them, which the caller reports as
 	// a warning rather than a failed merge.
-	mergeArgs := append(gitIdentityArgs(ctx, owner.Source), "-c", "merge.autoStash=true", "merge", "--no-ff", "--no-gpg-sign", "-m", mergeSubject(t), reviewed)
+	mergeArgs := append(gitIdentityArgs(ctx, owner.Source), "-c", "merge.autoStash=true", "merge", "--no-ff", "--no-gpg-sign", "-m", mergeSubject(spec), reviewed)
 	if _, err = gitOutput(ctx, owner.Source, mergeArgs...); err != nil {
 		// Leave the source checkout as it was rather than preserving a partial
 		// merge for the operator to discover later. Only abort a merge this
 		// attempt actually started. Aborting also reapplies the autostash.
 		failure := describeMergeFailure(err)
-		abortCtx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
+		abortCtx, cancel := context.WithTimeout(context.Background(), MergeTimeout)
 		if _, mergeErr := gitOutput(abortCtx, owner.Source, "rev-parse", "--verify", "MERGE_HEAD"); mergeErr == nil {
 			if _, abortErr := gitOutput(abortCtx, owner.Source, "merge", "--abort"); abortErr != nil {
 				failure = fmt.Errorf("%w (aborting the source merge also failed: %v; the source checkout may still have a merge in progress)", failure, abortErr)
@@ -123,7 +143,6 @@ func mergeReviewedWorkspace(ctx context.Context, statePath string, t Task, revie
 	if err != nil {
 		return outcome, err
 	}
-	outcome.Status = MergeMerged
 	outcome.MergeCommit = mergeCommit
 	outcome.Warning = sourceStashWarning(ctx, owner.Source)
 	return outcome, nil
@@ -203,16 +222,16 @@ func describeMergeFailure(err error) error {
 // validateMergeWorkspace repeats the ownership and repository checks made when
 // the worktree was prepared. Merging is destructive to the source checkout, so
 // it must not trust the persisted execution path alone.
-func validateMergeWorkspace(ctx context.Context, statePath string, t Task) (workspaceOwner, string, error) {
+func validateMergeWorkspace(ctx context.Context, spec Spec) (workspaceOwner, string, error) {
 	fail := func(err error) (workspaceOwner, string, error) { return workspaceOwner{}, "", err }
-	reservation, err := reservationPath(statePath, t.ID)
+	reservation, err := reservationPath(spec.StatePath, spec.TaskID)
 	if err != nil {
 		return fail(err)
 	}
 	if err = realDir(reservation, "merge workspace reservation"); err != nil {
 		return fail(err)
 	}
-	owner, err := readWorkspaceOwner(reservation, t.ID)
+	owner, err := readWorkspaceOwner(reservation, spec.TaskID)
 	if err != nil {
 		return fail(err)
 	}
@@ -220,14 +239,14 @@ func validateMergeWorkspace(ctx context.Context, statePath string, t Task) (work
 	if err = realDir(tree, "merge worktree"); err != nil {
 		return fail(err)
 	}
-	if t.ExecutionWorkspace == "" {
+	if spec.Execution == "" {
 		return fail(errors.New("task has no prepared execution workspace"))
 	}
 	treeAbs, err := filepath.EvalSymlinks(tree)
 	if err != nil {
 		return fail(err)
 	}
-	executionAbs, err := filepath.EvalSymlinks(t.ExecutionWorkspace)
+	executionAbs, err := filepath.EvalSymlinks(spec.Execution)
 	if err != nil {
 		return fail(err)
 	}
@@ -257,18 +276,8 @@ func validateMergeWorkspace(ctx context.Context, statePath string, t Task) (work
 	return owner, tree, nil
 }
 
-// MergeConflict reports whether a failed approved merge was caused by a
-// conflict. The merge is always aborted, so this is an operator-facing
-// classification of the retained error, not a separate merge outcome.
-func (t Task) MergeConflict() bool {
-	if t.MergeStatus != MergeFailed {
-		return false
-	}
-	return strings.Contains(strings.ToLower(t.MergeError), "conflict")
-}
-
-func mergeSubject(t Task) string {
-	title := strings.Join(strings.Fields(t.Title), " ")
+func mergeSubject(spec Spec) string {
+	title := strings.Join(strings.Fields(spec.Title), " ")
 	if title == "" {
 		title = "isolated work"
 	}
@@ -276,7 +285,7 @@ func mergeSubject(t Task) string {
 	if len(runes) > 72 {
 		title = string(runes[:69]) + "..."
 	}
-	return "Merge isolated task " + t.ID + ": " + title
+	return "Merge isolated task " + spec.TaskID + ": " + title
 }
 
 // gitIdentityArgs supply a neutral fallback identity only when the repository
@@ -290,4 +299,74 @@ func gitIdentityArgs(ctx context.Context, dir string) []string {
 		args = append(args, "-c", "user.email=orchestrator@localhost")
 	}
 	return args
+}
+
+// ReconcileDiscard reports whether a discarded worktree is gone. It never
+// removes a surviving tree. If Git removed it, only an empty reservation or
+// the task's validated ownership record may remain, and both are cleared.
+func ReconcileDiscard(spec Spec) (bool, error) {
+	reservation, err := reservationPath(spec.StatePath, spec.TaskID)
+	if err != nil {
+		return false, err
+	}
+	for _, dir := range []string{filepath.Dir(reservation), reservation} {
+		if err = realDir(dir, "workspace reservation"); errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		} else if err != nil {
+			return false, err
+		}
+	}
+	if _, err = os.Lstat(filepath.Join(reservation, "tree")); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	entries, err := os.ReadDir(reservation)
+	if err != nil {
+		return false, err
+	}
+	if len(entries) > 0 {
+		if len(entries) != 1 || entries[0].Name() != "owner.json" {
+			return false, errors.New("unexpected files in discarded worktree reservation")
+		}
+		if _, err = readWorkspaceOwner(reservation, spec.TaskID); err != nil {
+			return false, err
+		}
+		if err = os.Remove(filepath.Join(reservation, "owner.json")); err != nil {
+			return false, err
+		}
+	}
+	return true, os.Remove(reservation)
+}
+
+// Discard removes a worktree after repeating the ownership checks made
+// when it was prepared. Removal deliberately omits --force so Git refuses any
+// worktree that still holds uncommitted or untracked files.
+func Discard(ctx context.Context, spec Spec) error {
+	owner, tree, err := validateMergeWorkspace(ctx, spec)
+	if err != nil {
+		return err
+	}
+	dirty, err := gitOutput(ctx, tree, "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if dirty != "" {
+		return errors.New("worktree has uncommitted changes; commit or remove them before discarding")
+	}
+	head, err := gitOutput(ctx, tree, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	sourceHead, err := gitOutput(ctx, owner.Source, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	if _, err = gitOutput(ctx, owner.Source, "merge-base", "--is-ancestor", head, sourceHead); err != nil {
+		return errors.New("worktree commit is not merged into the source checkout; merge it before discarding")
+	}
+	if _, err = gitOutput(ctx, owner.Source, "worktree", "remove", "--", tree); err != nil {
+		return fmt.Errorf("remove worktree: %w", err)
+	}
+	return nil
 }

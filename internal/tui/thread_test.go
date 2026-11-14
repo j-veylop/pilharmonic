@@ -33,7 +33,7 @@ func TestRelatedTaskAndThreadContextControls(t *testing.T) {
 	if len(tasks) != 2 || tasks[0].ThreadID != first.ThreadID {
 		t.Fatalf("related task not created: %+v", tasks)
 	}
-	m = key(m, runeKey("f"))
+	m = key(m, runeKey("m"))
 	m = key(m, runeKey("shared context"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if strings.Contains(m.View(), "FOLLOW UP") {

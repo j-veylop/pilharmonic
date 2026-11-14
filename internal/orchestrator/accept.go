@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"pilharmonic/internal/worktree"
 )
 
 // SetDefaultIsolation controls whether mandates that explicitly request
@@ -30,10 +32,10 @@ func (s *Service) defaultWorkspacePlan(workspace, prompt string) workspacePlan {
 	s.mu.Lock()
 	enabled := s.defaultIsolation
 	s.mu.Unlock()
-	if !enabled || !workspaceIsolatable(workspace) {
+	if !enabled || !worktree.Isolatable(workspace) {
 		return workspacePlan{}
 	}
-	return workspacePlan{isolated: taskMakesChanges(prompt), automatic: true}
+	return workspacePlan{isolated: worktree.RequestsChanges(prompt), automatic: true}
 }
 
 // CreateTask routes an explicit manual request into a ticket with an immutable mandate.
@@ -76,41 +78,43 @@ func (s *Service) acceptLocal(purpose, parentID, title, text, workspace, profile
 		return Task{}, err
 	}
 	plan := s.defaultWorkspacePlan(abs, request)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		return Task{}, errShuttingDown
-	}
-	in := acceptedTaskInput{
-		auth:     AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: purpose, ParentID: parentID, Text: request, Workspace: abs},
-		title:    title,
-		agent:    agent,
-		profile:  profile,
-		plan:     plan,
-		accepted: "Manual request accepted",
-	}
-	if parentID != "" {
-		parent := s.taskLocked(parentID)
-		if parent == nil {
-			return Task{}, errors.New("parent task not found")
+	var task Task
+	err = s.whileOpen(func() error {
+		in := acceptedTaskInput{
+			auth:     AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: purpose, ParentID: parentID, Text: request, Workspace: abs},
+			title:    title,
+			agent:    agent,
+			profile:  profile,
+			plan:     plan,
+			accepted: "Manual request accepted",
 		}
-		if s.threadLocked(parent.ThreadID) == nil {
-			return Task{}, errors.New("task thread not found")
+		if parentID != "" {
+			parent := s.taskLocked(parentID)
+			if parent == nil {
+				return errors.New("parent task not found")
+			}
+			if s.threadLocked(parent.ThreadID) == nil {
+				return errors.New("task thread not found")
+			}
+			in.auth.ThreadID = parent.ThreadID
+			in.accepted += " in existing thread"
 		}
-		in.auth.ThreadID = parent.ThreadID
-		in.accepted += " in existing thread"
-	}
-	if purpose == PurposeRouter {
-		if in.profile, err = s.resolveProfileNameLocked(profile); err != nil {
-			return Task{}, err
+		if purpose == PurposeRouter {
+			var err error
+			if in.profile, err = s.resolveProfileNameLocked(profile); err != nil {
+				return err
+			}
+			workspaceChoice := "shared workspace"
+			if plan.isolated {
+				workspaceChoice = "isolated committed-HEAD worktree"
+			}
+			in.notes = []Event{{Kind: "routed", Message: fmt.Sprintf("Router assignment: agent %s, profile %s, %s, execution requested (%s)", agent, in.profile, workspaceChoice, LocalPolicyVersion)}}
 		}
-		workspaceChoice := "shared workspace"
-		if plan.isolated {
-			workspaceChoice = "isolated committed-HEAD worktree"
-		}
-		in.notes = []Event{{Kind: "routed", Message: fmt.Sprintf("Router assignment: agent %s, profile %s, %s, execution requested (%s)", agent, in.profile, workspaceChoice, LocalPolicyVersion)}}
-	}
-	return s.acceptLocked(in)
+		var err error
+		task, err = s.acceptLocked(in)
+		return err
+	})
+	return task, err
 }
 
 func requireDir(path, label string) error {

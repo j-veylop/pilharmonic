@@ -1,4 +1,4 @@
-package orchestrator
+package worktree
 
 import (
 	"regexp"
@@ -70,7 +70,7 @@ func trimRequestPoliteness(text string) string {
 	}
 }
 
-// taskMakesChanges reports whether the mandate explicitly requests a change.
+// RequestsChanges reports whether the mandate explicitly requests a change.
 // Only that signal creates an automatic worktree. The selected executor is not
 // a mutation signal: read-only and ambiguous mandates share the source
 // workspace. This is a lexical heuristic, not proof of what an agent will do,
@@ -78,7 +78,7 @@ func trimRequestPoliteness(text string) string {
 // can explicitly enable isolation for any queued task. It checks the first
 // request verb and verbs after punctuation or connectors, so nouns such as
 // "fix" in "review the fix" are not requests.
-func taskMakesChanges(text string) bool {
+func RequestsChanges(text string) bool {
 	text = trimRequestPoliteness(strings.ToLower(text))
 	text = strings.ReplaceAll(text, "\n", " ; ")
 	tokens := mandateTokenPattern.FindAllString(text, -1)

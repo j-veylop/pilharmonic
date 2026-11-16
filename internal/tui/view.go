@@ -126,10 +126,6 @@ func (m model) View() string {
 	}
 	rows = append(rows, m.footer(w))
 	screen := fit(strings.Join(rows, "\n"), w, h)
-	// The quit prompt is in the footer, so nothing may cover it.
-	if m.quitConfirm {
-		return screen
-	}
 	// Menus draw over the board and help over menus.
 	if m.login.menu {
 		screen = m.loginMenuView(screen, w, h)
@@ -142,6 +138,11 @@ func (m model) View() string {
 	}
 	if m.help.open {
 		screen = m.helpView(screen, w, h)
+	}
+	// The quit dialog is drawn last: it owns the keyboard and mouse, so it must
+	// be the topmost surface.
+	if m.quitConfirm {
+		screen = m.quitView(screen, w, h)
 	}
 	return screen
 }
@@ -352,10 +353,6 @@ func (m model) footer(w int) string {
 	if m.review.target != "" {
 		footer = accentStyle.Render("REVIEW  › "+singleLine(m.review.title)) + "\n" + mutedStyle.Render("commit "+singleLine(m.review.commit)) + "\n" +
 			mutedStyle.Render("approve + merge (y)  ·  reject (n)  ·  esc  ·  f1 help")
-	}
-	if m.quitConfirm {
-		footer = accentStyle.Render("QUIT  › Leave pilharmonic?") + "\n" + m.quitCountLine() + "\n" +
-			mutedStyle.Render("y quit  ·  n/esc stay") + "\n" + mutedStyle.Render("History and worktrees are kept")
 	}
 	if _, height := m.size(); height >= 14 {
 		footer = m.statusPills(w) + "\n" + footer

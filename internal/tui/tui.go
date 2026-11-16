@@ -128,6 +128,7 @@ type model struct {
 	spinnerActive bool
 	markdown      *markdownCache
 	quitConfirm   bool
+	quitChoice    int
 	login         loginState
 	models        modelMenuState
 }

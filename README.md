@@ -13,7 +13,7 @@ go build -o pilharmonic . # or go install .
 
 pilharmonic opens on the task board with the **REQUEST** box always docked at the bottom (or the login menu when no credential exists); `/` or `i` focuses it and **Esc** leaves it while the draft stays visible. Type a request and press **Enter**: one compiled-in authorization step records the decision, and an accepted request becomes a task routed to an executor and started. **Ctrl-s** instead holds the accepted task queued so `o` can set it up before `r` starts it. Start with `@NAME` to pick an executor (`@tester add regression tests`); otherwise `general` runs it. Typing `@` lists matches and **Tab** completes. Up to four agents run at once (`-max-concurrent`); further starts queue FIFO.
 
-**F1** opens help everywhere; **?** opens it wherever it is not typed text. `/help` in the request box opens it too, and its **Commands** topic lists slash commands. **q** or **Ctrl-c** asks in the footer before quitting (**y** quits, **n**/**Esc** stays); quitting cancels active attempts.
+**F1** opens help everywhere; **?** opens it wherever it is not typed text. `/help` in the request box opens it too, and its **Commands** topic lists slash commands. **q** or **Ctrl-c** opens a quit dialog that counts the work in flight: **y** quits, **n**/**Esc** stays, **h**/**l** or **Tab** moves between its two buttons, and **Enter** presses the focused one. Quitting cancels active attempts.
 
 Inputs use standard text editing keys (word delete, line kill, word movement, Home/End). **Ctrl-J** or **Alt-Enter** inserts a newline.
 

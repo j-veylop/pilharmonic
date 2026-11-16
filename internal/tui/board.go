@@ -126,7 +126,7 @@ func init() {
 			m.historyOffset = 0
 			return nil
 		}},
-		{"q", "quit", "Quit; the footer asks y / Enter to confirm, n / Esc to stay (also Ctrl-c)", "General", func(m *model) tea.Cmd { *m = m.requestQuit(); return nil }},
+		{"q", "quit", "Quit; a dialog asks y / Enter to confirm, n / Esc to stay, h/l switch buttons (also Ctrl-c)", "General", func(m *model) tea.Cmd { *m = m.requestQuit(); return nil }},
 		{"ctrl+c", "quit", "", "General", func(m *model) tea.Cmd { *m = m.requestQuit(); return nil }},
 	}
 }

@@ -41,6 +41,7 @@ func TestQuitKeysAskOnEverySurface(t *testing.T) {
 			if after.help != armed.help || after.selected != armed.selected || after.router.Editor != armed.router.Editor ||
 				after.models.index != armed.models.index || after.models.customInput != armed.models.customInput ||
 				after.input.Editor != armed.input.Editor || after.agentPicker.index != armed.agentPicker.index ||
+				after.profilePicker.index != armed.profilePicker.index || after.setup.index != armed.setup.index ||
 				after.login != armed.login || after.cleanup.kind != armed.cleanup.kind {
 				t.Fatalf("%s: a key reached the surface under the confirmation", name)
 			}
@@ -143,5 +144,96 @@ func TestQuitConfirmationOwnsTheMouse(t *testing.T) {
 	next, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 10, Y: 8})
 	if next.(model).selection.dragging {
 		t.Fatal("mouse press started a selection under the dialog")
+	}
+}
+
+// The dialog opens on the quit button, and h/l, the arrows and Tab move the
+// focus without answering it. Tab cycles, so focus never gets stuck.
+func TestQuitDialogFocusMovesBetweenButtons(t *testing.T) {
+	cases := []struct {
+		from int
+		msg  tea.KeyMsg
+		want int
+	}{
+		{quitButtonQuit, runeKey("l"), quitButtonStay},
+		{quitButtonQuit, tea.KeyMsg{Type: tea.KeyRight}, quitButtonStay},
+		{quitButtonQuit, tea.KeyMsg{Type: tea.KeyTab}, quitButtonStay},
+		{quitButtonQuit, tea.KeyMsg{Type: tea.KeyShiftTab}, quitButtonStay},
+		{quitButtonStay, runeKey("h"), quitButtonQuit},
+		{quitButtonStay, tea.KeyMsg{Type: tea.KeyLeft}, quitButtonQuit},
+		{quitButtonStay, tea.KeyMsg{Type: tea.KeyTab}, quitButtonQuit},
+		{quitButtonStay, tea.KeyMsg{Type: tea.KeyShiftTab}, quitButtonQuit},
+	}
+	for _, tc := range cases {
+		m := boardWithTask().requestQuit()
+		if m.quitChoice != quitButtonQuit {
+			t.Fatal("the dialog did not open on the quit button")
+		}
+		m.quitChoice = tc.from
+		next, cmd := m.Update(tc.msg)
+		if got := next.(model); cmd != nil || !got.quitConfirm || got.quitChoice != tc.want {
+			t.Fatalf("%q from %d: cmd=%v open=%v choice=%d", tc.msg.String(), tc.from, cmd, got.quitConfirm, got.quitChoice)
+		}
+	}
+	// Two Tabs come back to where they started.
+	m := boardWithTask().requestQuit()
+	if m = key(key(m, tea.KeyMsg{Type: tea.KeyTab}), tea.KeyMsg{Type: tea.KeyTab}); m.quitChoice != quitButtonQuit {
+		t.Fatal("tab did not cycle back to the quit button")
+	}
+}
+
+// The focused button is marked in the text as well as by colour, and the hint
+// follows the focus so Enter's effect is never a surprise.
+func TestQuitDialogMarksTheFocusedButton(t *testing.T) {
+	m := boardWithTask().requestQuit()
+	if plain := quitPlain(m.View()); !strings.Contains(plain, "▸ y quit") || strings.Contains(plain, "▸ n/esc stay") || !strings.Contains(plain, "enter quit") {
+		t.Fatalf("quit button not marked as focused: %s", plain)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyTab})
+	if plain := quitPlain(m.View()); !strings.Contains(plain, "▸ n/esc stay") || strings.Contains(plain, "▸ y quit") || !strings.Contains(plain, "enter stay") {
+		t.Fatalf("focus marker or hint did not follow the selection: %s", plain)
+	}
+}
+
+// Enter presses the focused button, so the safe answer is reachable without
+// remembering a key. A paste still never answers.
+func TestQuitDialogEnterPressesTheFocusedButton(t *testing.T) {
+	quit := boardWithTask().requestQuit()
+	if next, cmd := quit.Update(tea.KeyMsg{Type: tea.KeyEnter}); !quits(cmd) || !next.(model).quitConfirm {
+		t.Fatal("enter on the focused quit button did not quit")
+	}
+	stay := boardWithTask().requestQuit()
+	stay = key(stay, tea.KeyMsg{Type: tea.KeyTab})
+	next, cmd := stay.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if quits(cmd) {
+		t.Fatal("enter on the focused stay button quit")
+	}
+	if got := next.(model); got.quitConfirm || got.notice.text != "Quit canceled." {
+		t.Fatalf("stay button did not cancel: open=%v notice=%q", got.quitConfirm, got.notice.text)
+	}
+	if next, cmd := quit.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y"), Paste: true}); quits(cmd) || !next.(model).quitConfirm {
+		t.Fatal("a paste answered the dialog")
+	}
+}
+
+// Both buttons stay visible even when the card has to stack them in a narrow
+// terminal, and the bar keeps the count, the question and the reassurance.
+func TestQuitDialogDrawsBothButtons(t *testing.T) {
+	for _, size := range [][2]int{{120, 35}, {80, 24}, {40, 12}, {30, 24}, {30, 10}} {
+		m := boardWithTask()
+		m.width, m.height = size[0], size[1]
+		view := m.requestQuit().View()
+		assertFits(t, view, size[0], size[1])
+		plain := quitPlain(view)
+		want := []string{"QUIT", "Leave pilharmonic?", "y quit", "n/esc stay"}
+		if size[0] >= 40 {
+			// The focus hint is optional; it is the first row a short card drops.
+			want = append(want, "choose")
+		}
+		for _, text := range want {
+			if !strings.Contains(plain, text) {
+				t.Fatalf("%v: dialog lost %q: %s", size, text, plain)
+			}
+		}
 	}
 }

@@ -60,8 +60,8 @@ func TestTabCyclesDetailTabsAndEnterExpandsOnlyWithFocus(t *testing.T) {
 		t.Fatal("esc did not collapse the call first")
 	}
 	m.tasks[0].Activities = nil
-	if m = key(m, tea.KeyMsg{Type: tea.KeyEnter}); m.detailFocus {
-		t.Fatal("enter without a call did not fall through to the focus toggle")
+	if m = key(m, tea.KeyMsg{Type: tea.KeyEnter}); !m.detailFocus || m.activity.expanded {
+		t.Fatal("enter without a call changed the focused pane")
 	}
 }
 

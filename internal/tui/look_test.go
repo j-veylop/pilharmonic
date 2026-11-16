@@ -41,6 +41,8 @@ func TestStatusPillsRespectShortTerminals(t *testing.T) {
 
 func TestSidebarToggle(t *testing.T) {
 	m := boardWithTask()
+	m.tasks = append(m.tasks, orchestrator.Task{ID: "child", ParentID: "task", Depth: 1, Title: "child", Status: orchestrator.Running})
+	m.detailFocus = true
 	m.width, m.height = 100, 28
 	if !m.layout().sidebar {
 		t.Fatal("wide layout hid the sidebar by default")
@@ -172,5 +174,63 @@ func TestStatusPillsCarryNoAnimation(t *testing.T) {
 func TestHeaderWordmarkIsFlat(t *testing.T) {
 	if header := (model{}).headerRow(120); !strings.HasPrefix(header, wordmark()) {
 		t.Fatalf("header does not lead with the flat wordmark: %q", header)
+	}
+}
+
+func TestRunningGlyphUsesCrushAnimation(t *testing.T) {
+	m := model{anim: newRunningAnim()}
+	first := m.runningGlyph()
+	if first == "" || first == "⠋" {
+		t.Fatalf("animation did not replace the MiniDot glyph: %q", first)
+	}
+	m.anim.Advance()
+	if m.runningGlyph() == "" {
+		t.Fatal("animated glyph disappeared")
+	}
+}
+
+func TestTransientMessagesDoNotShiftLayout(t *testing.T) {
+	m := boardWithTask()
+	m.width, m.height = 100, 28
+	base := m.layout()
+	rows := len(strings.Split(m.View(), "\n"))
+	m.notice.text = "Task queued"
+	m.notice.service = "State save failed: disk full"
+	toasted := m.layout()
+	if toasted != base || len(strings.Split(m.View(), "\n")) != rows {
+		t.Fatalf("notice shifted layout: %+v vs %+v", toasted, base)
+	}
+	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "Task queued") || !strings.Contains(plain, "State save failed") {
+		t.Fatalf("toast missing: %q", plain)
+	}
+	m.cleanup = cleanupRequest{kind: deleteTask, ids: []string{"task"}, title: "work"}
+	if dialog := m.layout(); dialog != base {
+		t.Fatalf("confirmation dialog shifted layout: %+v vs %+v", dialog, base)
+	}
+}
+
+func TestTasksAndDetailsAreSeparateViews(t *testing.T) {
+	tasks := []orchestrator.Task{
+		{ID: "parent", Title: "parent work", Prompt: "do work", Agent: "general", Status: orchestrator.Completed},
+		{ID: "child", ParentID: "parent", Depth: 1, Title: "child work", Agent: "tester", Status: orchestrator.Completed},
+	}
+	list := model{width: 120, height: 32, tasks: tasks}
+	plain := ansi.Strip(list.View())
+	if !strings.Contains(plain, "TASKS") || !strings.Contains(plain, "parent work") || strings.Contains(plain, "OUTPUT") {
+		t.Fatalf("task list is not a standalone welcome view: %q", plain)
+	}
+	if strings.Contains(plain, "child work") {
+		t.Fatalf("task list shows a subtask: %q", plain)
+	}
+	m := key(list, tea.KeyMsg{Type: tea.KeyEnter})
+	details := ansi.Strip(m.View())
+	if !strings.Contains(details, "OUTPUT") || !strings.Contains(details, "SUBTASKS") || !strings.Contains(details, "child work") {
+		t.Fatalf("details view missing its content or subtask sidebar: %q", details)
+	}
+	if strings.Contains(details, "│ TASKS") {
+		t.Fatalf("details view still shows the task list: %q", details)
+	}
+	if back := key(m, tea.KeyMsg{Type: tea.KeyEsc}); !strings.Contains(ansi.Strip(back.View()), "TASKS  /") {
+		t.Fatal("esc did not return to the task list")
 	}
 }

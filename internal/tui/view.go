@@ -49,6 +49,7 @@ func singleLine(s string) string {
 type layout struct {
 	width, height int
 	bodyHeight    int
+	details       bool
 	sidebar       bool
 	taskWidth     int
 	detailWidth   int
@@ -81,7 +82,10 @@ func (m model) layout() layout {
 		l.composerRows = l.composerDraft + 2 + extra
 	}
 	l.bodyHeight = h - 1 - footerRows - l.composerRows
-	l.sidebar = w >= 76 && !m.fullscreen && !m.sidebarHidden
+	l.details = m.detailFocus || m.fullscreen
+	if l.details {
+		l.sidebar = w >= 76 && !m.fullscreen && !m.sidebarHidden && m.selectedHasSubtasks()
+	}
 	if l.sidebar {
 		l.taskWidth = min(34, max(24, w/4))
 		l.detailWidth = w - l.taskWidth - 1
@@ -112,8 +116,14 @@ func (m model) View() string {
 	}
 	var body string
 	switch {
+	case !l.details:
+		body = m.taskPanel(w, l.bodyHeight)
 	case l.sidebar:
-		body = lipgloss.JoinHorizontal(lipgloss.Top, m.taskPanel(l.taskWidth, l.bodyHeight), " ", m.detailPanel(l.detailWidth, l.bodyHeight))
+		root, _ := m.selectedTask()
+		root = m.rootTask(root)
+		body = lipgloss.JoinHorizontal(lipgloss.Top,
+			m.subtaskPanel(l.taskWidth, l.bodyHeight, l.panelInner(l.taskWidth), root, subtaskRows(m.tasks, root.ID)),
+			" ", m.detailPanel(l.detailWidth, l.bodyHeight))
 	default:
 		body = m.detailPanel(w, l.bodyHeight)
 	}
@@ -126,6 +136,7 @@ func (m model) View() string {
 	}
 	rows = append(rows, m.footer(w))
 	screen := fit(strings.Join(rows, "\n"), w, h)
+	screen = m.toastView(screen, w, h)
 	// Menus draw over the board and help over menus.
 	if m.login.menu {
 		screen = m.loginMenuView(screen, w, h)
@@ -135,6 +146,9 @@ func (m model) View() string {
 	}
 	if m.setup.target != "" {
 		screen = m.setupView(screen, w, h)
+	}
+	if !m.quitConfirm {
+		screen = m.actionPromptView(screen, w, h)
 	}
 	if m.help.open {
 		screen = m.helpView(screen, w, h)
@@ -187,7 +201,7 @@ fit:
 	if fill < 3 {
 		return fit(header+right, width, 1)
 	}
-	return fit(header+" "+faintStyle.Render(strings.Repeat("╱", fill))+" "+right, width, 1)
+	return fit(header+" "+gradientFill(strings.Repeat("╱", fill), 0)+" "+right, width, 1)
 }
 
 // statusPills is the mode and model badge row above the key hints. Badges drop
@@ -202,7 +216,7 @@ func (m model) statusPills(width int) string {
 			if class.model == "" {
 				continue
 			}
-			pills = append(pills, pillMutedStyle.Render(class.name+" "+shortModel(class.model)))
+			pills = append(pills, modelPillStyle(class.name).Render(class.name+" "+shortModel(class.model)))
 		}
 	}
 	row := strings.Join(pills, " ")
@@ -333,6 +347,8 @@ func (m model) footer(w int) string {
 	var footerText string
 	board := false
 	switch {
+	case m.router.open && (m.detailFocus || m.fullscreen):
+		footerText = withHelpHint("enter send · esc leave · ctrl+c quit", w)
 	case m.router.open:
 		footerText = withHelpHint("enter start · ctrl+s hold · esc leave · ctrl+c quit", w)
 		if _, ok := m.routerMentionQuery(); ok {
@@ -350,10 +366,9 @@ func (m model) footer(w int) string {
 		task, _ := m.selectedTask()
 		footerText, board = boardHints(w, task, m.attentionCount() > 0), true
 	}
-	// The hint block and the notice row both keep a fixed height: the board
-	// reserves the fullest hint line any task needs, and the notice row is held
-	// open even while empty. A shorter hint line, a task changing state or a
-	// notice appearing and expiring must not move the body above it.
+	// The hint block keeps a fixed height: the board reserves the fullest hint
+	// line any task needs. A shorter hint line or a task changing state must not
+	// move the body above it. Notices and dialogs are overlays, not footer rows.
 	line := hintRows(footerText, w)
 	reserved := line
 	if board {
@@ -363,35 +378,10 @@ func (m model) footer(w int) string {
 	if pad := reserved - line; pad > 0 {
 		footer += strings.Repeat("\n", pad)
 	}
-	footer = m.noticeRow(w) + "\n" + footer
-	if m.cleanup.kind != "" {
-		title, answer, note := m.cleanup.prompt()
-		footer = accentStyle.Render(title) + "\n" + mutedStyle.Render(answer+"  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render(note)
-	}
-	if m.review.target != "" {
-		footer = accentStyle.Render("REVIEW  › "+singleLine(m.review.title)) + "\n" + mutedStyle.Render("commit "+singleLine(m.review.commit)) + "\n" +
-			mutedStyle.Render("approve + merge (y)  ·  reject (n)  ·  esc  ·  f1 help")
-	}
 	if _, height := m.size(); height >= 14 {
 		footer = m.statusPills(w) + "\n" + footer
 	}
 	return ansi.Hardwrap(footer, w, true)
-}
-
-// noticeRow renders the footer's one reserved notice line: the standing service
-// condition leads because it outlives the transient action notice. The line is
-// truncated rather than wrapped so the footer height never varies.
-func (m model) noticeRow(w int) string {
-	text, style := m.notice.service, warningStyle
-	if text == "" {
-		text, style = m.notice.text, accentStyle
-	} else if m.notice.text != "" {
-		text += "  ·  " + m.notice.text
-	}
-	if text == "" {
-		return ""
-	}
-	return fit(style.Render("› "+singleLine(text)), w, 1)
 }
 
 // renderHints styles "key description" hints as one row.

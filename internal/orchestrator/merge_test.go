@@ -38,6 +38,9 @@ func TestIsolatedCompletionPreparesReviewThenApprovalMerges(t *testing.T) {
 	if done.MergeStatus != "" || done.MergeCommit != "" || !done.MergedAt.IsZero() {
 		t.Fatalf("completion merged before approval: %+v", done)
 	}
+	if subject := testGit(t, repo, "log", "-1", "--format=%s", done.ReviewCommit); !strings.HasPrefix(subject, "Isolated task ") {
+		t.Fatalf("prepared commit subject = %q, want an isolated-task subject", subject)
+	}
 	if got := testGit(t, repo, "rev-parse", "HEAD"); got != head {
 		t.Fatalf("source changed before approval: %s, want %s", got, head)
 	}
@@ -393,25 +396,26 @@ func TestMergeAutostashesUncommittedSourceEdits(t *testing.T) {
 			}},
 		{"conflicting reapply", "alpha\nbeta\ngamma\n", "alpha\nWORKTREE\ngamma\n", "alpha\nLOCAL\ngamma\n",
 			func(t *testing.T, repo string, done Task) {
-				if !strings.Contains(done.MergeWarning, "stash") || !strings.Contains(done.MergeWarning, "tracked.txt") {
-					t.Fatalf("merge warning does not name the retained stash and file: %q", done.MergeWarning)
+				if done.MergeStatus != MergeFailed || done.MergeCommit != "" {
+					t.Fatalf("merge over conflicting source edits = %+v", done)
 				}
-				if done.MergeConflict() {
-					t.Fatalf("a successful merge was classified as a merge conflict: %q", done.MergeError)
+				if !done.MergeConflict() || !strings.Contains(done.MergeError, "tracked.txt") {
+					t.Fatalf("merge error does not name the conflicting file: %q", done.MergeError)
 				}
-				if stash := testGit(t, repo, "stash", "list"); !strings.Contains(stash, "autostash") {
-					t.Fatalf("the uncommitted edit was not kept in an autostash: %q", stash)
+				if done.MergeWarning != "" {
+					t.Fatalf("a rolled-back merge recorded a warning: %q", done.MergeWarning)
 				}
-				if patch := testGit(t, repo, "stash", "show", "-p"); !strings.Contains(patch, "LOCAL") {
-					t.Fatalf("the autostash does not hold the operator's edit: %q", patch)
+				if stash := testGit(t, repo, "stash", "list"); stash != "" {
+					t.Fatalf("the rolled-back merge left a stash behind: %q", stash)
 				}
-				if merged, err := os.ReadFile(filepath.Join(repo, "tracked.txt")); err != nil || !strings.Contains(string(merged), "<<<<<<<") {
-					t.Fatalf("the conflicted file was not left for the operator: %q, %v", merged, err)
+				if got, err := os.ReadFile(filepath.Join(repo, "tracked.txt")); err != nil || string(got) != "alpha\nLOCAL\ngamma\n" {
+					t.Fatalf("the operator's edit was not restored: %q, %v", got, err)
 				}
-				if !slices.ContainsFunc(done.Events, func(e Event) bool {
-					return e.Kind == "merge_warning" && strings.Contains(e.Message, "autostash")
-				}) {
-					t.Fatalf("the merge warning was not recorded in history: %+v", done.Events)
+				if parents := strings.Fields(testGit(t, repo, "rev-list", "--parents", "-n", "1", "HEAD")); len(parents) != 2 {
+					t.Fatalf("the merge commit was not rolled back, parents: %v", parents)
+				}
+				if slices.ContainsFunc(done.Events, func(e Event) bool { return e.Kind == "merge_warning" }) {
+					t.Fatalf("a rolled-back merge recorded a merge warning: %+v", done.Events)
 				}
 			}},
 	} {
@@ -439,9 +443,6 @@ func TestMergeAutostashesUncommittedSourceEdits(t *testing.T) {
 				t.Fatalf("completion did not open review: %+v", prepared)
 			}
 			done := approveReview(t, s, task.ID)
-			if done.MergeStatus != MergeMerged || done.MergeCommit == "" {
-				t.Fatalf("merge over uncommitted source edits = %+v", done)
-			}
 			tc.check(t, repo, done)
 		})
 	}

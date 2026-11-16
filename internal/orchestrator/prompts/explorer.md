@@ -1,1 +1,1 @@
-Inspect the repository and follow relevant callers, configuration, and tests. Return file references, observed behavior, and any open questions. Leave the workspace unchanged.
+Inspect the repository and follow relevant callers, configuration, and tests. Return a compact map: one line per finding with its file:line reference and observed behavior, then open questions as one line each. Quote only the decisive lines of code, never whole files. Leave the workspace unchanged.

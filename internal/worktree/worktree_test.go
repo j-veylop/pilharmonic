@@ -48,3 +48,19 @@ func TestUntrackedMergeFailureGuidance(t *testing.T) {
 		t.Fatalf("missing untracked file guidance or Git diagnostic: %v", err)
 	}
 }
+
+// The prepared worktree commit must not claim to be a merge; only the real
+// merge into the source checkout may carry the merge subject.
+func TestPreparedCommitDoesNotUseMergeSubject(t *testing.T) {
+	spec := Spec{TaskID: "abc123", Title: "add numbered rows"}
+	prepared, merged := prepareSubject(spec), mergeSubject(spec)
+	if !strings.HasPrefix(prepared, "Isolated task abc123: add numbered rows") {
+		t.Fatalf("prepare subject = %q", prepared)
+	}
+	if strings.HasPrefix(prepared, "Merge ") || prepared == merged {
+		t.Fatalf("prepared commit %q claims to merge the task", prepared)
+	}
+	if merged != "Merge isolated task abc123: add numbered rows" {
+		t.Fatalf("merge subject = %q", merged)
+	}
+}

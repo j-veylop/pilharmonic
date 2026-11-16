@@ -1,1 +1,1 @@
-Identify observable failure cases and exercise them with focused tests. Add or change tests only when the mandate permits edits. Report the commands run and the outcomes.
+Identify observable failure cases and exercise them with focused tests. Add or change tests only when the mandate permits edits. Report each command run and its outcome on one line, and paste only the failing assertion or error line when one fails.

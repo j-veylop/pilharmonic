@@ -109,7 +109,12 @@ func TestTaskPanelGroupsChildrenUnderParentByIndentation(t *testing.T) {
 	}
 	m := model{width: 120, height: 40, tasks: tasks, selected: 4}
 	plain := ansi.Strip(m.taskPanel(60, 30))
-	order := []string{"parent work", "second child", "first child", "grand child", "other work"}
+	for _, hidden := range []string{"second child", "first child", "grand child"} {
+		if strings.Contains(plain, hidden) {
+			t.Fatalf("main panel shows subtask %q: %q", hidden, plain)
+		}
+	}
+	order := []string{"parent work", "other work"}
 	last := -1
 	for _, title := range order {
 		position := strings.Index(plain, title)
@@ -121,9 +126,15 @@ func TestTaskPanelGroupsChildrenUnderParentByIndentation(t *testing.T) {
 		}
 		last = position
 	}
-	for _, want := range []string{"1 ◷ parent work", "2   ● second child", "3   ◷ first child", "4     ● grand child", "5 ● other work"} {
+	for _, want := range []string{"1 ◷ parent work", "2 ● other work"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing numbered layout %q in %q", want, plain)
+		}
+	}
+	details := ansi.Strip(m.modelDetailed(tasks, 3).View())
+	for _, want := range []string{"SUBTASKS", "    ● second child", "    ◷ first child", "      ● grand child"} {
+		if !strings.Contains(details, want) {
+			t.Fatalf("missing subtask layout %q in %q", want, details)
 		}
 	}
 	for _, unwanted := range []string{"▾", "↳"} {
@@ -133,31 +144,30 @@ func TestTaskPanelGroupsChildrenUnderParentByIndentation(t *testing.T) {
 	}
 }
 
-func TestTaskSelectionFollowsGroupedRows(t *testing.T) {
+func TestTaskSelectionFollowsMainRows(t *testing.T) {
 	now := time.Now()
 	tasks := []orchestrator.Task{
 		{ID: "grandchild", ParentID: "child-a", Depth: 2, Title: "grand child", CreatedAt: now.Add(-30 * time.Second)},
 		{ID: "child-b", ParentID: "parent", Depth: 1, Title: "second child", CreatedAt: now.Add(-time.Minute)},
 		{ID: "child-a", ParentID: "parent", Depth: 1, Title: "first child", CreatedAt: now.Add(-2 * time.Minute)},
 		{ID: "parent", Title: "parent work", CreatedAt: now.Add(-4 * time.Minute)},
+		{ID: "other", Title: "other work", CreatedAt: now.Add(-3 * time.Minute)},
 	}
 	m := model{tasks: tasks, selected: 3}
-	for _, want := range []int{1, 2, 0, 0} {
-		if !m.vimNavigation("j") {
-			t.Fatal("j was not handled")
-		}
-		if m.selected != want {
-			t.Fatalf("j selected index %d, want %d", m.selected, want)
-		}
+	if !m.vimNavigation("j") || m.selected != 4 {
+		t.Fatalf("j selected index %d, want other at 4", m.selected)
+	}
+	if !m.vimNavigation("k") || m.selected != 3 {
+		t.Fatalf("k selected index %d, want parent at 3", m.selected)
 	}
 	m.vimNavigation("g")
 	m.vimNavigation("g")
 	if m.selected != 3 {
-		t.Fatalf("gg selected index %d, want parent at 3", m.selected)
+		t.Fatalf("gg selected index %d, want first main row at 3", m.selected)
 	}
 	m.vimNavigation("G")
-	if m.selected != 0 {
-		t.Fatalf("G selected index %d, want last grouped row at 0", m.selected)
+	if m.selected != 4 {
+		t.Fatalf("G selected index %d, want last main row at 4", m.selected)
 	}
 }
 
@@ -208,8 +218,8 @@ func TestTaskSidebarRowsFitAndLeadWithStatus(t *testing.T) {
 	}
 }
 
-// The task list numbers every row so operators can refer to a task by its
-// place, not just a truncated title.
+// The task list numbers every top-level row so operators can refer to a task by
+// its place, not just a truncated title.
 func TestTaskPanelNumbersRowsInGroupedOrder(t *testing.T) {
 	now := time.Now()
 	tasks := []orchestrator.Task{
@@ -217,9 +227,9 @@ func TestTaskPanelNumbersRowsInGroupedOrder(t *testing.T) {
 		{ID: "parent", Title: "parent work", Agent: "general", Status: orchestrator.Running, CreatedAt: now.Add(-time.Minute)},
 		{ID: "other", Title: "other work", Agent: "general", Status: orchestrator.Completed, CreatedAt: now.Add(-2 * time.Minute)},
 	}
-	m := model{width: 120, height: 40, tasks: tasks, selected: 0}
+	m := model{width: 120, height: 40, tasks: tasks, selected: 1}
 	plain := ansi.Strip(m.taskPanel(60, 30))
-	for _, want := range []string{"1 ◷ parent work", "▌ 2   ● child work", "3 ✓ other work"} {
+	for _, want := range []string{"▌ 1 ◷ parent work", "2 ✓ other work"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing numbered row %q in %q", want, plain)
 		}
@@ -292,4 +302,9 @@ func TestTaskNumberColumnAlignsMultiDigitPositions(t *testing.T) {
 	if got, want := taskNumberColumn(100, 100), "100 "; got != want {
 		t.Fatalf("widest triple-digit column = %q, want %q", got, want)
 	}
+}
+
+func (m model) modelDetailed(tasks []orchestrator.Task, selected int) model {
+	m.tasks, m.selected, m.detailFocus, m.width, m.height = tasks, selected, true, 120, 40
+	return m
 }

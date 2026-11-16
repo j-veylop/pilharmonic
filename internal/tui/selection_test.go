@@ -20,7 +20,8 @@ func copyTestModel() model {
 		Prompt: "mandate",
 		Output: "alpha\nbeta\ngamma\n",
 	}
-	return model{width: 120, height: 24, tasks: []orchestrator.Task{task}}
+	child := orchestrator.Task{ID: "child", ParentID: "task", Depth: 1, Title: "child", Status: orchestrator.Running}
+	return model{width: 120, height: 24, detailFocus: true, tasks: []orchestrator.Task{task, child}}
 }
 
 func findViewportText(t *testing.T, viewport detailViewport, needle string) textPosition {
@@ -106,7 +107,7 @@ func TestMouseSelectionCopiesContentPaneOnly(t *testing.T) {
 	}
 	next, _ = m.Update(cmd())
 	m = next.(model)
-	if got := decodeOSC52(t, out.String()); got != "alpha\nbeta\ngamma" {
+	if got := decodeOSC52(t, out.String()); got != "alpha\n  beta\n  gamma" {
 		t.Fatalf("copied %q", got)
 	}
 	if !strings.Contains(m.notice.text, "Copied 3 line(s)") {
@@ -153,7 +154,7 @@ func TestMouseSelectionRejectsSidebarAndClampsDrag(t *testing.T) {
 	if strings.Contains(copied, "TASKS") || strings.Contains(copied, "sidebar-title") || strings.Contains(copied, "PILHARMONIC") {
 		t.Fatalf("selection escaped the content pane: %q", copied)
 	}
-	if !strings.HasPrefix(copied, "alpha\nbeta\n") {
+	if !strings.HasPrefix(copied, "alpha\n  beta\n") {
 		t.Fatalf("selection did not start in content: %q", copied)
 	}
 }
@@ -200,7 +201,8 @@ func longOutputModel(lines int) model {
 		output[i] = fmt.Sprintf("line-%02d", i)
 	}
 	task := orchestrator.Task{ID: "task", Prompt: "mandate", Output: strings.Join(output, "\n")}
-	return model{width: 120, height: 24, tasks: []orchestrator.Task{task}}
+	child := orchestrator.Task{ID: "child", ParentID: "task", Depth: 1, Title: "child", Status: orchestrator.Running}
+	return model{width: 120, height: 24, detailFocus: true, tasks: []orchestrator.Task{task, child}}
 }
 
 func pressContent(t *testing.T, m model, needle string) (model, textPosition, int, int) {

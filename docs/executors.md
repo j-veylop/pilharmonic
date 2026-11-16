@@ -37,7 +37,7 @@ Agent selection applies only to a queued task without an outstanding start reque
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `-title` | `""` | display title for the child |
+| `-title` | `""` | display title for the child; generated from the mandate when empty |
 | `-agent` | `""` | child executor; automatic selection, then the parent executor |
 | `-profile` | `""` | child profile; defaults to the parent profile |
 | `-socket` | `ORCHESTRATOR_CONTROL_SOCKET` | control socket path |

@@ -96,8 +96,9 @@ func (m *model) jumpAttention() bool {
 		return false
 	}
 	position := -1
+	current := rootIndex(m.tasks, m.selected)
 	for i, row := range rows {
-		if row.index == m.selected {
+		if row.index == current {
 			position = i
 			break
 		}
@@ -107,14 +108,34 @@ func (m *model) jumpAttention() bool {
 		if needsAttention(rows[candidate].task) {
 			m.selected = rows[candidate].index
 			m.historyOffset = 0
+			m.resetActivitySelection()
 			return true
 		}
 	}
 	return false
 }
 
-// moveTaskSelection follows the grouped sidebar order rather than the service
-// snapshot order, so a child stays next to its parent while navigating.
+// cycleSubtask moves the detail selection through the selected main task and
+// its descendants, so a subagent can be inspected without cluttering the list.
+func (m *model) cycleSubtask(delta int) {
+	root := m.rootTask(m.selectedTaskOrZero())
+	rows := []taskListRow{{index: rootIndex(m.tasks, m.selected), task: root}}
+	rows = append(rows, subtaskRows(m.tasks, root.ID)...)
+	position := 0
+	for i, row := range rows {
+		if row.index == m.selected {
+			position = i
+			break
+		}
+	}
+	position = max(0, min(len(rows)-1, position+delta))
+	m.selected = rows[position].index
+	m.historyOffset = 0
+	m.resetActivitySelection()
+}
+
+// moveTaskSelection follows the main view order. Selection of a subtask moves
+// from its main task's position.
 func (m *model) moveTaskSelection(delta int) {
 	rows := taskListRows(m.tasks)
 	if len(rows) == 0 {
@@ -124,8 +145,9 @@ func (m *model) moveTaskSelection(delta int) {
 	}
 	position := 0
 	found := false
+	current := rootIndex(m.tasks, m.selected)
 	for i, row := range rows {
-		if row.index == m.selected {
+		if row.index == current {
 			position = i
 			found = true
 			break

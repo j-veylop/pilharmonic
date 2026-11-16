@@ -62,11 +62,7 @@ func (m model) detailContent(width int) []string {
 	if len(lines) > 0 {
 		add("")
 	}
-	if t.Output == "" {
-		add(mutedStyle.Render("Waiting for output…"))
-		return lines
-	}
-	return append(lines, m.renderedOutputFor(t.Output, width, m.runningGlyph(), m.thinking)...)
+	return append(lines, m.conversationContent(t, width)...)
 }
 
 // taskSummary shows the mandate and what will run it. Usage is the task's own
@@ -148,7 +144,7 @@ func reviewSummary(t orchestrator.Task, add func(...string)) {
 		}
 	case orchestrator.ReviewRejected:
 		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("REVIEW REJECTED") + mutedStyle.Render(reviewed))
-		line := "f adds follow-up context and requeues the task."
+		line := "f adds follow-up and resumes the conversation in a new attempt."
 		if t.ExecutionWorkspace != "" {
 			line = "Worktree retained; " + line
 		}
@@ -229,9 +225,9 @@ func (m model) detailPage() int {
 func (m model) maxScroll() int { return max(0, m.detailLineCount()-m.detailPage()) }
 
 func (m model) detailTabRow(t orchestrator.Task, width int) string {
-	tab := func(label string, active bool) string {
-		if active {
-			return activeTabStyle.Render(" " + label + " ")
+	tab := func(label string, index detailTab) string {
+		if index == m.tab {
+			return tabStyle(index).Render(" " + label + " ")
 		}
 		return inactiveTabStyle.Render(" " + label + " ")
 	}
@@ -240,7 +236,7 @@ func (m model) detailTabRow(t orchestrator.Task, width int) string {
 		if i > 0 {
 			row += faintStyle.Render("│")
 		}
-		row += tab(name, detailTab(i) == m.tab)
+		row += tab(name, detailTab(i))
 	}
 	row += faintStyle.Render("  ·  ") + mutedStyle.Render(terminalText(executorLabel(t)))
 	return fit(row, width, 1)
@@ -282,13 +278,18 @@ func (m model) detailPanel(width, height int) string {
 // landingContent is the empty board: identity, examples and the first keys.
 func (m model) landingContent(width int) string {
 	line := func(text string) string { return lipgloss.PlaceHorizontal(width, lipgloss.Center, text) }
+	ruleWidth := max(1, min(26, width-2))
 	lines := []string{
 		line(wordmark()),
 		line(mutedStyle.Render("Local agents with recorded mandates and attempts")),
 		"",
-		line(accentStyle.Render("/") + mutedStyle.Render("  submit a request")),
-		line(keyStyle.Render("@tester") + mutedStyle.Render("  pick an executor")),
-		line(accentStyle.Render("/model") + mutedStyle.Render("  choose a model")),
+		line(gradientFill(strings.Repeat("━", ruleWidth), 0)),
+		"",
+		line(pinkStyle().Render("/") + mutedStyle.Render("  submit a request")),
+		line(cyanStyle().Render("@tester") + mutedStyle.Render("  pick an executor")),
+		line(blueStyle().Render("/model") + mutedStyle.Render("  choose a model")),
+		"",
+		line(gradientFill(strings.Repeat("━", ruleWidth), 0)),
 		"",
 		line(faintStyle.Render("f1 help  ·  q quit")),
 	}
@@ -300,6 +301,9 @@ func (m model) detailFocusHint() string {
 	case !m.detailFocus && !m.fullscreen:
 		return "l to focus"
 	case m.tab != activityTab:
+		if m.selectedHasSubtasks() && !m.fullscreen {
+			return "j/k scroll · [/] subtasks · h tasks"
+		}
 		return "j/k scroll · h tasks"
 	case m.activity.expanded:
 		return "j/k scroll · esc collapse"

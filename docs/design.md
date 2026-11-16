@@ -51,12 +51,22 @@ Keyring-only credentials are not supported.
   an executor from the request text. An unknown or incomplete mention is
   rejected. A held request (**Ctrl-s** in the request box) is
   accepted queued and waits for the operator.
+- A task's title is presentation metadata, not authority. Acceptance records
+  the deterministic first-line title so the board is readable immediately, then
+  one bounded, best-effort call with the configured small model (otherwise the
+  task's resolved model) may replace it.
+  An explicit caller title is kept, and a missing model, provider failure or
+  unusable answer keeps the derived title. The mandate, decision digest,
+  attempts and later context are never changed by titling.
 - A related task in the same thread has its own mandate and decision and
   snapshots the default profile at acceptance. A thread follow-up records the
   subscribed queued and running recipients at submission. Pausing a subscription
   affects future inputs; resuming does not replay missed ones.
-- A task follow-up adds context; for a terminal task it also requeues it.
-  Neither changes the mandate. Later context never widens a mandate.
+- A task follow-up adds context; a running task receives it live in the same
+  conversation, and a terminal task is requeued and resumed immediately. The
+  next attempt replays recent context and prior assistant output, so work
+  continues instead of restarting. Neither changes the mandate. Later context
+  never widens a mandate.
 - A running task can delegate through the same authorization step (subagent
   source). The child gets a new thread, mandate, decision and parent link,
   inherits the execution workspace and the parent profile's tool list, and uses
@@ -91,6 +101,12 @@ and credential.
 The compiled coordinator guidance is added only for a top-level `general`
 attempt with delegation credentials, bash, and remaining child budget. It grants
 no authority beyond the mandate, and the router never splits work.
+
+Every composed attempt prompt also carries a compiled output policy: report the
+outcome and findings first, keep one line per finding with its file reference,
+quote only decisive code, and skip narration, repeated context and closing
+summaries. Specialist role prompts state the compact report each role returns.
+The policy shapes output only and grants no authority.
 
 ## Attempts, delivery and storage
 
@@ -133,8 +149,10 @@ After a successful isolated run the service commits pending changes and opens a
 review of that exact commit. Approval persists the decision and schedules a
 serialized merge; a stale decision leaves the newer review pending. A failed
 merge keeps the execution successful, records the error and retains the
-worktree. Git autostashes touched local edits; if reapplying fails the merge
-completes with a recorded warning. Rejection leaves the source unchanged.
+worktree. Git autostashes touched local edits. When reapplying them conflicts, the
+merge commit is rolled back, the autostash is reapplied to the original checkout
+and the merge is recorded as failed, so no success hides conflict markers.
+Rejection leaves the source unchanged.
 
 A parent with queued or running descendants on its worktree releases its slot
 and records pending integration; an unsuccessful descendant blocks integration.
@@ -158,7 +176,7 @@ in memory and saved if anything changed:
 - legacy tasks without a thread or attempts get them synthesized;
 - `running` tasks become `interrupted`; no worker is assumed to survive.
 
-The terminal derives all geometry from one layout function (header, body, optional sidebar, docked composer, status and hint rows) and renders modals over a dimmed copy of the frame. The task list numbers rows in grouped display order, which is also the order navigation and the narrow layout's `TASK n/N` title use. The request box is always docked; `router.open` means focus, not visibility, and Esc blurs it so board shortcuts stay available. Presentation state such as focus, sidebar visibility, scroll, theme and pending file attachments never becomes task state. Attachments are read once during submission and appended to the initial request text; they are not executed.
+Transient notices are non-blocking toasts and decisions are modal dialogs, both composited over an already-sized frame; neither is allowed to add or remove footer rows, so message traffic cannot shift the layout. The terminal derives all geometry from one layout function (header, body, optional sidebar, docked composer, status and hint rows) and renders modals over a dimmed copy of the frame. The task list numbers top-level rows in display order, which is also the order navigation and the narrow layout's `TASK n/N` title use. The request box is always docked; `router.open` means focus, not visibility, and Esc blurs it so board shortcuts stay available. The transcript pending-assistant spinner uses 15 cycling characters with color cycling, like Crush. Spinner animation is a port of Crush's `ui/anim` package: deterministic pre-rendered frames cached by settings, a birth schedule, gradient cycling, an ellipsis and an elapsed-time suffix, advanced by one shared 20 fps clock that runs only while visible work is live. Theme changes rebuild frames without restarting the animation. The task list and the details are separate full-screen modes, never a split pane: the list is the app's welcome view with top-level tasks only, Enter opens details, and Esc/h returns. Details route the docked input to the selected task as a follow-up and show a sidebar of every descendant when the task has subtasks. Presentation state such as focus, sidebar visibility, scroll, theme and pending file attachments never becomes task state. Attachments are read once during submission and appended to the initial request text; they are not executed.
 
 `Shutdown` cancels running work, closes pending starts and the control socket,
 and waits for workers to finish writing, so quitting yields `canceled`, not

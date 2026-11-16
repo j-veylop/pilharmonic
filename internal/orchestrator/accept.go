@@ -63,13 +63,18 @@ func (s *Service) acceptLocal(purpose, parentID, title, text, workspace, profile
 	if err != nil {
 		return Task{}, err
 	}
+	derived := requestTitle(request)
 	if purpose == PurposeRouter {
-		title = requestTitle(request)
+		title = derived
 	}
 	title = strings.TrimSpace(title)
 	if title == "" || request == "" {
 		return Task{}, errors.New("title and prompt are required")
 	}
+	// An explicit caller title is kept. A title equal to the derived fallback
+	// came from the request itself, so the title model may improve it once the
+	// task exists.
+	generateTitle := purpose == PurposeRouter || title == derived
 	abs, err := filepath.Abs(workspace)
 	if err != nil {
 		return Task{}, err
@@ -81,12 +86,13 @@ func (s *Service) acceptLocal(purpose, parentID, title, text, workspace, profile
 	var task Task
 	err = s.whileOpen(func() error {
 		in := acceptedTaskInput{
-			auth:     AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: purpose, ParentID: parentID, Text: request, Workspace: abs},
-			title:    title,
-			agent:    agent,
-			profile:  profile,
-			plan:     plan,
-			accepted: "Manual request accepted",
+			auth:          AuthorizationRequest{Source: LocalPolicySource, Actor: LocalActor, Purpose: purpose, ParentID: parentID, Text: request, Workspace: abs},
+			title:         title,
+			generateTitle: generateTitle,
+			agent:         agent,
+			profile:       profile,
+			plan:          plan,
+			accepted:      "Manual request accepted",
 		}
 		if parentID != "" {
 			parent := s.taskLocked(parentID)
@@ -133,15 +139,18 @@ func requireDir(path, label string) error {
 // empty auth.ThreadID starts a new thread. A positive auth.Depth marks
 // delegated work, whose task records auth.ParentID as its parent.
 type acceptedTaskInput struct {
-	auth      AuthorizationRequest
-	title     string
-	agent     string
-	profile   string
-	spec      *Profile // a pre-resolved snapshot; otherwise profile is resolved
-	inherited []string
-	plan      workspacePlan
-	accepted  string
-	notes     []Event // recorded after acceptance, stamped with its time
+	auth  AuthorizationRequest
+	title string
+	// generateTitle asks for a model-written display title after the task is
+	// durably recorded. The derived title stays until (and unless) it arrives.
+	generateTitle bool
+	agent         string
+	profile       string
+	spec          *Profile // a pre-resolved snapshot; otherwise profile is resolved
+	inherited     []string
+	plan          workspacePlan
+	accepted      string
+	notes         []Event // recorded after acceptance, stamped with its time
 }
 
 // acceptLocked is the single acceptance path: it authorizes the request,
@@ -212,6 +221,9 @@ func (s *Service) acceptLocked(in acceptedTaskInput) (Task, error) {
 	}
 	if err = s.commitLocked(snapshot); err != nil {
 		return Task{}, err
+	}
+	if in.generateTitle {
+		s.scheduleTitleLocked(t.ID, t.Prompt, t.Agent, spec)
 	}
 	return clone(t), nil
 }

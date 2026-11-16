@@ -116,10 +116,27 @@ type taskListRow struct {
 	task  orchestrator.Task
 }
 
-// taskListRows groups delegated children directly beneath their parent while
-// preserving newest-first order for top-level tasks and within each sibling
-// group. An orphaned child stays at the top level.
+// taskListRows is the main view: top-level tasks only, newest first. An
+// orphaned child stays at the top level.
 func taskListRows(tasks []orchestrator.Task) []taskListRow {
+	known := make(map[string]bool, len(tasks))
+	for _, task := range tasks {
+		if task.ID != "" {
+			known[task.ID] = true
+		}
+	}
+	rows := make([]taskListRow, 0, len(tasks))
+	for i, task := range tasks {
+		if task.ParentID == "" || !known[task.ParentID] {
+			rows = append(rows, taskListRow{index: i, task: task})
+		}
+	}
+	return rows
+}
+
+// taskTreeRows groups delegated children directly beneath their parent while
+// preserving newest-first order. It feeds the detailed view's subtask sidebar.
+func taskTreeRows(tasks []orchestrator.Task) []taskListRow {
 	known := make(map[string]bool, len(tasks))
 	for _, task := range tasks {
 		if task.ID != "" {
@@ -159,6 +176,9 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 // taskNumberColumn formats a task's one-based position for the sidebar's number
 // gutter. The column is as wide as total so rows stay aligned.
 func taskNumberColumn(position, total int) string {
+	if total <= 0 {
+		return ""
+	}
 	return fmt.Sprintf("%*d ", len(strconv.Itoa(max(1, total))), position)
 }
 
@@ -166,6 +186,71 @@ func taskNumberColumn(position, total int) string {
 // number gives way. The number leads the row so truncation cannot hide it, but
 // a number that eats the status and title would make the row unrecognisable.
 const taskTitleMinCells = 4
+
+// subtaskRows lists every descendant of rootID in tree order.
+func subtaskRows(tasks []orchestrator.Task, rootID string) []taskListRow {
+	children := make(map[string][]int)
+	for i, task := range tasks {
+		if task.ParentID != "" {
+			children[task.ParentID] = append(children[task.ParentID], i)
+		}
+	}
+	var rows []taskListRow
+	var walk func(string)
+	walk = func(id string) {
+		for _, child := range children[id] {
+			rows = append(rows, taskListRow{index: child, task: tasks[child]})
+			walk(tasks[child].ID)
+		}
+	}
+	walk(rootID)
+	return rows
+}
+
+// rootIndex resolves a selection to its top-level task, so the main list can
+// show exactly one highlighted row while the detail pane shows a subtask.
+func rootIndex(tasks []orchestrator.Task, index int) int {
+	if index < 0 || index >= len(tasks) {
+		return index
+	}
+	for steps := 0; steps < len(tasks); steps++ {
+		parent := tasks[index].ParentID
+		if parent == "" {
+			return index
+		}
+		found := -1
+		for i, task := range tasks {
+			if task.ID == parent {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			return index
+		}
+		index = found
+	}
+	return index
+}
+
+// selectedHasSubtasks reports whether the detailed view needs a subtask pane.
+func (m model) selectedHasSubtasks() bool {
+	root, ok := m.selectedTask()
+	if !ok {
+		return false
+	}
+	return len(subtaskRows(m.tasks, m.rootTask(root).ID)) > 0
+}
+
+// rootTask walks a selected task up to its main-view ancestor.
+func (m model) rootTask(task orchestrator.Task) orchestrator.Task {
+	for i, candidate := range m.tasks {
+		if candidate.ID == task.ID {
+			return m.tasks[rootIndex(m.tasks, i)]
+		}
+	}
+	return task
+}
 
 // taskTitleRow nests a child's status glyph under its parent by depth, capped
 // so deep trees stay readable in a narrow sidebar. position is the task's place
@@ -214,6 +299,9 @@ func toolStatusStyle(status, running string) (lipgloss.Style, string) {
 // runningGlyph returns the current frame of the Bubble Tea spinner. Models
 // constructed without Run, such as in tests, fall back to the first frame.
 func (m model) runningGlyph() string {
+	if m.anim != nil {
+		return m.anim.Render()
+	}
 	if len(m.spinner.Spinner.Frames) == 0 {
 		return defaultRunningGlyph
 	}

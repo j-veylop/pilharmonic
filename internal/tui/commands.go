@@ -80,6 +80,7 @@ func (m model) slashCommand(line string) model {
 			return m
 		}
 		m.theme = ApplyTheme(mode)
+		m.setAnimColors()
 		m.notice.text = "Theme: " + m.theme
 	case "/model":
 		if arg != "" && !slices.Contains(modelClasses, arg) {

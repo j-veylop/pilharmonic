@@ -149,7 +149,7 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 
 	cleanup := base
 	cleanup.cleanup = cleanupRequest{kind: deleteTask, ids: []string{"task"}, title: "work"}
-	if footer := ansi.Strip(cleanup.footer(120)); !strings.Contains(footer, "DELETE TASK") || strings.Contains(footer, "c cancel ·") {
+	if footer := ansi.Strip(cleanup.View()); !strings.Contains(footer, "DELETE TASK") || !strings.Contains(footer, "y confirm") {
 		t.Fatalf("cleanup footer changed: %q", footer)
 	}
 }
@@ -170,7 +170,7 @@ func TestAttentionShortcut(t *testing.T) {
 		notice   string
 		text     string
 	}{
-		{name: "grouped order wraps", m: model{tasks: grouped, selected: 2, historyOffset: 4, activity: detail}, selected: []int{0, 2}},
+		{name: "main tasks only wrap", m: model{tasks: grouped, selected: 2, historyOffset: 4, activity: detail}, selected: []int{2, 2}},
 		{name: "from a task without attention", m: model{tasks: grouped, selected: 1, historyOffset: 3, activity: detail}, selected: []int{2}},
 		{name: "nothing needs action", m: model{tasks: grouped[1:2], historyOffset: 3}, selected: []int{0}, notice: "No tasks need action"},
 		{name: "task composer", m: model{input: composer{kind: reportInput}}, text: "!"},
@@ -209,9 +209,9 @@ func TestNarrowLayoutShowsSelectedTaskPosition(t *testing.T) {
 		{ID: "parent", Title: "parent", Status: orchestrator.Running},
 		{ID: "other", Title: "other", Status: orchestrator.Completed},
 	}
-	m := model{width: 50, height: 24, tasks: tasks, selected: 0}
-	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "TASK 2/3") {
-		t.Fatalf("narrow layout lost grouped task position: %q", plain)
+	m := model{width: 50, height: 24, tasks: tasks, selected: 0, detailFocus: true}
+	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "TASK 1/2") {
+		t.Fatalf("narrow layout lost main task position: %q", plain)
 	}
 	m.tasks[0].Attempts = []orchestrator.Attempt{{ID: "attempt"}}
 	m.tasks[0].Activities = []orchestrator.ToolActivity{{ID: "call", AttemptID: "attempt", Name: "read", Status: "running"}}
@@ -219,13 +219,13 @@ func TestNarrowLayoutShowsSelectedTaskPosition(t *testing.T) {
 		m.width = width
 		m.fullscreen = width == 120
 		plain := ansi.Strip(m.View())
-		if !strings.Contains(plain, "TASK 2/3") || !strings.Contains(plain, "read") {
+		if !strings.Contains(plain, "TASK 1/2") || !strings.Contains(plain, "read") {
 			t.Fatalf("width %d: active tool hid task position or action: %q", width, plain)
 		}
 	}
 	m.fullscreen = false
 	m.width = 120
-	if plain := ansi.Strip(m.View()); strings.Contains(plain, "TASK 2/3") {
+	if plain := ansi.Strip(m.View()); strings.Contains(plain, "TASK 1/2") {
 		t.Fatalf("wide layout duplicated position beside the sidebar: %q", plain)
 	}
 }
@@ -294,20 +294,20 @@ func TestNoticeLineReportsStandingServiceConditions(t *testing.T) {
 	saveErr := errors.New("disk full")
 	m := model{service: conditionService{Service: s, saveErr: saveErr}, width: 120, height: 35}
 	m.refreshTasks()
-	if plain := ansi.Strip(m.footer(120)); !strings.Contains(plain, "State save failed: disk full") {
+	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "State save failed: disk full") {
 		t.Fatalf("footer did not report the failed save: %q", plain)
 	}
 
 	startup := model{service: conditionService{Service: s, startup: "state file was corrupt; preserved as old.json"}, width: 120, height: 35}
 	startup.refreshTasks()
-	if plain := ansi.Strip(startup.footer(120)); !strings.Contains(plain, "state file was corrupt") {
+	if plain := ansi.Strip(startup.View()); !strings.Contains(plain, "state file was corrupt") {
 		t.Fatalf("footer did not report the startup warning: %q", plain)
 	}
 
 	// A standing condition must not hide a transient action notice.
 	m.notice.text = "Task queued"
 	m.refreshTasks()
-	if plain := ansi.Strip(m.footer(120)); !strings.Contains(plain, "Task queued") || !strings.Contains(plain, "State save failed") {
+	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "Task queued") || !strings.Contains(plain, "State save failed") {
 		t.Fatalf("notice and warning did not share the notice line: %q", plain)
 	}
 }

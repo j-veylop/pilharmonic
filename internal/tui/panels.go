@@ -55,18 +55,25 @@ func selectionRow(text string, width int) string {
 
 func (m model) taskPanel(width, height int) string {
 	inner := m.layout().panelInner(width)
+	rows := taskListRows(m.tasks)
 	var lines []string
-	lines = append(lines, accentStyle.Render("TASKS")+mutedStyle.Render(fmt.Sprintf("  / %02d", len(m.tasks))))
+	running, attention := 0, m.attentionCount()
+	for _, row := range rows {
+		if _, label, _ := m.taskState(row.task); label == "RUNNING" {
+			running++
+		}
+	}
+	lines = append(lines, gradientText("TASKS")+faintStyle.Render(fmt.Sprintf("  / %02d", len(rows)))+
+		fit(blueStyle().Render(fmt.Sprintf("  %d running", running))+mutedStyle.Render("  ·  ")+amberStyle().Render(fmt.Sprintf("%d need action", attention)), inner-lipgloss.Width("TASKS  / 00"), 1))
 	lines = append(lines, "")
-	if len(m.tasks) == 0 {
-		lines = append(lines,
-			mutedStyle.Render("No tasks yet."),
-			mutedStyle.Render("/ creates one."))
-	} else {
-		rows := taskListRows(m.tasks)
+	if len(rows) == 0 {
+		return focusedPanel(m.landingContent(inner), width, height, true)
+	}
+	{
+		highlight := rootIndex(m.tasks, m.selected)
 		selected := 0
 		for i, row := range rows {
-			if row.index == m.selected {
+			if row.index == highlight {
 				selected = i
 				break
 			}
@@ -75,23 +82,60 @@ func (m model) taskPanel(width, height int) string {
 		for i := start; i < end; i++ {
 			row := rows[i]
 			lines = append(lines,
-				m.taskTitleRow(row.task, i+1, len(rows), inner, row.index == m.selected),
-				taskMetaLine(row.task, inner))
+				m.taskTitleRow(row.task, i+1, len(rows), inner, row.index == highlight),
+				m.mainTaskMetaLine(row.task, inner))
 		}
 	}
-	return focusedPanel(strings.Join(lines, "\n"), width, height, !m.detailFocus && !m.fullscreen)
+	return focusedPanel(strings.Join(lines, "\n"), width, height, true)
+}
+
+// subtaskPanel is the detailed view's sidebar: every descendant of the selected
+// main task, with the focused subtask marked.
+func (m model) subtaskPanel(width, height int, inner int, root orchestrator.Task, rows []taskListRow) string {
+	lines := []string{
+		accentStyle.Render("SUBTASKS") + mutedStyle.Render(fmt.Sprintf("  / %02d", len(rows))),
+		mutedStyle.Render(fit(singleLine(root.Title), inner, 1)),
+		"",
+	}
+	selected := 0
+	for i, row := range rows {
+		if row.index == m.selected {
+			selected = i
+			break
+		}
+	}
+	start, end := windowRows(selected, len(rows), (height-5)/2)
+	for i := start; i < end; i++ {
+		row := rows[i]
+		lines = append(lines,
+			m.taskTitleRow(row.task, 0, 0, inner, row.index == m.selected),
+			taskMetaLine(row.task, inner))
+	}
+	return focusedPanel(strings.Join(lines, "\n"), width, height, false)
 }
 
 // selectedPosition returns the selected task's one-based position in grouped
 // display order, which is the order the sidebar and navigation use.
 func (m model) selectedPosition() (position, total int, ok bool) {
 	rows := taskListRows(m.tasks)
+	highlight := rootIndex(m.tasks, m.selected)
 	for i, row := range rows {
-		if row.index == m.selected {
+		if row.index == highlight {
 			return i + 1, len(rows), true
 		}
 	}
 	return 0, 0, false
+}
+
+// mainTaskMetaLine is the task list's secondary row: executor, workspace or
+// review state and the number of delegated subtasks.
+func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
+	label := executorLabel(task)
+	meta := "  " + mutedStyle.Render(label) + "  " + workspaceBadgeFor(task).render()
+	if count := len(subtaskRows(m.tasks, task.ID)); count > 0 {
+		meta += mutedStyle.Render(fmt.Sprintf("  · %d subtask(s)", count))
+	}
+	return fit(meta, width, 1)
 }
 
 // executorLabel shows the executor and, when chosen, its profile.

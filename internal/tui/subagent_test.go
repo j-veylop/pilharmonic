@@ -53,11 +53,12 @@ func TestSubagentComposerSpawnsChild(t *testing.T) {
 		t.Fatalf("subagent not created: %+v notice=%q", child, m.notice.text)
 	}
 	plain := ansi.Strip(m.View())
-	if !strings.Contains(plain, "● child mandate") {
-		t.Fatal("subagent not marked in task list")
+	if strings.Contains(plain, "child mandate") {
+		t.Fatalf("subagent leaked into the main task list: %q", plain)
 	}
-	if strings.Contains(plain, "↳") {
-		t.Fatalf("subagent row still shows an arrow marker: %q", plain)
+	m.detailFocus = true
+	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "SUBTASKS") || !strings.Contains(plain, "child mandate") {
+		t.Fatalf("subagent missing from the detailed sidebar: %q", plain)
 	}
 }
 

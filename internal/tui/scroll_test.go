@@ -49,7 +49,7 @@ func TestMouseWheelScrollsDetails(t *testing.T) {
 
 func TestWrappedDetailAndScrollBounds(t *testing.T) {
 	task := orchestrator.Task{ID: "x", Title: "title", Output: "begin-" + strings.Repeat("a", 200) + "THE-END"}
-	m := model{width: 80, height: 24, tasks: []orchestrator.Task{task}}
+	m := model{width: 80, height: 24, detailFocus: true, tasks: []orchestrator.Task{task}}
 	content := strings.Join(m.detailContent(20), "\n")
 	if !strings.Contains(content, "begin-") || !strings.Contains(strings.Join(strings.Fields(ansi.Strip(content)), ""), "THE-END") || len(strings.Split(content, "\n")) < 10 {
 		t.Fatalf("long lines not wrapped: %q", content)
@@ -95,7 +95,7 @@ func TestScrollPositionSurvivesNewOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-r.first
-	m := model{service: s, width: 120, height: 22, tasks: s.ListTasks()}
+	m := model{service: s, width: 120, height: 22, detailFocus: true, tasks: s.ListTasks()}
 	m.scrollDetail(10)
 	before := m.View()
 	close(r.more)

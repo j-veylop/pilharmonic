@@ -35,7 +35,7 @@ func TestScheduledAndHistoryPagination(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		task.Events = append(task.Events, orchestrator.Event{Kind: fmt.Sprintf("event-%02d", i)})
 	}
-	m := model{width: 120, height: 22, tab: infoTab, tasks: []orchestrator.Task{task}}
+	m := model{width: 120, height: 22, tab: infoTab, detailFocus: true, tasks: []orchestrator.Task{task}}
 	latest := m.View()
 	if !strings.Contains(latest, "WAITING") || !strings.Contains(latest, "event-29") {
 		t.Fatalf("missing waiting or latest event: %s", latest)
@@ -71,7 +71,7 @@ func TestThinkingToggleChangesOutputAndKeepsLayoutBounded(t *testing.T) {
 	}
 	task := orchestrator.Task{ID: "thinking", Title: "reason", Prompt: "work", Status: orchestrator.Running,
 		Output: "visible before\n[thinking]\nprivate reasoning\n[/thinking]\nvisible after\n"}
-	m := model{service: service, width: 120, height: 30, tasks: []orchestrator.Task{task}}
+	m := model{service: service, width: 120, height: 30, detailFocus: true, tasks: []orchestrator.Task{task}}
 	hidden := ansi.Strip(m.View())
 	if strings.Contains(hidden, "private reasoning") || !strings.Contains(hidden, "thinking hidden") {
 		t.Fatalf("thinking should start hidden: %s", hidden)
@@ -168,7 +168,7 @@ func TestHistoryShowsContextAndPerAttemptDeliveries(t *testing.T) {
 			{TriggerID: "trigger-1", AttemptID: "attempt-new", State: orchestrator.DeliveryAccepted},
 		},
 	}
-	view := (model{width: 120, height: 35, tab: infoTab, tasks: []orchestrator.Task{task}}).View()
+	view := (model{width: 120, height: 35, tab: infoTab, detailFocus: true, tasks: []orchestrator.Task{task}}).View()
 	for _, text := range []string{"trigger-1", "pending", "trigger-2", "not accepted", "DELIVERIES", "attempt-old", "queue full", "attempt-new", "accepted"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("missing %q in %s", text, view)

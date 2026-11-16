@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"pilharmonic/internal/orchestrator"
 	"pilharmonic/internal/tui/editor"
 )
 
@@ -102,14 +104,19 @@ func (m model) composerTitle() (title, note string) {
 	switch {
 	case m.router.open && m.login.provider != "":
 		return "API KEY", terminalText(m.login.provider)
+	case m.input.kind != "" && !m.router.open:
+		if m.input.kind == rejectReviewInput {
+			return string(m.input.kind), "keeps worktree · f requeues"
+		}
+		return string(m.input.kind), ""
+	case m.detailFocus || m.fullscreen:
+		return "FOLLOW UP", "enter send · h tasks"
 	case m.router.open:
 		return "REQUEST", "enter start · ctrl+s hold"
-	case m.input.kind == "":
-		return "REQUEST", "i or / to type"
-	case m.input.kind == rejectReviewInput:
-		return string(m.input.kind), "keeps worktree · f requeues"
+	case m.input.kind != "":
+		return string(m.input.kind), ""
 	}
-	return string(m.input.kind), ""
+	return "REQUEST", "i or / to type"
 }
 
 // composerBoxLines renders the draft with the prompt on the first row and a
@@ -131,6 +138,9 @@ func (m model) composerBoxLines(rows int) []string {
 	var visible []string
 	if e.Text == "" {
 		placeholder := "Describe the work… / or i to type, @ chooses an executor"
+		if m.detailFocus || m.fullscreen {
+			placeholder = "Continue this task's conversation…"
+		}
 		if m.input.kind != "" {
 			placeholder = composerPlaceholders[m.input.kind]
 		}
@@ -244,14 +254,20 @@ func (m model) submitInput(prompt string) composerResultMsg {
 		return done("Context recorded; delivery status is in history.", s.AddManualThreadContext(id, prompt))
 	case followUpInput:
 		requeued, err := s.FollowUp(id, prompt)
-		if requeued {
-			return composerResultMsg{notice: "Follow-up recorded; requeued. Press r to start.", err: err}
+		if err != nil {
+			return done("", err)
 		}
-		return done("Follow-up recorded; delivery status is in history.", err)
+		if !requeued {
+			return done("Follow-up recorded; delivery status is in history.", nil)
+		}
+		if err := s.Start(context.Background(), id); err != nil {
+			return done("Follow-up recorded, but the conversation could not resume.", err)
+		}
+		return done("Follow-up sent; continuing the conversation.", nil)
 	case subagentInput:
 		task, err := s.SpawnSubagent(id, "", prompt, "")
 		return done("Subagent started: "+task.ID, err)
 	}
-	task, err := s.CreateRelatedTask(id, taskTitle(prompt), prompt, m.workspace)
+	task, err := s.CreateRelatedTask(id, orchestrator.DerivedTitle(prompt), prompt, m.workspace)
 	return done("Task queued: "+task.ID, err)
 }

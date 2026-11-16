@@ -16,7 +16,7 @@ func TestIsolationControlTogglesAndExplainsWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35, tab: infoTab}
+	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35, tab: infoTab, detailFocus: true}
 	if !strings.Contains(m.View(), "shared workspace") {
 		t.Fatal("initial workspace state not shown")
 	}
@@ -61,7 +61,7 @@ func TestDetailShowsAutomaticMergeResult(t *testing.T) {
 		ID: "task", Title: "merged", Prompt: "work", Status: orchestrator.Completed,
 		Isolated: true, ExecutionWorkspace: "/state/workspaces/task/tree", IsolationCommit: "abc123",
 		MergeStatus: orchestrator.MergeMerged, MergeCommit: "def456",
-	}}, tab: infoTab}
+	}}, tab: infoTab, detailFocus: true}
 	view := m.View()
 	for _, text := range []string{"Merge: merged", "def456"} {
 		if !strings.Contains(view, text) {
@@ -92,7 +92,7 @@ func TestDetailShowsPreparedIsolatedWorkspace(t *testing.T) {
 		Isolated:           true,
 		ExecutionWorkspace: "/state/workspaces/task/tree",
 		IsolationCommit:    "abc123",
-	}}, tab: infoTab}
+	}}, tab: infoTab, detailFocus: true}
 	view := m.View()
 	for _, text := range []string{"Execution: /state/workspaces/task/tree", "Isolated worktree", "abc123"} {
 		if !strings.Contains(view, text) {

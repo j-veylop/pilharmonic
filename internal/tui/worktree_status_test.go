@@ -42,7 +42,8 @@ func TestWorkspaceBadgeDistinguishesWorkspaceAndMergeState(t *testing.T) {
 			}
 			tc.task.ID, tc.task.Title, tc.task.Prompt, tc.task.Agent, tc.task.CreatedAt = "task", "work", "work", "general", time.Now()
 			board := ansi.Strip(model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}}.View() +
-				model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}, tab: infoTab}.View())
+				model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}, tab: infoTab, detailFocus: true}.View() +
+				model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}, detailFocus: true}.View())
 			for _, want := range append([]string{tc.glyph + " " + tc.label}, tc.detail...) {
 				if !strings.Contains(board, want) {
 					t.Fatalf("board missing %q: %s", want, board)

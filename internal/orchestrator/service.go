@@ -53,6 +53,12 @@ type Service struct {
 	activity         map[string]chan struct{}
 	idleTimeout      time.Duration
 	attemptRetention int
+	// titleGenerator proposes display titles for accepted tasks. It runs
+	// outside mu and is bounded by lifeCtx; the derived title remains on
+	// failure.
+	titleGenerator TitleGenerator
+	lifeCtx        context.Context
+	lifeCancel     context.CancelFunc
 	// sessionStartedAt bounds this session's usage: attempts started after it.
 	sessionStartedAt time.Time
 
@@ -94,6 +100,8 @@ func Open(path string) (*Service, error) {
 		credentialsPath:     credentialsPathFor(path),
 		modelSelectionPath:  modelSelectionPathFor(path),
 	}
+	s.lifeCtx, s.lifeCancel = context.WithCancel(context.Background())
+	s.titleGenerator = s.generateTitle
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
@@ -326,6 +334,7 @@ func (s *Service) Retry(id string) error {
 func (s *Service) Shutdown() error {
 	s.mu.Lock()
 	s.closing = true
+	s.lifeCancel()
 	for id := range s.pending {
 		s.removePendingLocked(id)
 	}

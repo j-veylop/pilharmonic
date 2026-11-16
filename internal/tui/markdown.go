@@ -220,11 +220,11 @@ func transcriptStyle() glamouransi.StyleConfig {
 		BlockSuffix: "\n", Prefix: "› ", Color: stringPtr(colorAmber), Bold: boolPtr(true),
 	}}
 	style.Text.Color = stringPtr(colorInk)
-	style.Strong.Color = stringPtr(colorInk)
+	style.Strong.Color = stringPtr(colorPink)
 	style.Strong.Bold = boolPtr(true)
 	style.Emph.Color = stringPtr(colorInk)
 	style.Emph.Italic = boolPtr(true)
-	style.HorizontalRule.Color = stringPtr(colorFaint)
+	style.HorizontalRule.Color = stringPtr(colorViolet)
 	style.HorizontalRule.Format = "\n  ┄┄┄\n"
 	style.Link.Color = stringPtr(colorAccent)
 	style.Link.Underline = boolPtr(true)
@@ -240,6 +240,8 @@ func transcriptStyle() glamouransi.StyleConfig {
 	style.Table.CenterSeparator = stringPtr("─┼─")
 	style.Table.RowSeparator = stringPtr("─")
 	style.Item.Color = stringPtr(colorAccent)
+	style.Enumeration.Color = stringPtr(colorPink)
+	style.Enumeration.Bold = boolPtr(true)
 	style.Task.Ticked = "[✓] "
 	style.Task.Unticked = "[ ] "
 	return style

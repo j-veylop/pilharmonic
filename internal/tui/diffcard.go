@@ -20,11 +20,11 @@ func (m model) diffCard(text string, width int) []string {
 		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"), strings.HasPrefix(line, "diff "), strings.HasPrefix(line, "index "):
 			rendered = mutedStyle.Render(line)
 		case strings.HasPrefix(line, "@@"):
-			rendered = accentStyle.Render(line)
+			rendered = diffHunkStyle.Render(line)
 		case strings.HasPrefix(line, "+"):
-			rendered = greenStyle().Render(line)
+			rendered = diffAddedStyle.Render(line)
 		case strings.HasPrefix(line, "-"):
-			rendered = redStyle().Render(line)
+			rendered = diffRemovedStyle.Render(line)
 		}
 		body = append(body, strings.Split(ansi.Hardwrap(rendered, inner, true), "\n")...)
 	}

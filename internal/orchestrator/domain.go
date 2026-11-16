@@ -103,6 +103,7 @@ type Task struct {
 	ScheduleRequested  bool           `json:"schedule_requested,omitempty"`
 	ScheduledAt        time.Time      `json:"scheduled_at,omitempty"`
 	Title              string         `json:"title"`
+	TitleGenerated     bool           `json:"title_generated,omitempty"` // display metadata written by the title model
 	Prompt             string         `json:"prompt"`
 	Workspace          string         `json:"workspace"`
 	Status             Status         `json:"status"`

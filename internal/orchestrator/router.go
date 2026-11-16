@@ -81,6 +81,16 @@ func (s *Service) SubmitRequest(text, workspace string) (Task, error) {
 	return started, nil
 }
 
+// DerivedTitle returns the deterministic display title for a request, with any
+// leading executor mention removed. The service uses the same value as the
+// immediate title and as the fallback when a generated title is unavailable.
+func DerivedTitle(text string) string {
+	if _, request, explicit := SplitAgentMention(text); explicit {
+		text = request
+	}
+	return requestTitle(text)
+}
+
 // requestTitle derives a display title from the first line of a request. The
 // mandate remains the complete request text.
 func requestTitle(text string) string {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -66,6 +67,15 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
+// chatFollowTarget is the selected task while the detailed view owns the
+// keyboard. The main view's request box starts a new task instead.
+func (m model) chatFollowTarget() (orchestrator.Task, bool) {
+	if !(m.detailFocus || m.fullscreen) {
+		return orchestrator.Task{}, false
+	}
+	return m.selectedTask()
+}
+
 // submitRequest dispatches a slash command or submits the draft off the update
 // loop: routed and started, or held queued for setup. Nothing can run without
 // a provider, so login comes first.
@@ -85,6 +95,30 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 		m.notice.text = forcedLoginNotice
 		return m, nil
 	}
+	if target, ok := m.chatFollowTarget(); ok {
+		if hold {
+			m.notice.text = "Ctrl-s holds new tasks; this message continues the selected task."
+			return m, nil
+		}
+		service, id, attachments := m.service, target.ID, append([]string(nil), m.attachments...)
+		return m, func() tea.Msg {
+			prompt, err := composeRequest(text, attachments)
+			if err != nil {
+				return routerResultMsg{err: err}
+			}
+			requeued, err := service.FollowUp(id, prompt)
+			if err != nil {
+				return routerResultMsg{err: err}
+			}
+			if !requeued {
+				return routerResultMsg{task: target, notice: "Follow-up recorded; delivery status is in history."}
+			}
+			if err := service.Start(context.Background(), id); err != nil {
+				return routerResultMsg{task: target, notice: "Follow-up recorded, but the conversation could not resume.", err: err}
+			}
+			return routerResultMsg{task: target, notice: "Follow-up sent; continuing the conversation."}
+		}
+	}
 	service, workspace, attachments := m.service, m.workspace, append([]string(nil), m.attachments...)
 	if hold {
 		return m, func() tea.Msg {
@@ -92,7 +126,7 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 			if err != nil {
 				return routerResultMsg{err: err}
 			}
-			task, err := service.CreateTask(taskTitle(text), prompt, workspace)
+			task, err := service.CreateTask(orchestrator.DerivedTitle(prompt), prompt, workspace)
 			return routerResultMsg{task: task, notice: "Task held: " + task.ID + "; o to set up, r to start.", err: err}
 		}
 	}
@@ -104,18 +138,6 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 		task, err := service.SubmitRequest(prompt, workspace)
 		return routerResultMsg{task: task, notice: routeNotice(task), err: err}
 	}
-}
-
-// taskTitle is a prompt's first 60 characters without the executor mention.
-func taskTitle(prompt string) string {
-	title := prompt
-	if _, request, explicit := orchestrator.SplitAgentMention(prompt); explicit {
-		title = request
-	}
-	if runes := []rune(title); len(runes) > 60 {
-		title = string(runes[:57]) + "..."
-	}
-	return title
 }
 
 // mentionQuery describes the leading @executor token being typed. Completion

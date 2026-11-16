@@ -128,7 +128,7 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	approved := startIsolatedReviewTask(t, s, repo, "approve")
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selectTask(t, &m, approved.ID)
-	if m = key(m, runeKey("v")); m.review.target != approved.ID || !strings.Contains(ansi.Strip(m.footer(120)), "approve + merge (y)") {
+	if m = key(m, runeKey("v")); m.review.target != approved.ID || !strings.Contains(ansi.Strip(m.View()), "approve + merge (y)") {
 		t.Fatalf("v did not open the review prompt: %+v", m.review)
 	}
 	m = key(m, runeKey("y"))
@@ -163,6 +163,7 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	if m.input.kind != "" || !strings.Contains(m.notice.text, "Review rejected") || !strings.Contains(m.notice.text, "press f") {
 		t.Fatalf("rejection not acknowledged with follow-up: input=%v notice=%q", m.input, m.notice.text)
 	}
+	m.detailFocus = true
 	if m.tab = infoTab; !strings.Contains(m.View(), "f adds follow-up") {
 		t.Fatalf("rejected detail does not suggest follow-up: %s", m.View())
 	}
@@ -176,8 +177,8 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	m = key(m, runeKey("add regression coverage"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	got, _ = s.GetTask(rejected.ID)
-	if got.Status != orchestrator.Queued || got.Prompt != "do work" || len(got.Context) != 1 || got.Context[0].Text != "add regression coverage" || got.ReviewStatus != "" {
-		t.Fatalf("follow-up did not requeue the rejected task cleanly: %+v", got)
+	if (got.Status != orchestrator.Queued && got.Status != orchestrator.Running) || got.Prompt != "do work" || len(got.Context) != 1 || got.Context[0].Text != "add regression coverage" || got.ReviewStatus != "" {
+		t.Fatalf("follow-up did not continue the rejected task cleanly: %+v", got)
 	}
 	if _, err := os.Stat(rejected.ExecutionWorkspace); err != nil {
 		t.Fatalf("rejection did not retain the worktree: %v", err)

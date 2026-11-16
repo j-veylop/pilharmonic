@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"pilharmonic/internal/orchestrator"
+	"pilharmonic/internal/tui/anim"
 	"pilharmonic/internal/tui/editor"
 )
 
@@ -19,6 +20,9 @@ const runningGlyphPlaceholder = "\uE000"
 var defaultRunningGlyph = spinner.MiniDot.Frames[0]
 
 type tickMsg time.Time
+
+// animTickMsg drives the shared animation clock at Crush's 20 fps.
+type animTickMsg struct{}
 
 // actionResultMsg reports a mutating service call by its notice or error.
 type actionResultMsg struct {
@@ -125,6 +129,8 @@ type model struct {
 	clipboard     io.Writer
 	spinner       spinner.Model
 	spinnerActive bool
+	anim          *anim.Anim
+	chatAnim      *anim.Anim
 	markdown      *markdownCache
 	quitConfirm   bool
 	quitChoice    int
@@ -221,6 +227,8 @@ func newModel(service Service, workspace string) model {
 		usage:     service.SessionUsage(),
 		router:    routerState{open: true},
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		anim:      newRunningAnim(),
+		chatAnim:  newChatAnim(),
 		markdown:  &markdownCache{},
 	}
 	m.notice.service = serviceNotice(service)
@@ -234,6 +242,43 @@ func newModel(service Service, workspace string) model {
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 
+func animTick() tea.Cmd {
+	return tea.Tick(anim.FrameInterval(), func(time.Time) tea.Msg { return animTickMsg{} })
+}
+
+// newRunningAnim builds the one-glyph scrambled spinner Crush uses for running
+// work. The zero model keeps the Bubble Tea MiniDot fallback for tests.
+func newRunningAnim() *anim.Anim {
+	return anim.New(anim.Settings{
+		ID:         "running",
+		Size:       1,
+		GradColorA: accent,
+		GradColorB: cyan,
+	})
+}
+
+// newChatAnim is the multi-character turn spinner Crush shows in the
+// transcript while an assistant message is being produced.
+func newChatAnim() *anim.Anim {
+	return anim.New(anim.Settings{
+		ID:          "assistant",
+		Size:        15,
+		GradColorA:  accent,
+		GradColorB:  cyan,
+		CycleColors: true,
+		SuffixColor: muted,
+	})
+}
+
+// setAnimColors re-renders the spinners after a theme change.
+func (m *model) setAnimColors() {
+	for _, spinner := range []*anim.Anim{m.anim, m.chatAnim} {
+		if spinner != nil {
+			spinner.SetColors(ink, accent, cyan, muted)
+		}
+	}
+}
+
 // serviceNotice reports a failed background save before a startup warning.
 func serviceNotice(service Service) string {
 	if err := service.PersistenceError(); err != nil {
@@ -244,7 +289,7 @@ func serviceNotice(service Service) string {
 
 func (m model) Init() tea.Cmd {
 	if m.hasLiveWork() {
-		return tea.Batch(tick(), m.spinner.Tick)
+		return tea.Batch(tick(), animTick())
 	}
 	return tick()
 }
@@ -299,6 +344,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancelStaleSelection()
 	case tickMsg:
 		return m, m.tick()
+	case animTickMsg:
+		if m.anim != nil {
+			m.anim.Advance()
+		}
+		if m.chatAnim != nil {
+			m.chatAnim.Advance()
+			m.chatAnim.SetSuffixText(m.selectedTurnElapsed())
+		}
+		m.spinnerActive = m.hasLiveWork()
+		if !m.spinnerActive {
+			if m.chatAnim != nil {
+				m.chatAnim.SetSuffixText("")
+			}
+			return m, nil
+		}
+		return m, animTick()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -356,7 +417,7 @@ func (m *model) tick() tea.Cmd {
 	m.expireNotice()
 	if m.hasLiveWork() && !m.spinnerActive {
 		m.spinnerActive = true
-		return tea.Batch(tick(), m.spinner.Tick)
+		return tea.Batch(tick(), animTick())
 	}
 	return tick()
 }
@@ -449,9 +510,57 @@ func (m *model) selectTask(id string) {
 	m.clamp()
 }
 
+func (m model) selectedTaskOrZero() orchestrator.Task {
+	t, _ := m.selectedTask()
+	return t
+}
+
 func (m model) selectedID() string {
 	t, _ := m.selectedTask()
 	return t.ID
+}
+
+// runningElapsed is the age of the earliest running attempt, shown as the
+// spinner suffix while work is live.
+func (m model) runningElapsed() string {
+	var earliest time.Time
+	for _, task := range m.tasks {
+		if task.Status != orchestrator.Running || len(task.Attempts) == 0 {
+			continue
+		}
+		started := task.Attempts[len(task.Attempts)-1].StartedAt
+		if started.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || started.Before(earliest) {
+			earliest = started
+		}
+	}
+	if earliest.IsZero() {
+		return ""
+	}
+	return elapsedLabel(time.Since(earliest))
+}
+
+// selectedTurnElapsed is the age of the selected task's live attempt.
+func (m model) selectedTurnElapsed() string {
+	task, ok := m.selectedTask()
+	if !ok || task.Status != orchestrator.Running || len(task.Attempts) == 0 {
+		return ""
+	}
+	started := task.Attempts[len(task.Attempts)-1].StartedAt
+	if started.IsZero() {
+		return ""
+	}
+	return elapsedLabel(time.Since(started))
+}
+
+// elapsedLabel keeps the suffix short: seconds under a minute, then minutes.
+func elapsedLabel(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", max(0, int(d.Seconds())))
+	}
+	return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
 func (m *model) clampScroll() { m.historyOffset = max(0, min(m.historyOffset, m.maxScroll())) }

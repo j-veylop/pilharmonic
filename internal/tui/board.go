@@ -20,14 +20,18 @@ var boardKeys []binding
 // init fills boardKeys because its handlers render the footer, which reads it.
 func init() {
 	boardKeys = []binding{
-		{"enter", "focus", "Toggle task / detail focus; in ACTIVITY with focus, expand / collapse the call", "Navigation", func(m *model) tea.Cmd {
-			m.detailFocus = !m.detailFocus && !m.fullscreen
-			m.fullscreen = false
+		{"enter", "details", "Open the selected task; in details, keep it open (Esc returns); in ACTIVITY, expand / collapse the call", "Navigation", func(m *model) tea.Cmd {
+			if !m.detailFocus && !m.fullscreen {
+				m.detailFocus = true
+				m.clampScroll()
+			}
 			return nil
 		}},
 		{"z", "full width", "Toggle full-width details", "Navigation", func(m *model) tea.Cmd { m.fullscreen = !m.fullscreen; return nil }},
 		{"B", "sidebar", "Toggle the task sidebar", "Navigation", func(m *model) tea.Cmd { m.sidebarHidden = !m.sidebarHidden; return nil }},
-		{"esc", "leave", "Leave the request box or collapse the expanded call", "Navigation", func(m *model) tea.Cmd { m.fullscreen, m.detailFocus = false, false; return nil }},
+		{"[", "prev subtask", "Select the previous subtask in the detailed view", "Navigation", func(m *model) tea.Cmd { m.cycleSubtask(-1); return nil }},
+		{"]", "next subtask", "Select the next subtask in the detailed view", "Navigation", func(m *model) tea.Cmd { m.cycleSubtask(1); return nil }},
+		{"esc", "leave", "Leave the input, return to the task list, or collapse the expanded call", "Navigation", func(m *model) tea.Cmd { m.fullscreen, m.detailFocus = false, false; return nil }},
 		{"!", "action", "Next task needing action", "Navigation", func(m *model) tea.Cmd {
 			if !m.jumpAttention() {
 				m.notice.text = "No tasks need action."
@@ -77,10 +81,10 @@ func init() {
 			m.notice.text = ""
 			return nil
 		})},
-		{"f", "follow up", "Follow up; a rejected worktree is kept for this", "Tasks", onTask(func(m *model, t orchestrator.Task) tea.Cmd {
-			notice := "Follow-up requeues the task; press r to start."
+		{"f", "follow up", "Continue the conversation; a finished task resumes immediately", "Tasks", onTask(func(m *model, t orchestrator.Task) tea.Cmd {
+			notice := "Follow-up continues the conversation from the existing output."
 			if t.Status == orchestrator.Queued || t.Status == orchestrator.Running {
-				notice = "Context does not expand the mandate."
+				notice = "Context joins the running conversation; the mandate does not expand."
 			}
 			m.openComposer(followUpInput, t.ID, notice)
 			return nil
@@ -189,6 +193,7 @@ func configurable(t orchestrator.Task, refusal string, notice *string) bool {
 // openComposer captures the target task when the composer opens.
 func (m *model) openComposer(kind inputKind, target, notice string) {
 	m.input = composer{kind: kind, target: target}
+	m.router.open = false
 	m.notice.text = notice
 }
 

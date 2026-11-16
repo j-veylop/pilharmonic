@@ -114,7 +114,7 @@ func TestKeyTableBindsEachKeyOnce(t *testing.T) {
 		}
 		seen[b.key] = true
 	}
-	for _, removed := range []string{"n", "A", "P", "w", "R", "V", "F", "L", "T", "[", "]", "home", "end"} {
+	for _, removed := range []string{"n", "A", "P", "w", "R", "V", "F", "L", "T", "home", "end"} {
 		if seen[removed] {
 			t.Fatalf("removed key %q is still bound", removed)
 		}

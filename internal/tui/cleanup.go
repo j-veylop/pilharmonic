@@ -81,7 +81,7 @@ func (m model) cleanupKey(key string) (model, tea.Cmd) {
 	return m, nil
 }
 
-// prompt is the confirmation shown in the footer.
+// prompt is the confirmation shown in the action dialog.
 func (r cleanupRequest) prompt() (title, answer, note string) {
 	switch r.kind {
 	case deleteTask:

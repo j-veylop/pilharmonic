@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,9 +44,9 @@ func TestTaskSidebarStatusIconsAndLabels(t *testing.T) {
 			if !strings.Contains(label, tc.label) || !strings.Contains(label, "●") {
 				t.Fatalf("labelled status = %q, want %q after the shared glyph", label, tc.label)
 			}
-			// The sidebar row starts with the glyph alone, never the word.
-			if plain := ansi.Strip((model{}).taskTitleRow(tc.task, 60, false)); !strings.HasPrefix(plain, "  "+tc.glyph+" work") || strings.Contains(plain, tc.label) {
-				t.Fatalf("title row %q does not lead with the status glyph", plain)
+			// The sidebar row starts with its number, then the glyph alone, never the word.
+			if plain := ansi.Strip((model{}).taskTitleRow(tc.task, 1, 9, 60, false)); !strings.HasPrefix(plain, "  1 "+tc.glyph+" work") || strings.Contains(plain, tc.label) {
+				t.Fatalf("title row %q does not lead with the number and status glyph", plain)
 			}
 		})
 	}
@@ -120,9 +121,9 @@ func TestTaskPanelGroupsChildrenUnderParentByIndentation(t *testing.T) {
 		}
 		last = position
 	}
-	for _, want := range []string{"◷ parent work", "    ● second child", "    ◷ first child", "      ● grand child"} {
+	for _, want := range []string{"1 ◷ parent work", "2   ● second child", "3   ◷ first child", "4     ● grand child", "5 ● other work"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("missing indented layout %q in %q", want, plain)
+			t.Fatalf("missing numbered layout %q in %q", want, plain)
 		}
 	}
 	for _, unwanted := range []string{"▾", "↳"} {
@@ -165,17 +166,17 @@ func TestTaskSelectionFollowsGroupedRows(t *testing.T) {
 func TestTaskSidebarRowsFitAndLeadWithStatus(t *testing.T) {
 	task := orchestrator.Task{ID: "task", Title: "work", Agent: "general", Status: orchestrator.Running}
 	for _, width := range []int{1, 2, 5, 20, 34} {
-		row := (model{}).taskTitleRow(task, width, true)
+		row := (model{}).taskTitleRow(task, 3, 9, width, true)
 		if got := lipgloss.Width(row); got != width || strings.Contains(row, "\n") {
 			t.Fatalf("width %d rendered %d cells: %q", width, got, ansi.Strip(row))
 		}
 	}
-	if plain := ansi.Strip((model{}).taskTitleRow(task, 20, true)); !strings.Contains(plain, "▌ ● work") {
-		t.Fatalf("selection lost the status-first layout: %q", plain)
+	if plain := ansi.Strip((model{}).taskTitleRow(task, 3, 9, 20, true)); !strings.Contains(plain, "▌ 3 ● work") {
+		t.Fatalf("selection lost the numbered status-first layout: %q", plain)
 	}
 	child := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Running}
-	if selected := ansi.Strip((model{}).taskTitleRow(child, 40, true)); !strings.Contains(selected, "▌   ● child") {
-		t.Fatalf("selected child row lost its indented status: %q", selected)
+	if selected := ansi.Strip((model{}).taskTitleRow(child, 2, 9, 40, true)); !strings.Contains(selected, "▌ 2   ● child") {
+		t.Fatalf("selected child row lost its numbered indentation: %q", selected)
 	}
 
 	task = orchestrator.Task{
@@ -204,5 +205,91 @@ func TestTaskSidebarRowsFitAndLeadWithStatus(t *testing.T) {
 		if strings.Contains(plain, "shared") {
 			t.Fatalf("width %d kept the workspace label instead of the executor: %q", width, plain)
 		}
+	}
+}
+
+// The task list numbers every row so operators can refer to a task by its
+// place, not just a truncated title.
+func TestTaskPanelNumbersRowsInGroupedOrder(t *testing.T) {
+	now := time.Now()
+	tasks := []orchestrator.Task{
+		{ID: "child", ParentID: "parent", Depth: 1, Title: "child work", Agent: "tester", Status: orchestrator.Running, CreatedAt: now},
+		{ID: "parent", Title: "parent work", Agent: "general", Status: orchestrator.Running, CreatedAt: now.Add(-time.Minute)},
+		{ID: "other", Title: "other work", Agent: "general", Status: orchestrator.Completed, CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	m := model{width: 120, height: 40, tasks: tasks, selected: 0}
+	plain := ansi.Strip(m.taskPanel(60, 30))
+	for _, want := range []string{"1 ◷ parent work", "▌ 2   ● child work", "3 ✓ other work"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing numbered row %q in %q", want, plain)
+		}
+	}
+}
+
+// numberedTasks builds n top-level running tasks in display order.
+func numberedTasks(n int) []orchestrator.Task {
+	now := time.Now()
+	tasks := make([]orchestrator.Task, n)
+	for i := range tasks {
+		tasks[i] = orchestrator.Task{
+			ID: "task-" + strconv.Itoa(i), Title: "work " + strconv.Itoa(i), Agent: "general",
+			Status: orchestrator.Running, CreatedAt: now.Add(-time.Duration(i) * time.Minute),
+		}
+	}
+	return tasks
+}
+
+// Numbers keep their position when the list scrolls; they are not row slots.
+func TestTaskPanelNumbersSurviveScrolling(t *testing.T) {
+	m := model{width: 80, height: 20, tasks: numberedTasks(12), selected: 11}
+	plain := ansi.Strip(m.taskPanel(40, 12))
+	for _, want := range []string{" 9 ● work 8", "10 ● work 9", "11 ● work 10", "▌ 12 ● work 11"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing scrolled number %q in %q", want, plain)
+		}
+	}
+}
+
+// The gutter is sized from the task count, not the visible rows, so numbers do
+// not shift as the window moves.
+func TestTaskPanelPadsNumberColumnFromTotal(t *testing.T) {
+	m := model{width: 80, height: 20, tasks: numberedTasks(12), selected: 0}
+	plain := ansi.Strip(m.taskPanel(40, 12))
+	for _, want := range []string{"▌  1 ● work 0", " 2 ● work 1", " 3 ● work 2", " 4 ● work 3"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing padded number %q in %q", want, plain)
+		}
+	}
+}
+
+// The number gives way when indentation would otherwise squeeze out the status
+// and title, not only when the number itself does not fit.
+func TestTaskTitleRowDropsNumberBeforeIndentedStatus(t *testing.T) {
+	child := orchestrator.Task{ID: "child", ParentID: "parent", Depth: 2, Title: "work", Status: orchestrator.Running}
+	narrow := ansi.Strip((model{}).taskTitleRow(child, 2, 9, 12, false))
+	if strings.Contains(narrow, "2") || !strings.Contains(narrow, "● work") {
+		t.Fatalf("narrow indented row = %q, want status and title without the number", narrow)
+	}
+	roomy := ansi.Strip((model{}).taskTitleRow(child, 2, 9, 14, false))
+	if !strings.Contains(roomy, "2     ● work") {
+		t.Fatalf("row with room = %q, want the numbered indented row", roomy)
+	}
+}
+
+func TestTaskNumberColumnAlignsMultiDigitPositions(t *testing.T) {
+	if got, want := taskNumberColumn(1, 9), "1 "; got != want {
+		t.Fatalf("single-digit column = %q, want %q", got, want)
+	}
+	if got, want := taskNumberColumn(1, 12), " 1 "; got != want {
+		t.Fatalf("aligned single-digit column = %q, want %q", got, want)
+	}
+	if got, want := taskNumberColumn(12, 12), "12 "; got != want {
+		t.Fatalf("double-digit column = %q, want %q", got, want)
+	}
+	if got, want := taskNumberColumn(5, 100), "  5 "; got != want {
+		t.Fatalf("triple-digit column = %q, want %q", got, want)
+	}
+	if got, want := taskNumberColumn(100, 100), "100 "; got != want {
+		t.Fatalf("widest triple-digit column = %q, want %q", got, want)
 	}
 }

@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 const (
@@ -96,7 +94,7 @@ func (m model) attachmentChips(width int) []string {
 	for i, path := range m.attachments {
 		names[i] = filepath.Base(path)
 	}
-	row := lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("attach") +
+	row := accentStyle.Render("attach") +
 		mutedStyle.Render("  "+strings.Join(names, "  ·  "))
 	return []string{fit(row, width, 1)}
 }

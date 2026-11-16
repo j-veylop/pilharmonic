@@ -94,15 +94,6 @@ func TestIconModeSwapsStatusGlyphs(t *testing.T) {
 	}
 }
 
-func TestGradientAnimationKeepsTextAndChangesColor(t *testing.T) {
-	if a, b := gradientColor(0, 12, 0), gradientColor(0, 12, 3); a == b {
-		t.Fatal("animation did not shift the gradient")
-	}
-	if a, b := gradientColor(0, 12, 0), gradientColor(1, 12, 0); a == b {
-		t.Fatal("gradient is flat")
-	}
-}
-
 func TestDiffCardRendersOnlyDiffs(t *testing.T) {
 	if card := (model{}).diffCard("just prose\nwith - a minus", 40); card != nil {
 		t.Fatalf("prose rendered as a diff: %q", card)

@@ -214,7 +214,7 @@ func transcriptStyle() glamouransi.StyleConfig {
 		BlockSuffix: "\n", Prefix: "▌ ", Color: stringPtr(colorAccent), Bold: boolPtr(true),
 	}}
 	style.H2 = glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{
-		BlockSuffix: "\n", Prefix: "▍ ", Color: stringPtr(colorCyan), Bold: boolPtr(true),
+		BlockSuffix: "\n", Prefix: "▍ ", Color: stringPtr(colorAccent), Bold: boolPtr(true),
 	}}
 	style.H3 = glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{
 		BlockSuffix: "\n", Prefix: "› ", Color: stringPtr(colorAmber), Bold: boolPtr(true),
@@ -222,11 +222,11 @@ func transcriptStyle() glamouransi.StyleConfig {
 	style.Text.Color = stringPtr(colorInk)
 	style.Strong.Color = stringPtr(colorInk)
 	style.Strong.Bold = boolPtr(true)
-	style.Emph.Color = stringPtr(colorCyan)
+	style.Emph.Color = stringPtr(colorInk)
 	style.Emph.Italic = boolPtr(true)
 	style.HorizontalRule.Color = stringPtr(colorFaint)
 	style.HorizontalRule.Format = "\n  ┄┄┄\n"
-	style.Link.Color = stringPtr(colorCyan)
+	style.Link.Color = stringPtr(colorAccent)
 	style.Link.Underline = boolPtr(true)
 	style.LinkText.Color = stringPtr(colorAccentDeep)
 	style.LinkText.Bold = boolPtr(true)

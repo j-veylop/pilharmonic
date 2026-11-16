@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
@@ -16,7 +15,6 @@ const (
 	colorFaint      = "#5F6D88"
 	colorAccent     = "#B7A6FF"
 	colorAccentDeep = "#7C6AE8"
-	colorCyan       = "#7BE0CF"
 	colorBlue       = "#7BA7FF"
 	colorGreen      = "#8FE3B0"
 	colorAmber      = "#F4C97A"
@@ -31,7 +29,6 @@ var (
 	muted  = lipgloss.AdaptiveColor{Light: "#5B667C", Dark: colorMuted}
 	accent = lipgloss.AdaptiveColor{Light: "#6450C8", Dark: colorAccent}
 	border = lipgloss.AdaptiveColor{Light: "#B9C2D4", Dark: colorBorder}
-	cyan   = lipgloss.AdaptiveColor{Light: "#0E8C7C", Dark: colorCyan}
 	blue   = lipgloss.AdaptiveColor{Light: "#2F6BD8", Dark: colorBlue}
 	green  = lipgloss.AdaptiveColor{Light: "#2E8A57", Dark: colorGreen}
 	amber  = lipgloss.AdaptiveColor{Light: "#A66A0A", Dark: colorAmber}
@@ -104,7 +101,7 @@ var (
 // palette above and never set a background colour.
 var (
 	helpHeadingStyle = lipgloss.NewStyle().
-				Foreground(cyan).
+				Foreground(accent).
 				Bold(true)
 	helpDescStyle = lipgloss.NewStyle().
 			Foreground(ink)
@@ -129,41 +126,7 @@ func ApplyTheme(mode string) string {
 	return "auto"
 }
 
-// gradientText paints a wordmark from violet to teal without changing its
-// visible text or width. ANSI styling is applied per rune, so callers can
-// continue to use normal cell-width helpers for layout.
-func gradientText(text string) string { return gradientPhase(text, 0) }
-
-// gradientPhase shifts the wordmark gradient for the running animation. Phase 0
-// is the static brand mark.
-func gradientPhase(text string, phase int) string {
-	runes := []rune(text)
-	if len(runes) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for i, r := range runes {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(gradientColor(i, len(runes), phase))).Bold(true).Render(string(r)))
-	}
-	return b.String()
-}
-
-// gradientColor interpolates the wordmark from violet to teal, shifting with
-// the animation phase while staying inside the two brand hues.
-func gradientColor(i, n, phase int) string {
-	start := [3]float64{183, 166, 255}
-	end := [3]float64{123, 224, 207}
-	span := n + 8
-	t := 0.0
-	if span > 1 {
-		t = float64((i+phase)%span) / float64(span-1)
-		if t > 1 {
-			t = 2 - t
-		}
-	}
-	return fmt.Sprintf("#%02X%02X%02X",
-		int(start[0]+(end[0]-start[0])*t),
-		int(start[1]+(end[1]-start[1])*t),
-		int(start[2]+(end[2]-start[2])*t),
-	)
-}
+// wordmark is the product identity as one flat heading. It is deliberately
+// single-coloured: a per-rune gradient shifted colour every frame without
+// carrying any meaning.
+func wordmark() string { return titleStyle.Render("◈ PILHARMONIC") }

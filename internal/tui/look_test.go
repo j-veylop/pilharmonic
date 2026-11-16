@@ -126,3 +126,51 @@ func TestBlurredBoxKeepsBoardShortcuts(t *testing.T) {
 		t.Fatal("board shortcuts stopped working while the box was visible")
 	}
 }
+
+// The footer keeps its height, so nothing above it moves when a notice appears
+// or expires and when the selection moves between tasks with different actions.
+func TestFooterKeepsItsHeight(t *testing.T) {
+	tasks := []orchestrator.Task{
+		{ID: "run", Title: "run", Status: orchestrator.Running},
+		{ID: "done", Title: "done", Status: orchestrator.Completed},
+	}
+	for _, size := range [][2]int{{40, 24}, {80, 24}, {120, 35}} {
+		w, h := size[0], size[1]
+		reference := model{width: w, height: h, tasks: tasks}
+		rows, body := strings.Count(reference.footer(w), "\n"), reference.layout().bodyHeight
+		notices := []noticeState{
+			{},
+			{text: "Task queued"},
+			{service: "State save failed: disk full"},
+			{text: "Task queued", service: "State save failed: disk full"},
+		}
+		for _, selected := range []int{0, 1} {
+			for _, notice := range notices {
+				m := model{width: w, height: h, tasks: tasks, selected: selected, notice: notice}
+				if got := strings.Count(m.footer(w), "\n"); got != rows {
+					t.Fatalf("%v selection %d notice %+v: footer is %d rows, want %d", size, selected, notice, got+1, rows+1)
+				}
+				if got := m.layout().bodyHeight; got != body {
+					t.Fatalf("%v selection %d notice %+v: body height %d, want %d", size, selected, notice, got, body)
+				}
+			}
+		}
+	}
+}
+
+// The status bar carries no animation: the row keeps its width while tasks run.
+func TestStatusPillsCarryNoAnimation(t *testing.T) {
+	m := boardWithTask()
+	idle := ansi.Strip(m.statusPills(120))
+	m.spinnerActive = true
+	if got := ansi.Strip(m.statusPills(120)); got != idle {
+		t.Fatalf("spinner changed the status row: %q → %q", idle, got)
+	}
+}
+
+// The header leads with one flat wordmark rather than a per-rune gradient.
+func TestHeaderWordmarkIsFlat(t *testing.T) {
+	if header := (model{}).headerRow(120); !strings.HasPrefix(header, wordmark()) {
+		t.Fatalf("header does not lead with the flat wordmark: %q", header)
+	}
+}

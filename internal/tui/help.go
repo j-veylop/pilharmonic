@@ -50,6 +50,7 @@ var helpTopics = []helpTopic{
 		sections: []helpSection{{rows: []helpRow{
 			{"Request", "Work typed into the request box (/). One compiled-in authorization step decides acceptance and records its audit evidence."},
 			{"Task", "Accepted work with its own mandate, executor, status and history."},
+			{"Task number", "A task's one-based place in the task list; children are numbered beneath their parent and narrow layouts show the same number as TASK n/N."},
 			{"Route", "The automatic acceptance step that picks an executor."},
 			{"Held", "A task kept queued with Ctrl-s so o can set it up before r starts it."},
 			{"Action", "Tasks that need you: blocked, waiting, awaiting review, undelivered input, merge failed, failed or interrupted."},

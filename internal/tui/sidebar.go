@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -154,17 +156,39 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 	return rows
 }
 
+// taskNumberColumn formats a task's one-based position for the sidebar's number
+// gutter. The column is as wide as total so rows stay aligned.
+func taskNumberColumn(position, total int) string {
+	return fmt.Sprintf("%*d ", len(strconv.Itoa(max(1, total))), position)
+}
+
+// taskTitleMinCells is the title width a numbered row must keep before the
+// number gives way. The number leads the row so truncation cannot hide it, but
+// a number that eats the status and title would make the row unrecognisable.
+const taskTitleMinCells = 4
+
 // taskTitleRow nests a child's status glyph under its parent by depth, capped
-// so deep trees stay readable in a narrow sidebar.
-func (m model) taskTitleRow(task orchestrator.Task, width int, selected bool) string {
+// so deep trees stay readable in a narrow sidebar. position is the task's place
+// in grouped display order and total is the number of rows, so the gutter
+// matches the navigation and the narrow layout's TASK n/N title. The number
+// leads the row so truncation keeps it visible; indentation still follows it.
+func (m model) taskTitleRow(task orchestrator.Task, position, total, width int, selected bool) string {
 	text, icon, indent := singleLine(task.Title), m.taskStatusIcon(task), ""
 	if task.ParentID != "" {
 		indent = strings.Repeat("  ", min(max(1, task.Depth), 3))
 	}
-	if !selected {
-		return fit("  "+indent+icon+" "+titleStyle.Render(text), width, 1)
+	number := taskNumberColumn(position, total)
+	// A number is supplementary: drop it rather than crowd out the indented
+	// status and title the row exists to show. Two cells hold the selection
+	// rail or its blank stand-in, and two more separate the glyph from the
+	// title.
+	if width < 2+len(number)+len(indent)+2+taskTitleMinCells {
+		number = ""
 	}
-	return selectionRow(indent+icon+" "+text, width)
+	if !selected {
+		return fit("  "+mutedStyle.Render(number)+indent+icon+" "+titleStyle.Render(text), width, 1)
+	}
+	return selectionRow(number+indent+icon+" "+text, width)
 }
 
 // toolStatusStyle gives tool activity a consistent visual language in the

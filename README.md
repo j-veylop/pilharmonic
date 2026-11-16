@@ -47,7 +47,7 @@ Login uses a dedicated file-backed Codex home at `<user config dir>/orchestrator
 
 The board opens on a landing screen while it is empty; the status bar above the key hints shows the current mode and chosen models, and the palette follows the terminal's light or dark background. Type `@` in the request box for a completion popup above the input, and `/attach <path>` to add up to five local files (64 KiB each) to the next request; they are appended as text at submission and shown as chips above the box. `/theme` switches the adaptive palette at runtime.
 
-Status glyphs: `●` running, `✓` completed, `✗` failed/blocked/merge failed, `⊘` interrupted/canceled, `◷` queued/waiting (including a parent waiting for subagents), `◆` awaiting review. Children are indented under their parent. The footer shows only actions valid for the selection. The header shows counts and, once reported, session token usage and estimated cost; task details show per-task usage and the current price.
+Status glyphs: `●` running, `✓` completed, `✗` failed/blocked/merge failed, `⊘` interrupted/canceled, `◷` queued/waiting (including a parent waiting for subagents), `◆` awaiting review. Children are indented under their parent and every row is numbered in grouped display order, matching the `TASK n/N` title in narrow layouts. The footer shows only actions valid for the selection. The header shows counts and, once reported, session token usage and estimated cost; task details show per-task usage and the current price.
 
 Prices are a curated USD-per-1M snapshot for the catalog's OpenAI and DeepSeek models; other models show tokens without a cost. DeepSeek's off-peak window (16:30–00:30 UTC) is applied at recording time.
 

@@ -75,7 +75,7 @@ func (m model) taskPanel(width, height int) string {
 		for i := start; i < end; i++ {
 			row := rows[i]
 			lines = append(lines,
-				m.taskTitleRow(row.task, inner, row.index == m.selected),
+				m.taskTitleRow(row.task, i+1, len(rows), inner, row.index == m.selected),
 				taskMetaLine(row.task, inner))
 		}
 	}

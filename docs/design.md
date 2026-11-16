@@ -158,7 +158,7 @@ in memory and saved if anything changed:
 - legacy tasks without a thread or attempts get them synthesized;
 - `running` tasks become `interrupted`; no worker is assumed to survive.
 
-The terminal derives all geometry from one layout function (header, body, optional sidebar, docked composer, status and hint rows) and renders modals over a dimmed copy of the frame. The request box is always docked; `router.open` means focus, not visibility, and Esc blurs it so board shortcuts stay available. Presentation state such as focus, sidebar visibility, scroll, theme and pending file attachments never becomes task state. Attachments are read once during submission and appended to the initial request text; they are not executed.
+The terminal derives all geometry from one layout function (header, body, optional sidebar, docked composer, status and hint rows) and renders modals over a dimmed copy of the frame. The task list numbers rows in grouped display order, which is also the order navigation and the narrow layout's `TASK n/N` title use. The request box is always docked; `router.open` means focus, not visibility, and Esc blurs it so board shortcuts stay available. Presentation state such as focus, sidebar visibility, scroll, theme and pending file attachments never becomes task state. Attachments are read once during submission and appended to the initial request text; they are not executed.
 
 `Shutdown` cancels running work, closes pending starts and the control socket,
 and waits for workers to finish writing, so quitting yields `canceled`, not

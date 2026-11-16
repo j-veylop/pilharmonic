@@ -26,14 +26,22 @@ func init() {
 			return nil
 		}},
 		{"z", "full width", "Toggle full-width details", "Navigation", func(m *model) tea.Cmd { m.fullscreen = !m.fullscreen; return nil }},
-		{"esc", "tasks", "Collapse the expanded call, else return to tasks", "Navigation", func(m *model) tea.Cmd { m.fullscreen, m.detailFocus = false, false; return nil }},
+		{"B", "sidebar", "Toggle the task sidebar", "Navigation", func(m *model) tea.Cmd { m.sidebarHidden = !m.sidebarHidden; return nil }},
+		{"esc", "leave", "Leave the request box or collapse the expanded call", "Navigation", func(m *model) tea.Cmd { m.fullscreen, m.detailFocus = false, false; return nil }},
 		{"!", "action", "Next task needing action", "Navigation", func(m *model) tea.Cmd {
 			if !m.jumpAttention() {
 				m.notice.text = "No tasks need action."
 			}
 			return nil
 		}},
-		{"/", "request", "Request box: Enter routes and starts, Ctrl-s holds the task for setup", "Tasks", func(m *model) tea.Cmd {
+		{"/", "request", "Focus the request box: Enter routes and starts, Ctrl-s holds the task for setup", "Tasks", func(m *model) tea.Cmd {
+			m.router.open = true
+			m.router.Cursor = len(m.router.Text)
+			m.router.Scroll = 0
+			m.notice.text = ""
+			return nil
+		}},
+		{"i", "input", "Focus the request box (Esc leaves it; it stays visible)", "Tasks", func(m *model) tea.Cmd {
 			m.router.open = true
 			m.router.Cursor = len(m.router.Text)
 			m.router.Scroll = 0

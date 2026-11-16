@@ -81,7 +81,7 @@ func (m model) layout() layout {
 		l.composerRows = l.composerDraft + 2 + extra
 	}
 	l.bodyHeight = h - 1 - footerRows - l.composerRows
-	l.sidebar = w >= 76 && !m.fullscreen
+	l.sidebar = w >= 76 && !m.fullscreen && !m.sidebarHidden
 	if l.sidebar {
 		l.taskWidth = min(34, max(24, w/4))
 		l.detailWidth = w - l.taskWidth - 1
@@ -148,26 +148,29 @@ func (m model) View() string {
 
 func (m model) attentionCount() int { return len(m.attentionTasks()) }
 
-func (m model) headerModeBadge() string {
-	label, color := " TASKS ", accent
+// headerMode is the surface that owns the keyboard, shown as a status pill.
+func (m model) headerMode() string {
 	switch {
 	case m.router.open:
-		label, color = " REQUEST ", accent
+		return "REQUEST"
 	case m.input.kind != "":
-		label, color = " INSERT ", amber
+		return "INSERT"
 	case m.detailFocus || m.fullscreen:
-		label, color = " DETAILS ", cyan
+		return "DETAILS"
 	}
-	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(label)
+	return "TASKS"
 }
 
-// headerRow is the wordmark, the task counters and the session total, with the
-// mode badge right-aligned. The badge is never truncated; the session total is
-// dropped before a counter loses its wording.
+// headerRow is the wordmark and, right-aligned, the task counters and session
+// total, joined by the diagonal filler Crush uses. The session total is dropped
+// before a counter loses its wording.
 func (m model) headerRow(width int) string {
-	header := gradientText("◈ PILHARMONIC")
-	mode := m.headerModeBadge()
-	available := max(1, width-lipgloss.Width(header)-lipgloss.Width(mode)-1)
+	phase := 0
+	if m.spinnerActive {
+		phase = m.frame
+	}
+	header := gradientPhase("◈ PILHARMONIC", phase)
+	available := max(1, width-lipgloss.Width(header)-1)
 	options := m.headerCountOptions()
 	summary, usage := options[len(options)-1], ""
 fit:
@@ -182,8 +185,46 @@ fit:
 	if usage != "" {
 		usage = mutedStyle.Render(usage)
 	}
-	gap := max(1, width-lipgloss.Width(header+summary+usage)-lipgloss.Width(mode))
-	return fit(header+summary+usage+strings.Repeat(" ", gap)+mode, width, 1)
+	right := summary + usage
+	fill := width - lipgloss.Width(header) - lipgloss.Width(right) - 2
+	if fill < 3 {
+		return fit(header+right, width, 1)
+	}
+	return fit(header+" "+faintStyle.Render(strings.Repeat("╱", fill))+" "+right, width, 1)
+}
+
+// statusPills is the mode and model badge row above the key hints. Badges drop
+// right to left so the mode is always visible.
+func (m model) statusPills(width int) string {
+	mode := m.headerMode()
+	if m.spinnerActive {
+		mode = m.spinner.View() + " " + mode
+	}
+	pills := []string{pillStyle.Render(mode)}
+	if m.service != nil {
+		selection := m.service.ModelSelection()
+		for _, class := range []struct{ name, model string }{{"BIG", selection.Big}, {"SMALL", selection.Small}} {
+			if class.model == "" {
+				continue
+			}
+			pills = append(pills, pillMutedStyle.Render(class.name+" "+shortModel(class.model)))
+		}
+	}
+	row := strings.Join(pills, " ")
+	for len(pills) > 1 && lipgloss.Width(row) > width {
+		pills = pills[:len(pills)-1]
+		row = strings.Join(pills, " ")
+	}
+	return fit(row, width, 1)
+}
+
+// shortModel keeps the model ID without its provider prefix, which the pill
+// name already implies.
+func shortModel(selector string) string {
+	if _, model, ok := strings.Cut(selector, "/"); ok {
+		return model
+	}
+	return selector
 }
 
 // headerUsageVariants lists the session total, richest first and ending with
@@ -254,6 +295,7 @@ func (m model) boardFooter(w int) string {
 	add("? help", true)
 	add(keyHint("q"), false)
 	add(keyHint("/"), true)
+	add(keyHint("i"), true)
 	if w < 76 {
 		add("j/k tasks", true)
 		add("l details", true)
@@ -283,9 +325,9 @@ func (m model) footer(w int) string {
 	footerText := m.boardFooter(w)
 	switch {
 	case m.router.open:
-		footerText = withHelpHint("enter start · ctrl+s hold · esc tasks · ctrl+c quit", w)
+		footerText = withHelpHint("enter start · ctrl+s hold · esc leave · ctrl+c quit", w)
 		if _, ok := m.routerMentionQuery(); ok {
-			footerText = withHelpHint("tab complete · enter start · ctrl+s hold · esc tasks", w)
+			footerText = withHelpHint("tab complete · enter start · ctrl+s hold · esc leave", w)
 		}
 	case m.input.kind != "":
 		footerText = withHelpHint("enter submit · ctrl+j/alt+enter newline · esc cancel", w)
@@ -314,6 +356,9 @@ func (m model) footer(w int) string {
 	if m.quitConfirm {
 		footer = accentStyle.Render("QUIT  › Leave pilharmonic?") + "\n" + m.quitCountLine() + "\n" +
 			mutedStyle.Render("y quit  ·  n/esc stay") + "\n" + mutedStyle.Render("History and worktrees are kept")
+	}
+	if _, height := m.size(); height >= 14 {
+		footer = m.statusPills(w) + "\n" + footer
 	}
 	return ansi.Hardwrap(footer, w, true)
 }

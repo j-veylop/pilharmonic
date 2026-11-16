@@ -44,12 +44,12 @@ var composerPlaceholders = map[inputKind]string{
 	rejectReviewInput: "Reason for rejection; the worktree is kept…",
 }
 
-// composerOpen reports whether View docks the input box shared by the request
-// box and every composer.
-func (m model) composerOpen() bool { return m.router.open || m.input.kind != "" }
+// composerOpen is always true: the request box stays docked so there is always
+// somewhere to type. router.open is input focus, not visibility.
+func (m model) composerOpen() bool { return true }
 
 func (m *model) composerEditor() *editor.Editor {
-	if m.router.open {
+	if m.router.open || m.input.kind == "" {
 		return &m.router.Editor
 	}
 	return &m.input.Editor
@@ -84,12 +84,16 @@ func (m model) composerDraftRows(reserved int) int {
 	return max(min(2, limit), min(limit, needed))
 }
 
-// composerExtraRows counts the hint rows rendered under the box.
+// composerExtraRows counts the completion popup rows above the box.
 func (m model) composerExtraRows() int {
 	if !m.router.open {
 		return 0
 	}
-	return len(m.routerMentionHintLines(m.composerBoxWidth()))
+	rows := len(m.attachmentChips(m.composerBoxWidth()))
+	if lines := m.routerMentionHintLines(m.composerInnerWidth()); len(lines) > 0 {
+		rows += len(lines) + 2
+	}
+	return rows
 }
 
 // composerTitle names the box on its top border, with an optional note on the
@@ -100,6 +104,8 @@ func (m model) composerTitle() (title, note string) {
 		return "API KEY", terminalText(m.login.provider)
 	case m.router.open:
 		return "REQUEST", "enter start · ctrl+s hold"
+	case m.input.kind == "":
+		return "REQUEST", "i or / to type"
 	case m.input.kind == rejectReviewInput:
 		return string(m.input.kind), "keeps worktree · f requeues"
 	}
@@ -112,17 +118,25 @@ func (m model) composerBoxLines(rows int) []string {
 	if m.router.open && m.login.provider != "" {
 		return m.loginComposerLines(m.composerInnerWidth())
 	}
-	prefix := accentStyle.Render(composerPrompt)
+	focused := m.router.open || m.input.kind != ""
+	cursor := "▏"
+	if !focused {
+		cursor = " "
+	}
+	prefix := mutedStyle.Render(composerPrompt)
+	if focused {
+		prefix = accentStyle.Render(composerPrompt)
+	}
 	e := m.composerEditor()
 	var visible []string
 	if e.Text == "" {
-		placeholder := "Describe the work… type @ to choose an executor"
-		if !m.router.open {
+		placeholder := "Describe the work… / or i to type, @ chooses an executor"
+		if m.input.kind != "" {
 			placeholder = composerPlaceholders[m.input.kind]
 		}
-		visible = []string{fit(mutedStyle.Render(placeholder), m.composerWidth(), 1) + "▏"}
+		visible = []string{fit(mutedStyle.Render(placeholder), m.composerWidth(), 1) + cursor}
 	} else {
-		visible = e.View(m.composerWidth(), rows, true)
+		visible = e.View(m.composerWidth(), rows, focused)
 	}
 	for i := range visible {
 		if i == 0 {
@@ -139,21 +153,45 @@ func (m model) composerBoxLines(rows int) []string {
 func (m model) composerBlock(rows int) []string {
 	title, note := m.composerTitle()
 	width := m.composerBoxWidth()
-	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(0, 1).
+	edge := border
+	if m.router.open || m.input.kind != "" {
+		edge = accent
+	}
+	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(edge).Padding(0, 1).
 		Width(width - 2).Height(rows).MaxWidth(width).MaxHeight(rows + 2)
 	content := fit(strings.Join(m.composerBoxLines(rows), "\n"), m.composerInnerWidth(), rows)
 	box := strings.Split(style.Render(content), "\n")
-	box[0] = composerTopBorder(title, note, width)
+	box[0] = composerTopBorderWithColor(title, note, width, m.router.open || m.input.kind != "")
 	if m.router.open {
-		box = append(box, m.routerMentionHintLines(width)...)
+		box = append(m.routerCompletionPopup(width), box...)
+		box = append(m.attachmentChips(width), box...)
 	}
 	return box
+}
+
+// routerCompletionPopup floats matching executors above the request box, shaped
+// like the other modal surfaces instead of adding a bare hint row.
+func (m model) routerCompletionPopup(width int) []string {
+	hints := m.routerMentionHintLines(m.composerInnerWidth())
+	if len(hints) == 0 {
+		return nil
+	}
+	card := cardStyle.Width(width - 2).MaxWidth(width).Render(fit(strings.Join(hints, "\n"), m.composerInnerWidth(), len(hints)))
+	return strings.Split(card, "\n")
 }
 
 // composerTopBorder writes the box edge with its label, keeping the note on the
 // right when the terminal is wide enough for it.
 func composerTopBorder(title, note string, width int) string {
-	edge := lipgloss.NewStyle().Foreground(accent)
+	return composerTopBorderWithColor(title, note, width, true)
+}
+
+func composerTopBorderWithColor(title, note string, width int, focused bool) string {
+	color := border
+	if focused {
+		color = accent
+	}
+	edge := lipgloss.NewStyle().Foreground(color)
 	label := " " + title + " "
 	labelWidth := lipgloss.Width(label)
 	if labelWidth+4 > width {
@@ -166,7 +204,11 @@ func composerTopBorder(title, note string, width int) string {
 	if fill < 3 {
 		note, fill = "", width-4-labelWidth
 	}
-	return edge.Render("╭─") + accentStyle.Render(label) + edge.Render(strings.Repeat("─", fill)) + faintStyle.Render(note) + edge.Render("─╮")
+	labelStyle := mutedStyle
+	if focused {
+		labelStyle = accentStyle
+	}
+	return edge.Render("╭─") + labelStyle.Render(label) + edge.Render(strings.Repeat("─", fill)) + faintStyle.Render(note) + edge.Render("─╮")
 }
 
 func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
@@ -175,6 +217,7 @@ func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		return m.requestQuit(), nil
 	case "esc":
 		m.input = composer{}
+		m.router.open = true
 	case "enter":
 		prompt := strings.TrimSpace(m.input.Text)
 		if prompt == "" {

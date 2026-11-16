@@ -91,6 +91,7 @@ type Service interface {
 var _ Service = (*orchestrator.Service)(nil)
 
 type model struct {
+	pendingCmd    tea.Cmd
 	activity      activityState
 	thinking      bool
 	vimG          bool
@@ -111,6 +112,11 @@ type model struct {
 	tab           detailTab
 	detailFocus   bool
 	fullscreen    bool
+	sidebarHidden bool
+	icons         bool
+	theme         string
+	frame         int
+	attachments   []string
 	help          helpState
 	isolationBusy bool
 	cleanup       cleanupRequest
@@ -187,9 +193,17 @@ type modelMenuState struct {
 	fetchFailed  bool // the built-in list is shown instead
 }
 
+// Options are presentation choices fixed at startup.
+type Options struct {
+	Icons bool
+	Theme string
+}
+
 // Run starts the terminal interface. The service owns task execution.
-func Run(service *orchestrator.Service, workspace string) error {
+func Run(service *orchestrator.Service, workspace string, opts Options) error {
 	initial := newModel(service, workspace)
+	initial.icons = opts.Icons
+	initial.theme = ApplyTheme(opts.Theme)
 	output := newTerminalOutput(os.Stdout)
 	initial.clipboard = output
 	_, err := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(output)).Run()
@@ -249,6 +263,18 @@ func (m model) hasLiveWork() bool {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case subscriptionLoginMsg:
+		m.notice.text = "Codex login exited, but no usable ChatGPT subscription credentials were found · retry the app login with /login openai subscription (uses app-specific auth storage)"
+		if msg.err != nil {
+			m.notice.text = "ChatGPT subscription login failed: " + msg.err.Error() + " · retry /login openai subscription"
+		} else {
+			for _, credential := range m.service.ProviderCredentials() {
+				if credential.Provider == "openai-subscription" && credential.Configured {
+					m.notice.text = "ChatGPT subscription login complete · use /model big and choose openai-subscription"
+					break
+				}
+			}
+		}
 	case actionResultMsg:
 		m.finish(msg)
 	case composerResultMsg:
@@ -272,10 +298,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampScroll()
 		m.cancelStaleSelection()
 	case tickMsg:
+		m.frame++
 		return m, m.tick()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
+		m.frame++
 		m.spinnerActive = m.hasLiveWork()
 		if !m.spinnerActive {
 			return m, nil
@@ -310,6 +338,7 @@ func (m *model) routerResult(msg routerResultMsg) {
 	}
 	m.refreshTasks()
 	m.router = routerState{open: m.router.open}
+	m.attachments = nil
 	m.selectTask(msg.task.ID)
 	m.clampScroll()
 }
@@ -349,7 +378,9 @@ func (m model) keyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.login.provider != "":
 		return m.loginKeyMsg(msg), nil
 	case m.login.menu:
-		return m.providerMenuKey(key), nil
+		m = m.providerMenuKey(key)
+		cmd := m.takePendingCommand()
+		return m, cmd
 	case m.models.menu:
 		return m.modelMenuKey(key)
 	case m.setup.target != "":

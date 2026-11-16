@@ -19,6 +19,9 @@ import (
 // OpenAI-compatible /models endpoint, or for Bedrock the AWS control plane.
 // key is the provider credential; Bedrock without one uses the AWS chain.
 func ListModels(ctx context.Context, provider, key string) ([]string, error) {
+	if provider == Subscription {
+		return listSubscriptionModels(ctx)
+	}
 	endpoint, known := endpoints[provider]
 	if !known {
 		return nil, fmt.Errorf("unknown provider %q", provider)

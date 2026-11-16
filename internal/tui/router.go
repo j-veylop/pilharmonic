@@ -75,7 +75,8 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 	case strings.HasPrefix(text, "/"):
 		m = m.slashCommand(text)
 		m.clearRouterDraft()
-		return m, nil
+		cmd := m.takePendingCommand()
+		return m, cmd
 	case text == "":
 		m.notice.text = "Enter a request first."
 		return m, nil
@@ -84,15 +85,23 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 		m.notice.text = forcedLoginNotice
 		return m, nil
 	}
-	service, workspace := m.service, m.workspace
+	service, workspace, attachments := m.service, m.workspace, append([]string(nil), m.attachments...)
 	if hold {
 		return m, func() tea.Msg {
-			task, err := service.CreateTask(taskTitle(text), text, workspace)
+			prompt, err := composeRequest(text, attachments)
+			if err != nil {
+				return routerResultMsg{err: err}
+			}
+			task, err := service.CreateTask(taskTitle(text), prompt, workspace)
 			return routerResultMsg{task: task, notice: "Task held: " + task.ID + "; o to set up, r to start.", err: err}
 		}
 	}
 	return m, func() tea.Msg {
-		task, err := service.SubmitRequest(text, workspace)
+		prompt, err := composeRequest(text, attachments)
+		if err != nil {
+			return routerResultMsg{err: err}
+		}
+		task, err := service.SubmitRequest(prompt, workspace)
 		return routerResultMsg{task: task, notice: routeNotice(task), err: err}
 	}
 }

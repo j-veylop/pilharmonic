@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	glamouransi "github.com/charmbracelet/glamour/ansi"
 	glamourstyles "github.com/charmbracelet/glamour/styles"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -402,7 +403,26 @@ func toolCallLines(call transcriptToolCall, width int) []string {
 			wrapped[i] = "  " + wrapped[i]
 		}
 	}
+	if label := toolStatusWord(call.status); label != "" && lipgloss.Width(wrapped[0])+len(label)+2 <= width {
+		wrapped[0] += strings.Repeat(" ", max(1, width-lipgloss.Width(wrapped[0])-len(label)-1)) + mutedStyle.Render(label)
+	}
 	return wrapped
+}
+
+// toolStatusWord labels a call's result on wide rows, so status is readable
+// without relying on the rail colour or glyph alone.
+func toolStatusWord(status string) string {
+	switch status {
+	case orchestrator.ActivityRunning:
+		return "RUNNING"
+	case orchestrator.ActivityFinished:
+		return "DONE"
+	case orchestrator.ActivityFailed:
+		return "FAILED"
+	case orchestrator.ActivityInterrupted:
+		return "STOPPED"
+	}
+	return ""
 }
 
 func splitToolSummary(summary string) (string, string) {

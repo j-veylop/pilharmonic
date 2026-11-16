@@ -4,20 +4,30 @@ pilharmonic is a local terminal application for submitting work to coding agents
 
 ## Run
 
-Requires Go 1.27.3+ and an interactive terminal. The built-in executor drives models in-process through [Fantasy](https://charm.land/fantasy), so it needs a provider API key (environment, e.g. `OPENAI_API_KEY`, or stored with `/login <provider>`) and a `provider/model` selector from `profiles.json`, `-model` or the model menu.
+Requires Go 1.27.3+ and an interactive terminal. The built-in Fantasy executor needs a provider API key (environment, e.g. `OPENAI_API_KEY`, or stored with `/login <provider>`) and a `provider/model` selector from `profiles.json`, `-model` or the model menu. OpenAI ChatGPT subscriptions use the `openai-subscription` provider without an API key; the official Codex CLI handles sign-in.
 
 ```sh
 go run .                 # run
 go build -o pilharmonic . # or go install .
 ```
 
-pilharmonic opens on the task board with the **REQUEST** box docked at the bottom (or the login menu when no credential exists); `/` reopens it and **Esc** hides it, keeping the draft. Type a request and press **Enter**: one compiled-in authorization step records the decision, and an accepted request becomes a task routed to an executor and started. **Ctrl-s** instead holds the accepted task queued so `o` can set it up before `r` starts it. Start with `@NAME` to pick an executor (`@tester add regression tests`); otherwise `general` runs it. Typing `@` lists matches and **Tab** completes. Up to four agents run at once (`-max-concurrent`); further starts queue FIFO.
+pilharmonic opens on the task board with the **REQUEST** box always docked at the bottom (or the login menu when no credential exists); `/` or `i` focuses it and **Esc** leaves it while the draft stays visible. Type a request and press **Enter**: one compiled-in authorization step records the decision, and an accepted request becomes a task routed to an executor and started. **Ctrl-s** instead holds the accepted task queued so `o` can set it up before `r` starts it. Start with `@NAME` to pick an executor (`@tester add regression tests`); otherwise `general` runs it. Typing `@` lists matches and **Tab** completes. Up to four agents run at once (`-max-concurrent`); further starts queue FIFO.
 
 **F1** opens help everywhere; **?** opens it wherever it is not typed text. `/help` in the request box opens it too, and its **Commands** topic lists slash commands. **q** or **Ctrl-c** asks in the footer before quitting (**y** quits, **n**/**Esc** stays); quitting cancels active attempts.
 
 Inputs use standard text editing keys (word delete, line kill, word movement, Home/End). **Ctrl-J** or **Alt-Enter** inserts a newline.
 
-`go run . -help` lists all flags. Common ones: `-workspace` (default current directory), `-state` (default `<user config dir>/orchestrator/state.json`), `-idle-timeout`, `-isolation`, `-attempt-retention` (default 8, `0` keeps all), `-version`. One instance per state file (enforced by a lock). The state file stores prompts, recent output (up to 256 KiB per attempt), decisions and history in plain text.
+`go run . -help` lists all flags. Common ones: `-workspace` (default current directory), `-state` (default `<user config dir>/orchestrator/state.json`), `-idle-timeout`, `-isolation`, `-attempt-retention` (default 8, `0` keeps all), `-theme auto|dark|light`, `-icons` (Nerd Font status glyphs), `-version`. One instance per state file (enforced by a lock). The state file stores prompts, recent output (up to 256 KiB per attempt), decisions and history in plain text.
+
+## OpenAI subscription login
+
+Install the official Codex CLI, then run `go run . login openai` to sign in with your ChatGPT account. For a headless machine use `go run . login openai --device-auth`. Expanded tool results that are unified diffs render as a coloured diff card in ACTIVITY.
+
+In the terminal UI, select **openai-subscription** from `/login`, or enter `/login openai subscription`. Login temporarily releases the terminal to Codex's browser sign-in flow. Subscription eligibility and limits are managed by OpenAI.
+
+After login, use `/model big` and `/model small` to choose **openai-subscription** and a model, or set a profile model to `openai-subscription/gpt-5-codex`. Submit requests normally; general and specialist agents keep the same Fantasy execution loop, tool limits, streaming and follow-ups. Subscription transport and authentication live in `internal/providers`, not a separate executor.
+
+Login uses a dedicated file-backed Codex home at `<user config dir>/orchestrator/openai-subscription/`, separate from your normal Codex login, `credentials.json` and the `openai` API-key provider. The provider refreshes expired tokens and saves rotated credentials with owner-only permissions. Existing keyring-only or normal Codex credentials are not imported. To log out, run `codex -c 'cli_auth_credentials_store="file"' logout` with `CODEX_HOME` set to that dedicated directory; `/logout openai` removes only pilharmonic's stored API key. Subscription models report tokens without an API-price estimate.
 
 ## Task board
 
@@ -28,12 +38,14 @@ Inputs use standard text editing keys (word delete, line kill, word movement, Ho
 | Share context | `a` related task in the thread; `m` message to subscribed tasks; `s` pause/resume subscription. |
 | Follow up | `f` context to one task (requeues a finished one); then `r`. |
 | Inspect | `Tab`/`Shift-Tab` cycle the OUTPUT, INFO and ACTIVITY tabs; `t` thinking; `e` activity filter; **Enter** in focused ACTIVITY expands a call. |
-| Navigate | `h`/`l` panes, `j`/`k` move (counts like `5j`), `gg`/`G`, `Ctrl-u`/`Ctrl-d`, `PgUp`/`PgDn`, **Enter** focus, `!` next task needing action, `z` full width, mouse wheel. |
+| Navigate | `h`/`l` panes, `j`/`k` move (counts like `5j`), `gg`/`G`, `Ctrl-u`/`Ctrl-d`, `PgUp`/`PgDn`, **Enter** focus, `!` next task needing action, `z` full width, `B` toggle sidebar, mouse wheel. |
 | Copy | Drag in the details pane; release copies via OSC 52. |
 | Report / review | `p` status report; `v` asks: `y` approve and merge, `n` reject with reason. |
 | Clean up | `x` discard clean integrated worktree, `d` delete task; `X`/`D` bulk. Confirm with `y`. |
 | Delegate | `b` create a child task from a running one. |
-| Login / models | `/login`, `/model [big\|small]`. |
+| Login / models | `/login`, `/model [big\|small]`, `/theme [auto\|dark\|light]`. |
+
+The board opens on a landing screen while it is empty; the status bar above the key hints shows the current mode and chosen models, and the palette follows the terminal's light or dark background. Type `@` in the request box for a completion popup above the input, and `/attach <path>` to add up to five local files (64 KiB each) to the next request; they are appended as text at submission and shown as chips above the box. `/theme` switches the adaptive palette at runtime.
 
 Status glyphs: `●` running, `✓` completed, `✗` failed/blocked/merge failed, `⊘` interrupted/canceled, `◷` queued/waiting (including a parent waiting for subagents), `◆` awaiting review. Children are indented under their parent. The footer shows only actions valid for the selection. The header shows counts and, once reported, session token usage and estimated cost; task details show per-task usage and the current price.
 
@@ -64,9 +76,9 @@ Six bundled Fantasy specialists, with prompts in [internal/orchestrator/prompts]
 
 Select one with a leading `@name`, with **A** on a draft, or let a delegating parent choose. A command executor with the same name in `-agents` takes precedence.
 
-A model is a `provider/model` selector. Prefixes: `openai`, `deepseek`, `openrouter`, `groq`, `hyper`, `bedrock`. Keys go in an owner-only `credentials.json` beside the state file. `bedrock` splits at the first `/` (ARNs work), uses the AWS credential chain and region (default `us-east-1`) unless `/login bedrock` stores a bearer token.
+A model is a `provider/model` selector. Prefixes: `openai`, `openai-subscription`, `deepseek`, `openrouter`, `groq`, `hyper`, `bedrock`. Keys go in an owner-only `credentials.json` beside the state file. `bedrock` splits at the first `/` (ARNs work), uses the AWS credential chain and region (default `us-east-1`) unless `/login bedrock` stores a bearer token.
 
-`/model big|small` sets the two class models; the menu fetches each provider's catalog (cached ten minutes; a labelled built-in list on failure). Choices persist in `models.json` as `{"big": "provider/model", "small": "provider/model"}`. `general` runs on `big` and specialists on `small`; a profile or `specialists[].model` may name `"big"` or `"small"` instead of a selector to use that class's model, and a specialist alias also moves it to that class. An alias whose class has no model is skipped. Resolution order: task profile model, class model, specialist model from `profiles.json`, `-model`.
+`/model big|small` sets the two class models; the menu fetches provider catalogs (cached ten minutes; a labelled built-in list on failure). The subscription provider fetches the current catalog using your signed-in ChatGPT account; its built-in list is only a labelled fallback if that request fails. Custom IDs remain available. Choices persist in `models.json` as `{"big": "provider/model", "small": "provider/model"}`. `general` runs on `big` and specialists on `small`; a profile or `specialists[].model` may name `"big"` or `"small"` instead of a selector to use that class's model, and a specialist alias also moves it to that class. An alias whose class has no model is skipped. Resolution order: task profile model, class model, specialist model from `profiles.json`, `-model`.
 
 Startup reads `profiles.json` beside the state file (never the current directory); `-profiles PATH` loads another, e.g. the [provided one](profiles.json), which sets the specialists' model (a `/model small` choice overrides it); pair it with `/model big provider/model` for `general`. Profiles set tools, model, instructions, `no_integrate` and `no_subagents`; the task snapshots its profile at acceptance:
 

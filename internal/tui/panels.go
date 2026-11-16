@@ -208,7 +208,7 @@ func menuView(background string, w, h int, title, subtitle string, body []string
 	selected = max(0, min(len(rows)-1, selected))
 	content := []string{
 		accentStyle.Render(title) + mutedStyle.Render("  "+subtitle),
-		"",
+		faintStyle.Render(strings.Repeat("─", inner)),
 	}
 	content = append(content, body...)
 	if len(rows) == 0 && empty != "" {
@@ -220,6 +220,17 @@ func menuView(background string, w, h int, title, subtitle string, body []string
 		marker, name := "  ", mutedStyle.Render(row.label)
 		if i == selected {
 			marker, name = accentStyle.Render("› "), titleStyle.Render(row.label)
+			tag := ""
+			if row.tag != "" {
+				tag = row.tag
+			}
+			plain := 2 + lipgloss.Width(row.label) + lipgloss.Width(ansi.Strip(tag))
+			line := marker + name
+			if tag != "" && plain < inner {
+				line += strings.Repeat(" ", inner-plain) + tag
+			}
+			content = append(content, selectionHighlightStyle.Width(inner).Render(fit(ansi.Strip(line), inner, 1)))
+			continue
 		}
 		if row.tag == "" {
 			content = append(content, marker+name)

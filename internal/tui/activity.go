@@ -108,7 +108,7 @@ func (m model) activityContent(width int) []string {
 		return nil
 	}
 	if m.activity.expanded {
-		m.activityDetail(add)
+		m.activityDetail(add, width)
 		return lines
 	}
 	activities := m.visibleActivities()
@@ -154,7 +154,7 @@ func (m model) activityContent(width int) []string {
 }
 
 // activityDetail shows the expanded call's arguments and result.
-func (m model) activityDetail(add func(...string)) {
+func (m model) activityDetail(add func(...string), width int) {
 	a, _, ok := m.selectedActivity()
 	if !ok {
 		add("This call is no longer retained. Esc returns to the list.")
@@ -166,7 +166,12 @@ func (m model) activityDetail(add func(...string)) {
 	if a.DurationMS != nil {
 		add(fmt.Sprintf("Duration %.0f ms", *a.DurationMS))
 	}
-	add("", accentStyle.Render("ARGUMENTS"), prettyPayload(a.Args), "", accentStyle.Render("RESULT"), readableResult(a.Result))
+	add("", accentStyle.Render("ARGUMENTS"), prettyPayload(a.Args), "", accentStyle.Render("RESULT"))
+	if card := m.diffCard(readableResult(a.Result), width); len(card) > 0 {
+		add(card...)
+		return
+	}
+	add(readableResult(a.Result))
 }
 
 // readableResult preserves actual line breaks in text results instead of

@@ -46,6 +46,9 @@ func isolateProviderEnvironment(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("AppData", filepath.Join(home, "config"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 }
 
 // TestBedrockConfiguredFromAWSSources checks that Bedrock counts as configured

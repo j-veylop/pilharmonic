@@ -29,10 +29,11 @@ const (
 // model-selection menu. It is advisory: a provider may support models not
 // listed here, and the UI always offers a free-text entry.
 var providerModels = map[string][]string{
-	"openai":     {"gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini"},
-	"deepseek":   {"deepseek-chat", "deepseek-reasoner"},
-	"openrouter": {"openai/gpt-4.1", "anthropic/claude-3.5-sonnet", "meta-llama/llama-3.3-70b-instruct"},
-	"groq":       {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"},
+	"openai":              {"gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini"},
+	"openai-subscription": {"gpt-5-codex", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini", "gpt-5.2-codex"},
+	"deepseek":            {"deepseek-chat", "deepseek-reasoner"},
+	"openrouter":          {"openai/gpt-4.1", "anthropic/claude-3.5-sonnet", "meta-llama/llama-3.3-70b-instruct"},
+	"groq":                {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"},
 	"hyper": {
 		"prism", "prism-flash", "prism-core",
 		"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813",

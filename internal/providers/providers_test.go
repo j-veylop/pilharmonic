@@ -16,7 +16,9 @@ import (
 func isolateEnvironment(t *testing.T) {
 	t.Helper()
 	for _, name := range Names() {
-		t.Setenv(endpoints[name].envVar, "")
+		if variable := endpoints[name].envVar; variable != "" {
+			t.Setenv(variable, "")
+		}
 	}
 	for _, name := range []string{
 		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE",

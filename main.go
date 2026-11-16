@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"pilharmonic/internal/instance"
 	"pilharmonic/internal/orchestrator"
+	"pilharmonic/internal/providers"
 	"pilharmonic/internal/tui"
 )
 
@@ -48,6 +50,8 @@ type options struct {
 	orchestrator.Options
 	state, workspace string
 	showVersion      bool
+	icons            bool
+	theme            string
 }
 
 func parseFlags() options {
@@ -67,12 +71,31 @@ func parseFlags() options {
 	flag.IntVar(&o.MaxSubagents, "max-subagents", orchestrator.DefaultMaxSubagents, "maximum child tasks one task may spawn")
 	flag.IntVar(&o.AttemptRetention, "attempt-retention", orchestrator.DefaultAttemptRetention, "attempt outputs kept in full per task (0 keeps every attempt)")
 	flag.BoolVar(&o.showVersion, "version", false, "print the build version and exit")
+	flag.BoolVar(&o.icons, "icons", false, "use Nerd Font status glyphs (requires a patched terminal font)")
+	flag.StringVar(&o.theme, "theme", "auto", "color theme: auto, dark or light")
 	flag.Usage = usage
 	flag.Parse()
 	return o
 }
 
 func run() (err error) {
+	if len(os.Args) > 1 && os.Args[1] == "login" {
+		cmd, err := subscriptionLoginCommand(os.Args[2:])
+		if err != nil {
+			return err
+		}
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				return fmt.Errorf("OpenAI subscription login requires the installed Codex CLI: %w", err)
+			}
+			return fmt.Errorf("OpenAI subscription login failed: %w", err)
+		}
+		if !providers.SubscriptionConfigured() {
+			return errors.New("login completed without usable ChatGPT subscription credentials; retry login openai")
+		}
+		return nil
+	}
 	o := parseFlags()
 	if flag.NArg() != 0 {
 		return fmt.Errorf("%w: unexpected arguments: %s", errUsage, strings.Join(flag.Args(), " "))
@@ -108,11 +131,18 @@ func run() (err error) {
 	if profiles != "" {
 		fmt.Fprintf(os.Stderr, "pilharmonic: loaded profiles from %s\n", profiles)
 	}
-	return tui.Run(service, o.workspace)
+	return tui.Run(service, o.workspace, tui.Options{Icons: o.icons, Theme: o.theme})
+}
+
+func subscriptionLoginCommand(args []string) (*exec.Cmd, error) {
+	if len(args) < 1 || args[0] != "openai" || len(args) > 2 || (len(args) == 2 && args[1] != "--device-auth") {
+		return nil, fmt.Errorf("%w: pilharmonic login openai [--device-auth]", errUsage)
+	}
+	return providers.LoginCommand(len(args) == 2), nil
 }
 
 func usage() {
 	out := flag.CommandLine.Output()
-	fmt.Fprintf(out, "Usage:\n  pilharmonic [flags]\n  pilharmonic subagent [flags]\n\nFlags:\n")
+	fmt.Fprintf(out, "Usage:\n  pilharmonic [flags]\n  pilharmonic subagent [flags]\n  pilharmonic login openai [--device-auth]\n\nFlags:\n")
 	flag.PrintDefaults()
 }

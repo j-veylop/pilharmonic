@@ -51,7 +51,8 @@ var endpoints = map[string]endpoint{
 	"hyper":      {baseURL: "https://hyper.charm.land/api/v1/fantasy", envVar: "HYPER_API_KEY"},
 	// Bedrock needs no key when the AWS credential chain supplies one; the
 	// environment variable names the bearer token that chain can carry.
-	Bedrock: {envVar: "AWS_BEARER_TOKEN_BEDROCK"},
+	Bedrock:      {envVar: "AWS_BEARER_TOKEN_BEDROCK"},
+	Subscription: {},
 }
 
 // Known reports whether name is a supported provider prefix.
@@ -83,6 +84,9 @@ func Resolve(ctx context.Context, modelID string, credential func(string) string
 	providerName, model, ok := strings.Cut(modelID, "/")
 	if !ok || providerName == "" || model == "" {
 		return nil, fmt.Errorf("model must be provider/model, got %q", modelID)
+	}
+	if providerName == Subscription {
+		return resolveSubscription(ctx, model)
 	}
 	endpoint, known := endpoints[providerName]
 	if !known {

@@ -80,15 +80,18 @@ var helpTopics = []helpTopic{
 	{
 		title: "Commands",
 		intro: []string{
-			"Type these into the REQUEST box; they are never submitted as a request. Arguments follow the command name, as in /login <provider> or /model [big|small].",
+			"Type these into the REQUEST box; they are never submitted as a request. Arguments follow the command name, as in /login <provider> or /model [big|small]. Attached files are read once at submission and appended to the request as text.",
+			"For ChatGPT subscription access, run /login openai subscription. This runs the installed codex login browser flow; then use /model big and choose openai-subscription.",
 		},
 		sections: []helpSection{{
 			heading: "SLASH COMMANDS",
 			rows: []helpRow{
-				{"/login", "Pick a provider"},
+				{"/login", "Pick a provider: OpenAI API key or ChatGPT subscription"},
 				{"/logout", "Forget a provider's stored key"},
 				{"/providers", "List providers and whether a key is stored"},
 				{"/model", "Choose the models, or open the menu"},
+				{"/attach", "Attach a local file to the next request (/detach removes it)"},
+				{"/theme", "Cycle or set the palette: auto, dark or light"},
 				{"/help", "Open this help"},
 			},
 		}},
@@ -96,7 +99,7 @@ var helpTopics = []helpTopic{
 	{
 		title: "Editing",
 		intro: []string{
-			"The request box and every composer dock above the footer hints; the draft wraps inside it and grows to six rows.",
+			"The request box always stays docked above the footer hints; / or i focuses it and Esc leaves it without hiding the draft. Every composer reuses the same box, and the draft wraps inside it and grows to six rows.",
 		},
 		sections: []helpSection{{rows: []helpRow{
 			{"Enter", "Submit; the request box routes and starts the task"},

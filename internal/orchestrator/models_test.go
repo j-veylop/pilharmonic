@@ -11,6 +11,35 @@ import (
 	"charm.land/fantasy"
 )
 
+func TestSubscriptionModelCatalog(t *testing.T) {
+	s := newTestService(t)
+	models := s.ModelsForProvider("openai-subscription")
+	if len(models) == 0 {
+		t.Fatal("missing subscription fallback catalog")
+	}
+	seen := map[string]bool{}
+	for _, model := range models {
+		if model == "" || seen[model] {
+			t.Fatalf("empty or duplicate subscription model: %q", model)
+		}
+		seen[model] = true
+		must(t, validateModelSelector("openai-subscription/"+model))
+	}
+	for _, model := range []string{"gpt-5-codex", "gpt-5.1-codex-mini", "gpt-5.2-codex"} {
+		if !seen[model] {
+			t.Fatalf("missing fallback model %q", model)
+		}
+	}
+	models[0] = "mutated"
+	if s.ModelsForProvider("openai-subscription")[0] == "mutated" {
+		t.Fatal("catalog exposed shared storage")
+	}
+	must(t, s.SetModel(ModelClassBig, "openai-subscription/gpt-5-codex"))
+	if got := requestedModel(s, DefaultRouteAgent, nil); got != "openai-subscription/gpt-5-codex" {
+		t.Fatalf("subscription selector not applied: %q", got)
+	}
+}
+
 func TestModelSelection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")

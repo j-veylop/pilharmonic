@@ -1,8 +1,12 @@
 package orchestrator
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"pilharmonic/internal/providers"
 )
 
 func TestProviderCredentialRoundTrip(t *testing.T) {
@@ -75,6 +79,56 @@ func TestProviderCredentialCountsEnvironment(t *testing.T) {
 	}
 	if configured["openai"] {
 		t.Fatal("openai reported configured without a key")
+	}
+}
+
+func TestSubscriptionCredentialIntegration(t *testing.T) {
+	isolateProviderEnvironment(t)
+	s := newTestService(t)
+	configured := func() bool {
+		t.Helper()
+		credentials := s.ProviderCredentials()
+		if len(credentials) != len(providers.Names()) {
+			t.Fatalf("credential count = %d, want %d", len(credentials), len(providers.Names()))
+		}
+		for _, credential := range credentials {
+			if credential.Provider == "openai-subscription" {
+				return credential.Configured
+			}
+		}
+		t.Fatal("subscription provider missing")
+		return false
+	}
+	if configured() || s.AnyProviderConfigured() {
+		t.Fatal("subscription configured without auth")
+	}
+	if _, err := s.fantasyModelFactory(t.Context(), "openai-subscription/gpt-5"); err == nil {
+		t.Fatal("subscription model resolved without auth")
+	}
+	configDir := mustGet(os.UserConfigDir())(t)
+	authDir := filepath.Join(configDir, "orchestrator", "openai-subscription")
+	must(t, os.MkdirAll(authDir, 0700))
+	must(t, os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"fake-subscription-token","refresh_token":"fake-refresh-token","account_id":"fake-account"}}`), 0600))
+	if !configured() || !s.AnyProviderConfigured() {
+		t.Fatal("subscription auth not reflected in credentials")
+	}
+	model, err := s.fantasyModelFactory(t.Context(), "openai-subscription/gpt-5")
+	if err != nil {
+		t.Fatalf("subscription model failed to resolve: %v", err)
+	}
+	if model.Model() != "gpt-5" {
+		t.Fatalf("model = %q, want gpt-5", model.Model())
+	}
+	for _, key := range []string{"", "sk-test"} {
+		if err := s.SetProviderCredential("openai-subscription", key); err == nil || !strings.Contains(err.Error(), "/login openai subscription") {
+			t.Fatalf("subscription API-key error = %v", err)
+		}
+	}
+	if err := s.RemoveProviderCredential("openai-subscription"); err == nil || !strings.Contains(err.Error(), "set CODEX_HOME to ") || !strings.Contains(err.Error(), authDir) || !strings.Contains(err.Error(), `codex -c 'cli_auth_credentials_store="file"' logout`) {
+		t.Fatalf("subscription logout error = %v", err)
+	}
+	if !configured() {
+		t.Fatal("rejected credential mutation changed subscription")
 	}
 }
 

@@ -17,6 +17,26 @@ Git worktree operations, provider resolution, the agent workspace tools and the
 state-file lock live in leaf packages under `internal/` that never import the
 service; the service passes them plain values, not tasks.
 
+The `openai-subscription` provider implements ChatGPT subscription access behind
+the same Fantasy model interface as API-key providers. The installed official
+Codex CLI handles login outside the Bubble Tea update loop, with terminal
+ownership handed to the child process. File-backed subscription credentials
+use a dedicated Codex home under the user config directory, separate from the
+user's normal Codex login and provider API keys. The provider refreshes and
+atomically persists rotated tokens, and owns subscription request adaptation.
+Routing, specialist tool palettes, model
+selection, streaming and follow-up delivery keep the existing engine behavior.
+Subscription selectors explicitly enable Fantasy's Responses API and classify
+all subscription models as Responses models, including newly listed model IDs.
+They never fall back to chat completions or the billed OpenAI API endpoint.
+The model menu fetches the subscription backend's catalog with the signed-in
+account's credentials, using the same token-refresh path as inference. Catalog
+requests follow [Crush's OpenAI subscription implementation](https://github.com/charmbracelet/crush/blob/49a3b96a487efea9666ec083efcd4fb51f510015/internal/oauth/openai/models.go):
+the Codex backend's models endpoint, a client version requesting the full catalog,
+and only entries whose visibility is `list`. The existing ten-minute catalog
+cache and explicitly labelled failure fallback apply.
+Keyring-only credentials are not supported.
+
 ## Requests and authority
 
 - A trigger identifies an incoming request in a thread. One compiled-in
@@ -137,6 +157,8 @@ in memory and saved if anything changed:
 - pending follow-ups become `unknown`, because delivery cannot be proven;
 - legacy tasks without a thread or attempts get them synthesized;
 - `running` tasks become `interrupted`; no worker is assumed to survive.
+
+The terminal derives all geometry from one layout function (header, body, optional sidebar, docked composer, status and hint rows) and renders modals over a dimmed copy of the frame. The request box is always docked; `router.open` means focus, not visibility, and Esc blurs it so board shortcuts stay available. Presentation state such as focus, sidebar visibility, scroll, theme and pending file attachments never becomes task state. Attachments are read once during submission and appended to the initial request text; they are not executed.
 
 `Shutdown` cancels running work, closes pending starts and the control socket,
 and waits for workers to finish writing, so quitting yields `canceled`, not

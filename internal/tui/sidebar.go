@@ -12,7 +12,36 @@ import (
 // only the glyph; other surfaces pair it with the word so status never relies
 // on colour alone. A running parent whose child is still queued, running or
 // merging is waiting for that subagent, which only the task list knows.
-func (m model) taskState(task orchestrator.Task) (glyph, label string, color lipgloss.Color) {
+func (m model) taskState(task orchestrator.Task) (glyph, label string, color lipgloss.TerminalColor) {
+	glyph, label, color = m.taskStateASCII(task)
+	return m.icon(glyph), label, color
+}
+
+// icon swaps status glyphs for Nerd Font equivalents in icon mode.
+func (m model) icon(glyph string) string {
+	if !m.icons {
+		return glyph
+	}
+	switch glyph {
+	case "●":
+		return "\uf111"
+	case "✓":
+		return "\uf00c"
+	case "✗":
+		return "\uf00d"
+	case "⊘":
+		return "\uf05e"
+	case "◷":
+		return "\uf017"
+	case "◆":
+		return "\uf06e"
+	case "▸":
+		return "\uf0da"
+	}
+	return glyph
+}
+
+func (m model) taskStateASCII(task orchestrator.Task) (glyph, label string, color lipgloss.TerminalColor) {
 	if task.ID != "" && task.Status == orchestrator.Running && task.Stage() == orchestrator.StageWorking {
 		for _, child := range m.tasks {
 			if child.ParentID == task.ID && (child.Status == orchestrator.Queued || child.Status == orchestrator.Running || child.MergeStatus == orchestrator.MergeWaiting) {
@@ -34,7 +63,7 @@ func (m model) taskState(task orchestrator.Task) (glyph, label string, color lip
 	return statusState(task.Status)
 }
 
-func statusState(status orchestrator.Status) (glyph, label string, color lipgloss.Color) {
+func statusState(status orchestrator.Status) (glyph, label string, color lipgloss.TerminalColor) {
 	switch status {
 	case orchestrator.Running:
 		return "●", "RUNNING", statusRunning
@@ -199,7 +228,7 @@ const (
 type workspaceBadge struct {
 	glyph string
 	label string
-	color lipgloss.Color
+	color lipgloss.TerminalColor
 }
 
 // workspaceBadgeFor summarizes where a task runs and what happened to its

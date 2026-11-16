@@ -68,6 +68,9 @@ func saveCredentials(path string, providers map[string]string) error {
 func (s *Service) SetProviderCredential(provider, key string) error {
 	provider = strings.TrimSpace(provider)
 	key = strings.TrimSpace(key)
+	if provider == "openai-subscription" {
+		return errors.New("OpenAI subscriptions do not use API keys; use /login openai subscription")
+	}
 	if !providers.Known(provider) {
 		return fmt.Errorf("unknown provider %q (supported: %s)", provider, strings.Join(providers.Names(), ", "))
 	}
@@ -86,6 +89,13 @@ func (s *Service) SetProviderCredential(provider, key string) error {
 // RemoveProviderCredential forgets a provider's stored API key.
 func (s *Service) RemoveProviderCredential(provider string) error {
 	provider = strings.TrimSpace(provider)
+	if provider == "openai-subscription" {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return fmt.Errorf("locate isolated OpenAI subscription credentials for logout: %w", err)
+		}
+		return fmt.Errorf("to remove OpenAI subscription credentials, set CODEX_HOME to %q, then run codex -c 'cli_auth_credentials_store=\"file\"' logout", filepath.Join(dir, "orchestrator", "openai-subscription"))
+	}
 	return s.whileOpen(func() error {
 		delete(s.creds, provider)
 		return saveCredentials(s.credentialsPath, s.creds)
@@ -98,12 +108,13 @@ func (s *Service) RemoveProviderCredential(provider string) error {
 // taken so no file read happens while the service mutex is held.
 func (s *Service) ProviderCredentials() []ProviderCredential {
 	bedrockConfigured := providers.BedrockAWSConfigured()
+	subscriptionConfigured := providers.SubscriptionConfigured()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	names := providers.Names()
 	result := make([]ProviderCredential, 0, len(names))
 	for _, name := range names {
-		result = append(result, ProviderCredential{Provider: name, Configured: s.providerConfiguredLocked(name, bedrockConfigured)})
+		result = append(result, ProviderCredential{Provider: name, Configured: s.providerConfiguredLocked(name, bedrockConfigured, subscriptionConfigured)})
 	}
 	return result
 }
@@ -113,10 +124,11 @@ func (s *Service) ProviderCredentials() []ProviderCredential {
 // forces the login menu while this is false.
 func (s *Service) AnyProviderConfigured() bool {
 	bedrockConfigured := providers.BedrockAWSConfigured()
+	subscriptionConfigured := providers.SubscriptionConfigured()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, name := range providers.Names() {
-		if s.providerConfiguredLocked(name, bedrockConfigured) {
+		if s.providerConfiguredLocked(name, bedrockConfigured, subscriptionConfigured) {
 			return true
 		}
 	}
@@ -126,7 +138,10 @@ func (s *Service) AnyProviderConfigured() bool {
 // providerConfiguredLocked is the one definition of "configured": a stored key
 // or the provider's environment variable, and for Bedrock the AWS credential
 // chain, probed by the caller so this does no I/O. Caller holds mu.
-func (s *Service) providerConfiguredLocked(name string, bedrockConfigured bool) bool {
+func (s *Service) providerConfiguredLocked(name string, bedrockConfigured, subscriptionConfigured bool) bool {
+	if name == "openai-subscription" {
+		return subscriptionConfigured
+	}
 	if s.creds[name] != "" {
 		return true
 	}

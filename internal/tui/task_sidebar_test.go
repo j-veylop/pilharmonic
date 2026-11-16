@@ -58,7 +58,7 @@ func TestTaskStateShowsRunningParentWaitingForSubagents(t *testing.T) {
 		child orchestrator.Task
 		label string
 		glyph string
-		color lipgloss.Color
+		color lipgloss.TerminalColor
 	}{
 		{name: "queued child", child: orchestrator.Task{ID: "child", ParentID: "parent", Status: orchestrator.Queued}, glyph: "◷", label: "WAITING FOR SUBAGENTS", color: statusWaiting},
 		{name: "running child", child: orchestrator.Task{ID: "child", ParentID: "parent", Status: orchestrator.Running}, glyph: "◷", label: "WAITING FOR SUBAGENTS", color: statusWaiting},

@@ -258,7 +258,7 @@ func (m model) detailPanel(width, height int) string {
 	inner := l.panelInner(width)
 	t, ok := m.selectedTask()
 	if !ok {
-		return panel(titleStyle.Render("TASK DETAILS")+"\n\n"+mutedStyle.Render("Select a task to view details."), width, height)
+		return panel(m.landingContent(inner), width, height)
 	}
 	titleLine := titleStyle.Render(singleLine(t.Title)) + "  " + m.taskLabel(t)
 	if action := m.currentAction(t); action != "" {
@@ -277,6 +277,22 @@ func (m model) detailPanel(width, height int) string {
 	position := fmt.Sprintf("%s  %d–%d / %d  ·  %s", detailTabNames[m.tab], min(start+1, end), end, len(content), m.detailFocusHint())
 	lines = append(lines, mutedStyle.Render(position))
 	return focusedPanel(strings.Join(lines, "\n"), width, height, m.detailFocus || m.fullscreen)
+}
+
+// landingContent is the empty board: identity, examples and the first keys.
+func (m model) landingContent(width int) string {
+	line := func(text string) string { return lipgloss.PlaceHorizontal(width, lipgloss.Center, text) }
+	lines := []string{
+		line(gradientText("◈ PILHARMONIC")),
+		line(mutedStyle.Render("Local agents with recorded mandates and attempts")),
+		"",
+		line(accentStyle.Render("/") + mutedStyle.Render("  submit a request")),
+		line(keyStyle.Render("@tester") + mutedStyle.Render("  pick an executor")),
+		line(accentStyle.Render("/model") + mutedStyle.Render("  choose a model")),
+		"",
+		line(faintStyle.Render("f1 help  ·  q quit")),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) detailFocusHint() string {

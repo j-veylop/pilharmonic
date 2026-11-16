@@ -96,7 +96,7 @@ func (m model) taskSummary(t orchestrator.Task, add func(...string)) {
 		add(mutedStyle.Render(fmt.Sprintf("Subagent of %s · depth %d", terminalText(t.ParentID), t.Depth)))
 	}
 	add(mutedStyle.Render("Source: " + terminalText(t.Workspace)))
-	worktreeGlyph := lipgloss.NewStyle().Foreground(cyan).Render(glyphWorktree)
+	worktreeGlyph := accentStyle.Render(glyphWorktree)
 	switch {
 	case t.Isolated && t.ExecutionWorkspace == "":
 		line := worktreeGlyph + " Workspace: isolated worktree requested"
@@ -262,7 +262,7 @@ func (m model) detailPanel(width, height int) string {
 	}
 	titleLine := titleStyle.Render(singleLine(t.Title)) + "  " + m.taskLabel(t)
 	if action := m.currentAction(t); action != "" {
-		titleLine = lipgloss.NewStyle().Foreground(cyan).Render(action)
+		titleLine = accentStyle.Render(action)
 	}
 	if position, total, ok := m.selectedPosition(); ok && !l.sidebar && inner >= 8 {
 		titleLine = mutedStyle.Render(fmt.Sprintf("TASK %d/%d  ", position, total)) + titleLine
@@ -283,7 +283,7 @@ func (m model) detailPanel(width, height int) string {
 func (m model) landingContent(width int) string {
 	line := func(text string) string { return lipgloss.PlaceHorizontal(width, lipgloss.Center, text) }
 	lines := []string{
-		line(gradientText("◈ PILHARMONIC")),
+		line(wordmark()),
 		line(mutedStyle.Render("Local agents with recorded mandates and attempts")),
 		"",
 		line(accentStyle.Render("/") + mutedStyle.Render("  submit a request")),
@@ -326,13 +326,9 @@ func retryable(task orchestrator.Task) bool {
 	return task.Status == orchestrator.Failed || task.Status == orchestrator.Interrupted || task.Status == orchestrator.Canceled
 }
 
-// selectedTaskHints advertises only operations the existing command guards and
-// service methods accept for the selected task state.
-func (m model) selectedTaskHints() []string {
-	task, ok := m.selectedTask()
-	if !ok {
-		return nil
-	}
+// boardTaskHints advertises only operations the existing command guards and
+// service methods accept for one task state.
+func boardTaskHints(task orchestrator.Task) []string {
 	var keys []string
 	if task.AwaitingReview() {
 		keys = append(keys, "v")

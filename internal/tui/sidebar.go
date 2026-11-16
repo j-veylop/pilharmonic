@@ -60,7 +60,7 @@ func (m model) taskStateASCII(task orchestrator.Task) (glyph, label string, colo
 	case orchestrator.StageWaiting, orchestrator.StageWaitingSubagents, orchestrator.StageInputUndelivered:
 		return "◷", strings.ToUpper(stage), statusWaiting
 	case orchestrator.StageAwaitingReview:
-		return "◆", strings.ToUpper(stage), cyan
+		return "◆", strings.ToUpper(stage), statusWaiting
 	}
 	return statusState(task.Status)
 }
@@ -265,7 +265,7 @@ func workspaceBadgeFor(task orchestrator.Task) workspaceBadge {
 	case task.ReviewStatus == orchestrator.ReviewRejected:
 		return workspaceBadge{glyphMergeError, "rejected", statusFailed}
 	case task.AwaitingReview():
-		return workspaceBadge{glyphReview, "review", cyan}
+		return workspaceBadge{glyphReview, "review", statusWaiting}
 	case task.MergeStatus == orchestrator.MergeFailed && task.MergeConflict():
 		return workspaceBadge{glyphConflict, "conflict", statusFailed}
 	case task.MergeStatus == orchestrator.MergeFailed:
@@ -275,7 +275,7 @@ func workspaceBadgeFor(task orchestrator.Task) workspaceBadge {
 	case task.MergeStatus == orchestrator.MergeUpToDate:
 		return workspaceBadge{glyphCheck, "up to date", statusCompleted}
 	case task.Isolated:
-		return workspaceBadge{glyphWorktree, "isolated", cyan}
+		return workspaceBadge{glyphWorktree, "isolated", accent}
 	case task.ParentID != "":
 		return workspaceBadge{glyphInherited, "inherited", muted}
 	default:

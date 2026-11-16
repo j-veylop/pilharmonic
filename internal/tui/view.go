@@ -166,11 +166,7 @@ func (m model) headerMode() string {
 // total, joined by the diagonal filler Crush uses. The session total is dropped
 // before a counter loses its wording.
 func (m model) headerRow(width int) string {
-	phase := 0
-	if m.spinnerActive {
-		phase = m.frame
-	}
-	header := gradientPhase("◈ PILHARMONIC", phase)
+	header := wordmark()
 	available := max(1, width-lipgloss.Width(header)-1)
 	options := m.headerCountOptions()
 	summary, usage := options[len(options)-1], ""
@@ -195,12 +191,10 @@ fit:
 }
 
 // statusPills is the mode and model badge row above the key hints. Badges drop
-// right to left so the mode is always visible.
+// right to left so the mode is always visible. It carries no moving parts, so
+// the row never changes width while tasks run.
 func (m model) statusPills(width int) string {
 	mode := m.headerMode()
-	if m.spinnerActive {
-		mode = m.spinner.View() + " " + mode
-	}
 	pills := []string{pillStyle.Render(mode)}
 	if m.service != nil {
 		selection := m.service.ModelSelection()
@@ -266,7 +260,7 @@ func (m model) headerCountOptions() []string {
 		return mutedStyle.Render(tasks) +
 			lipgloss.NewStyle().Foreground(statusRunning).Render(runningText) +
 			lipgloss.NewStyle().Foreground(statusWaiting).Render(queuedText) +
-			lipgloss.NewStyle().Foreground(cyan).Render(attentionText)
+			accentStyle.Render(attentionText)
 	}
 	return []string{
 		format(fmt.Sprintf("  ● %d running", running), fmt.Sprintf("  ◷ %d queued", queued), fmt.Sprintf("  ◆ %d %s", attention, actionText)),
@@ -276,21 +270,22 @@ func (m model) headerCountOptions() []string {
 	}
 }
 
-// boardFooter keeps selected-task actions first, then the operator essentials.
-// Optional hints are dropped before the footer grows past two lines.
-func (m model) boardFooter(w int) string {
+// boardHints is the hint line for one task: its actions first, then the
+// operator essentials. Only the task's own actions and the quit key are
+// unconditional; every other hint is dropped before the line needs a second row.
+func boardHints(w int, task orchestrator.Task, attention bool) string {
 	var hints []string
 	add := func(hint string, optional bool) {
 		candidate := append(append([]string{}, hints...), hint)
-		if optional && hintRows(strings.Join(candidate, " · "), w) > 2 {
+		if optional && hintRows(strings.Join(candidate, " · "), w) > 1 {
 			return
 		}
 		hints = candidate
 	}
-	for _, hint := range m.selectedTaskHints() {
+	for _, hint := range boardTaskHints(task) {
 		add(hint, false)
 	}
-	if m.attentionCount() > 0 {
+	if attention {
 		add(keyHint("!"), true)
 	}
 	add("? help", true)
@@ -302,6 +297,18 @@ func (m model) boardFooter(w int) string {
 		add("l details", true)
 	}
 	return strings.Join(hints, " · ")
+}
+
+// boardHintRows is the height the hint area reserves at width: the tallest hint
+// line any task on the board needs. Moving the selection or a task changing
+// state therefore never moves the body above the footer.
+func (m model) boardHintRows(w int) int {
+	attention := m.attentionCount() > 0
+	rows := hintRows(boardHints(w, orchestrator.Task{}, attention), w)
+	for _, task := range m.tasks {
+		rows = max(rows, hintRows(boardHints(w, task, attention), w))
+	}
+	return rows
 }
 
 // hintRows counts the rows text occupies once the separators are rendered and
@@ -323,7 +330,8 @@ func withHelpHint(text string, w int) string {
 }
 
 func (m model) footer(w int) string {
-	footerText := m.boardFooter(w)
+	var footerText string
+	board := false
 	switch {
 	case m.router.open:
 		footerText = withHelpHint("enter start · ctrl+s hold · esc leave · ctrl+c quit", w)
@@ -338,14 +346,24 @@ func (m model) footer(w int) string {
 		footerText = "enter expand · " + keyHint("e") + " · " + keyHint("tab") + " · ? help · " + keyHint("q")
 	case m.detailFocus || m.fullscreen:
 		footerText = "j/k scroll · " + keyHint("t") + " · " + keyHint("tab") + " · h tasks · ? help · " + keyHint("q")
+	default:
+		task, _ := m.selectedTask()
+		footerText, board = boardHints(w, task, m.attentionCount() > 0), true
+	}
+	// The hint block and the notice row both keep a fixed height: the board
+	// reserves the fullest hint line any task needs, and the notice row is held
+	// open even while empty. A shorter hint line, a task changing state or a
+	// notice appearing and expiring must not move the body above it.
+	line := hintRows(footerText, w)
+	reserved := line
+	if board {
+		reserved = m.boardHintRows(w)
 	}
 	footer := renderHints(strings.Split(footerText, " · ")...)
-	if m.notice.text != "" {
-		footer = accentStyle.Render("› "+singleLine(m.notice.text)) + "\n" + footer
+	if pad := reserved - line; pad > 0 {
+		footer += strings.Repeat("\n", pad)
 	}
-	if m.notice.service != "" {
-		footer = warningStyle.Render("› "+singleLine(m.notice.service)) + "\n" + footer
-	}
+	footer = m.noticeRow(w) + "\n" + footer
 	if m.cleanup.kind != "" {
 		title, answer, note := m.cleanup.prompt()
 		footer = accentStyle.Render(title) + "\n" + mutedStyle.Render(answer+"  ·  n/esc cancel  ·  f1 help") + "\n" + mutedStyle.Render(note)
@@ -358,6 +376,22 @@ func (m model) footer(w int) string {
 		footer = m.statusPills(w) + "\n" + footer
 	}
 	return ansi.Hardwrap(footer, w, true)
+}
+
+// noticeRow renders the footer's one reserved notice line: the standing service
+// condition leads because it outlives the transient action notice. The line is
+// truncated rather than wrapped so the footer height never varies.
+func (m model) noticeRow(w int) string {
+	text, style := m.notice.service, warningStyle
+	if text == "" {
+		text, style = m.notice.text, accentStyle
+	} else if m.notice.text != "" {
+		text += "  ·  " + m.notice.text
+	}
+	if text == "" {
+		return ""
+	}
+	return fit(style.Render("› "+singleLine(text)), w, 1)
 }
 
 // renderHints styles "key description" hints as one row.

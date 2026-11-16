@@ -115,7 +115,6 @@ type model struct {
 	sidebarHidden bool
 	icons         bool
 	theme         string
-	frame         int
 	attachments   []string
 	help          helpState
 	isolationBusy bool
@@ -299,12 +298,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampScroll()
 		m.cancelStaleSelection()
 	case tickMsg:
-		m.frame++
 		return m, m.tick()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		m.frame++
 		m.spinnerActive = m.hasLiveWork()
 		if !m.spinnerActive {
 			return m, nil

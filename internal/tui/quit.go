@@ -124,7 +124,6 @@ func (m model) quitModal(mw, h int) (int, []string) {
 		{order: 4, priority: 6, rows: wrapStyled("History and worktrees are kept", faintStyle, inner)},
 		{order: 5, priority: 5, rows: []string{""}},
 		{order: 6, priority: 0, rows: quitButtonRows(m, inner)},
-		{order: 7, priority: 7, rows: []string{m.quitHint(inner)}},
 	}
 	sort.SliceStable(groups, func(i, j int) bool { return groups[i].priority < groups[j].priority })
 	budget, used, chosen := h-2, 0, make([]group, 0, len(groups))
@@ -156,23 +155,16 @@ func quitButtonRows(m model, inner int) []string {
 	return []string{quit, stay}
 }
 
-// quitHint names what Enter will press, which follows the focus.
-func (m model) quitHint(inner int) string {
-	answer := "quit"
-	if m.quitChoice == quitButtonStay {
-		answer = "stay"
+// selectionButton uses the same filled pills for dialog buttons and tabs.
+func selectionButton(label string, focused bool) string {
+	if focused {
+		return pillStyle.Render(label)
 	}
-	return fitHints(inner, "←/→ choose", "enter "+answer)
+	return pillMutedStyle.Render(label)
 }
 
-// quitButton draws one button, distinguishing focus with the filled pill and
-// bright brackets. The hint also names the focused action.
 func quitButton(index int, focused bool) string {
-	label := quitButtonLabels[index]
-	if focused {
-		return keyStyle.Render("[ ") + pillStyle.Render(label) + keyStyle.Render(" ]")
-	}
-	return faintStyle.Render("[ ") + pillMutedStyle.Render(label) + faintStyle.Render(" ]")
+	return selectionButton(quitButtonLabels[index], focused)
 }
 
 // wrapStyled wraps plain text to width and styles each line in place.

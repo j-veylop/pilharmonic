@@ -182,16 +182,18 @@ func TestQuitDialogFocusMovesBetweenButtons(t *testing.T) {
 	}
 }
 
-// The hint follows focus so Enter's effect is never a surprise, without arrows
-// in either button.
 func TestQuitDialogMarksTheFocusedButton(t *testing.T) {
-	m := boardWithTask().requestQuit()
-	if plain := quitPlain(m.View()); strings.Contains(plain, "▸") || !strings.Contains(plain, "y quit") || !strings.Contains(plain, "enter quit") {
-		t.Fatalf("quit button not marked as focused: %s", plain)
-	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyTab})
-	if plain := quitPlain(m.View()); strings.Contains(plain, "▸") || !strings.Contains(plain, "n/esc stay") || !strings.Contains(plain, "enter stay") {
-		t.Fatalf("focus marker or hint did not follow the selection: %s", plain)
+	for _, choice := range []int{quitButtonQuit, quitButtonStay} {
+		m := boardWithTask().requestQuit()
+		m.quitChoice = choice
+		_, rows := m.quitModal(54, 35)
+		plain := ansi.Strip(strings.Join(rows, " "))
+		if strings.ContainsAny(plain, "[]") || strings.Contains(plain, "enter ") || strings.Contains(plain, "choose") {
+			t.Fatalf("unexpected brackets or footer: %s", plain)
+		}
+		if got := quitButton(choice, true); got != selectionButton(quitButtonLabels[choice], true) {
+			t.Fatal("focused button does not use selection style")
+		}
 	}
 }
 
@@ -226,10 +228,6 @@ func TestQuitDialogDrawsBothButtons(t *testing.T) {
 		assertFits(t, view, size[0], size[1])
 		plain := quitPlain(view)
 		want := []string{"QUIT", "Leave pilharmonic?", "y quit", "n/esc stay"}
-		if size[0] >= 40 {
-			// The focus hint is optional; it is the first row a short card drops.
-			want = append(want, "choose")
-		}
 		for _, text := range want {
 			if !strings.Contains(plain, text) {
 				t.Fatalf("%v: dialog lost %q: %s", size, text, plain)

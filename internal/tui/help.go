@@ -294,11 +294,7 @@ func helpTabs(width, page int) string {
 	for _, labels := range [][]string{titles, numbers} {
 		row := ""
 		for i, label := range labels {
-			if i == page {
-				row += activeTabStyle.Render(label) + " "
-			} else {
-				row += inactiveTabStyle.Render(label) + " "
-			}
+			row += selectionButton(label, i == page) + " "
 		}
 		if lipgloss.Width(row) <= width {
 			return row

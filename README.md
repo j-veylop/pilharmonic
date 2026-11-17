@@ -53,7 +53,7 @@ Prices are a curated USD-per-1M snapshot for the catalog's OpenAI and DeepSeek m
 
 ## Workspaces and review
 
-In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate opens with an edit action (`fix`, `add`, `update`, `implement`, ...). Read-only and ambiguous requests run in the source workspace. Override per held task in the `o` setup popup, or disable with `-isolation=false`. Worktrees are reused on retry.
+In a Git repository with a committed `HEAD`, a task runs in a detached worktree under `workspaces/` beside the state file only when its mandate opens with an edit action (`fix`, `add`, `update`, `implement`, ...). Read-only and ambiguous requests run in the source workspace. Override per held task in the `o` setup popup, or disable with `-isolation=false`. Worktrees are reused on retry. Creating a new worktree fails if the source has tracked or non-ignored untracked changes; commit or stash them first. Ignored files are excluded and the cleanliness check cannot prevent concurrent external edits.
 
 A successful isolated run commits its changes for review unless the profile sets `no_integrate`. `v` then `y` merges the displayed commit into the source checkout (serialized); `v` then `n` rejects and keeps the worktree; `f` then `r` reworks it within the mandate. Uncommitted source changes are autostashed and reapplied. If they conflict with the merge, the merge is rolled back and recorded as failed with the source checkout restored, so commit or stash those changes and retry. Untracked files that a merge would overwrite block it.
 

@@ -72,6 +72,27 @@ func TestConversationShowsPromptFollowUpsAndAttempts(t *testing.T) {
 	}
 }
 
+func TestConversationShowsTaskErrorOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		taskError     string
+		attemptError  string
+		wantTaskError int
+	}{
+		{"same error", "failure", "failure", 1},
+		{"different errors", "failure", "earlier failure", 2},
+		{"task error only", "failure", "", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := model{tasks: []orchestrator.Task{{Prompt: "work", Error: tc.taskError, Attempts: []orchestrator.Attempt{{Error: tc.attemptError}}}}}
+			text := ansi.Strip(strings.Join(m.detailContent(80), "\n"))
+			if got := strings.Count(text, "failure"); got != tc.wantTaskError {
+				t.Fatalf("error count = %d, want %d: %q", got, tc.wantTaskError, text)
+			}
+		})
+	}
+}
+
 func TestChatboxFollowsSelectedTaskInDetailedView(t *testing.T) {
 	service := &followService{fakeLoginService: &fakeLoginService{anyConfigured: true}, requeued: true}
 	m := model{

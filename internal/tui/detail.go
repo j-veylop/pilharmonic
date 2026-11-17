@@ -43,7 +43,8 @@ func (m model) detailContent(width int) []string {
 		m.taskHistory(t, width, add)
 		return lines
 	}
-	if t.Error != "" {
+	// The latest attempt already displays its own error in the conversation.
+	if t.Error != "" && (len(t.Attempts) == 0 || t.Attempts[len(t.Attempts)-1].Error != t.Error) {
 		add(lipgloss.NewStyle().Foreground(statusFailed).Bold(true).Render("ERROR  " + terminalText(t.Error)))
 	}
 	if t.ReviewStatus == orchestrator.ReviewPending {

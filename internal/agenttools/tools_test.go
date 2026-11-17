@@ -42,7 +42,7 @@ func TestToolsCoverThePalette(t *testing.T) {
 	for _, tool := range tools {
 		got = append(got, tool.Info().Name)
 	}
-	if strings.Join(got, ",") != strings.Join(Names(), ",") {
+	if strings.Join(got, ",") != "read,bash,write,edit,grep,find,ls" {
 		t.Fatalf("unexpected tools: %v", got)
 	}
 	subset := Tools(t.TempDir(), []string{"read", "unknown-tool"}, nil)
@@ -220,8 +220,12 @@ func TestBashToolHonorsContext(t *testing.T) {
 	if bash == nil {
 		t.Fatal("bash tool missing")
 	}
-	if _, err := bash.Run(ctx, fantasy.ToolCall{ID: "call-1", Name: "bash", Input: `{"command":"sleep 30"}`}); err != nil {
+	response, err := bash.Run(ctx, fantasy.ToolCall{ID: "call-1", Name: "bash", Input: `{"command":"exec sleep 30"}`})
+	if err != nil {
 		t.Fatalf("bash returned a hard error: %v", err)
+	}
+	if !response.IsError || !strings.Contains(response.Content, "context deadline exceeded") {
+		t.Fatalf("cancellation not reported: %+v", response)
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("cancellation ignored: %s", elapsed)

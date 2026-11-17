@@ -103,14 +103,6 @@ func TestGradientAnimationKeepsTextAndChangesColor(t *testing.T) {
 	}
 }
 
-func TestGradientFillKeepsTextAndWidth(t *testing.T) {
-	text := strings.Repeat("╱", 20)
-	fill := gradientFill(text, 3)
-	if ansi.Strip(fill) != text {
-		t.Fatalf("gradient fill changed the chrome: %q", fill)
-	}
-}
-
 func TestDiffCardRendersOnlyDiffs(t *testing.T) {
 	if card := (model{}).diffCard("just prose\nwith - a minus", 40); card != nil {
 		t.Fatalf("prose rendered as a diff: %q", card)

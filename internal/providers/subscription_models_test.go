@@ -101,29 +101,22 @@ func TestSubscriptionModelsErrors(t *testing.T) {
 		name   string
 		status int
 		body   string
-		ok     bool
 	}{
-		{"forbidden", 403, "access refresh account", false},
-		{"unauthorized", 401, "access refresh account", false},
-		{"server", 500, "access refresh account", false},
-		{"malformed", 200, `{"models":access}`, false},
-		{"wrong-shape", 200, `{"data":[{"id":"static"}]}`, false},
-		{"null", 200, `{"models":null}`, false},
-		{"wrong-type", 200, `{"models":[{"slug":123}]}`, false},
-		{"trailing", 200, `{"models":[]} access`, false},
-		{"oversize", 200, `{"models":[],"extra":"` + strings.Repeat("x", 1<<20) + `"}`, false},
-		{"empty", 200, `{"models":[]}`, false},
+		{"forbidden", 403, "access refresh account"},
+		{"unauthorized", 401, "access refresh account"},
+		{"server", 500, "access refresh account"},
+		{"malformed", 200, `{"models":access}`},
+		{"wrong-shape", 200, `{"data":[{"id":"static"}]}`},
+		{"null", 200, `{"models":null}`},
+		{"wrong-type", 200, `{"models":[{"slug":123}]}`},
+		{"trailing", 200, `{"models":[]} access`},
+		{"oversize", 200, `{"models":[],"extra":"` + strings.Repeat("x", 1<<20) + `"}`},
+		{"empty", 200, `{"models":[]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); io.WriteString(w, tc.body) }))
 			defer server.Close()
 			models, err := fetchSubscriptionModels(t.Context(), subscriptionFixture(t, false), server.URL, server.URL, server.Client())
-			if tc.ok {
-				if err != nil || len(models) != 0 {
-					t.Fatalf("%v %v", models, err)
-				}
-				return
-			}
 			if err == nil || models != nil {
 				t.Fatalf("accepted failed listing: %v %v", models, err)
 			}

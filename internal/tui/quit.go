@@ -165,13 +165,12 @@ func (m model) quitHint(inner int) string {
 	return fitHints(inner, "←/→ choose", "enter "+answer)
 }
 
-// quitButton draws one button. Focus shows three ways so it never rests on
-// colour alone: the marker inside the label, the filled pill and the bright
-// brackets. Without colour the pair still reads as buttons.
+// quitButton draws one button, distinguishing focus with the filled pill and
+// bright brackets. The hint also names the focused action.
 func quitButton(index int, focused bool) string {
 	label := quitButtonLabels[index]
 	if focused {
-		return keyStyle.Render("[ ") + pillStyle.Render("▸ "+label) + keyStyle.Render(" ]")
+		return keyStyle.Render("[ ") + pillStyle.Render(label) + keyStyle.Render(" ]")
 	}
 	return faintStyle.Render("[ ") + pillMutedStyle.Render(label) + faintStyle.Render(" ]")
 }

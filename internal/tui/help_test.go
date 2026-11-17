@@ -9,6 +9,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func TestHelpTabsHaveNoSelectionArrow(t *testing.T) {
+	for _, width := range []int{30, 100} {
+		for page := range helpTopics {
+			row := ansi.Strip(helpTabs(width, page))
+			if row == "" || strings.Contains(row, "▸") {
+				t.Fatalf("width %d page %d: unexpected tab strip %q", width, page, row)
+			}
+		}
+	}
+}
+
 func TestHelpKeysChangePageScrollAndClose(t *testing.T) {
 	last := len(helpTopics) - 1
 	cases := []struct {

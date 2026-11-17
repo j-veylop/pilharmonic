@@ -20,6 +20,24 @@ func TestHelpTabsHaveNoSelectionArrow(t *testing.T) {
 	}
 }
 
+func TestHelpTabsUseSelectionButtons(t *testing.T) {
+	for _, width := range []int{30, 100} {
+		for page := range helpTopics {
+			labels := make([]string, len(helpTopics))
+			for i, topic := range helpTopics {
+				label := topic.title
+				if width == 30 {
+					label = string(rune('1' + i))
+				}
+				labels[i] = selectionButton(label, i == page) + " "
+			}
+			if got, want := helpTabs(width, page), strings.Join(labels, ""); got != want {
+				t.Fatalf("width %d page %d: got %q, want %q", width, page, got, want)
+			}
+		}
+	}
+}
+
 func TestHelpKeysChangePageScrollAndClose(t *testing.T) {
 	last := len(helpTopics) - 1
 	cases := []struct {

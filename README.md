@@ -111,7 +111,7 @@ Run `scripts/build-release.sh <tag>` and verify the checksums.
 
 The frontmatter supplies `name` (defaults to the directory name) and a one-line `description`. The system prompt lists installed skills and their descriptions; the agent loads a body with the `skill` tool, so unused instructions cost no context. A skill supplies instructions only and grants no authority beyond the task mandate or the profile's tool palette. Malformed skills, duplicate names and an explicitly configured missing directory fail startup; the default directory is optional.
 
-Use `/skills` in the request box to enable or disable installed skills. The opt-out list persists in `skills.json` beside the state file, and a change applies from the next attempt; a running attempt keeps the prompt it started with.
+Use `/skills` in the request box to enable or disable installed skills. Press Tab or left/right to switch between global settings and individual agents; Enter toggles the selected skill. A global disable overrides each agent's setting, shown as `global off`. Settings persist in `skills.json` beside the state file and apply to the next attempt; a running attempt keeps its original catalog. Skill selection applies to Fantasy agents, not external command executors.
 
 ## Command executors
 

@@ -98,9 +98,10 @@ directory is empty; malformed files, duplicate names and a missing explicit
 directory fail startup. The loader is a leaf package so the executor can use a
 catalog without importing the service.
 
-The operator enables or disables installed skills with `/skills`. The opt-out
-list is durable in `skills.json` beside the state file, and the service gives
-every Fantasy runner the filtered catalog, so a disabled skill leaves the
+The operator enables or disables installed skills globally or per agent with `/skills`.
+The opt-out lists are durable in `skills.json` beside the state file; global
+disables override agent settings. The service gives each Fantasy runner its
+filtered catalog, so a disabled skill leaves the
 system-prompt index and the skill tool for the next attempt. Running attempts
 keep the prompt they started with. Enabling a skill restores its instructions;
 neither direction changes the mandate or the profile's tool palette.

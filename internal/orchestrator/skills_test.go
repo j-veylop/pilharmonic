@@ -65,6 +65,41 @@ func TestConfigureRejectsMalformedSkillsConfig(t *testing.T) {
 	}
 }
 
+func TestAgentSkillSelectionPersistsIndependently(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	s := openTestService(t, statePath)
+	skillsDir := filepath.Join(dir, "skills")
+	writeTestSkill(t, skillsDir, "verify", "---\nname: verify\ndescription: Verify.\n---\nRun checks.\n")
+	if _, err := s.Configure(Options{MaxConcurrent: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAgentSkillEnabled("general", "verify", false); err != nil {
+		t.Fatal(err)
+	}
+	if s.ListAgentSkills("general")[0].Enabled || !s.ListAgentSkills("tester")[0].Enabled {
+		t.Fatal("agent selection leaked")
+	}
+	if s.runners["general"].(FantasyRunner).skills.Len() != 0 || s.runners["tester"].(FantasyRunner).skills.Len() != 1 {
+		t.Fatal("runner catalogs do not reflect agent selection")
+	}
+	if err := s.SetSkillEnabled("verify", false); err != nil {
+		t.Fatal(err)
+	}
+	if !s.ListAgentSkills("tester")[0].GlobalDisabled {
+		t.Fatal("global disable did not apply")
+	}
+	must(t, s.Shutdown())
+	reopened := openTestService(t, statePath)
+	defer func() { _ = reopened.Shutdown() }()
+	if _, err := reopened.Configure(Options{MaxConcurrent: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if reopened.ListAgentSkills("general")[0].Enabled {
+		t.Fatal("agent disable not durable")
+	}
+}
+
 func TestSetSkillEnabledPersistsAndFiltersCatalog(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")

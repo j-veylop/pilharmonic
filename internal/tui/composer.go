@@ -219,6 +219,8 @@ func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m.requestQuit(), nil
+	case "ctrl+o":
+		return m.openExternalEditor(false)
 	case "esc":
 		m.input = composer{}
 		m.router.open = true

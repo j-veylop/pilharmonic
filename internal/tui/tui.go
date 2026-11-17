@@ -146,7 +146,7 @@ type model struct {
 	clipboard     io.Writer
 	spinner       spinner.Model
 	spinnerActive bool
-	anim          *anim.Anim
+	runningFrame  int
 	chatAnim      *anim.Anim
 	markdown      *markdownCache
 	quitConfirm   bool
@@ -245,7 +245,6 @@ func newModel(service Service, workspace string) model {
 		usage:     service.SessionUsage(),
 		router:    routerState{open: true},
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		anim:      newRunningAnim(),
 		chatAnim:  newChatAnim(),
 		markdown:  &markdownCache{},
 	}
@@ -264,17 +263,6 @@ func animTick() tea.Cmd {
 	return tea.Tick(anim.FrameInterval(), func(time.Time) tea.Msg { return animTickMsg{} })
 }
 
-// newRunningAnim builds the one-glyph scrambled spinner Crush uses for running
-// work. The zero model keeps the Bubble Tea MiniDot fallback for tests.
-func newRunningAnim() *anim.Anim {
-	return anim.New(anim.Settings{
-		ID:         "running",
-		Size:       1,
-		GradColorA: accent,
-		GradColorB: cyan,
-	})
-}
-
 // newChatAnim is the multi-character turn spinner Crush shows in the
 // transcript while an assistant message is being produced.
 func newChatAnim() *anim.Anim {
@@ -288,12 +276,10 @@ func newChatAnim() *anim.Anim {
 	})
 }
 
-// setAnimColors re-renders the spinners after a theme change.
+// setAnimColors re-renders the chat animation after a theme change.
 func (m *model) setAnimColors() {
-	for _, spinner := range []*anim.Anim{m.anim, m.chatAnim} {
-		if spinner != nil {
-			spinner.SetColors(ink, accent, cyan, muted)
-		}
+	if m.chatAnim != nil {
+		m.chatAnim.SetColors(ink, accent, cyan, muted)
 	}
 }
 
@@ -338,6 +324,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+	case externalEditorMsg:
+		m.finishExternalEditor(msg)
 	case reviewDiffMsg:
 		m = m.acceptReviewDiff(msg)
 	case skillToggleMsg:
@@ -367,9 +355,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, m.tick()
 	case animTickMsg:
-		if m.anim != nil {
-			m.anim.Advance()
-		}
+		m.runningFrame = (m.runningFrame + 1) % len(spinner.MiniDot.Frames)
 		if m.chatAnim != nil {
 			m.chatAnim.Advance()
 			m.chatAnim.SetSuffixText(m.selectedTurnElapsed())

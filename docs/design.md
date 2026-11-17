@@ -180,6 +180,8 @@ Deletion is durable before cleanup, and a parent can be deleted only after (or
 together with) its children. Discard saves its intent first; on restart a
 surviving tree is kept for retry, a removed one is finished clearing.
 
+Prompt composers can hand terminal ownership to `$EDITOR` using Bubble Tea's process execution; drafts travel through a private temporary file, which is retained on editor or read failure for recovery. No shell interprets the editor setting or draft.
+
 ## Output
 
 Agent output is untrusted display data: it is never executed, and prompts are

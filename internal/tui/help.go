@@ -107,6 +107,7 @@ var helpTopics = []helpTopic{
 		sections: []helpSection{{rows: []helpRow{
 			{"Enter", "Submit; the request box routes and starts the task"},
 			{"Ctrl-s", "Request box: hold the task queued for setup"},
+			{"Ctrl-o", "Edit the draft in $EDITOR"},
 			{"Ctrl-j", "Insert a newline (also Alt-enter)"},
 			{"Tab", "Complete a leading @executor in the request box"},
 			{"Esc", "Cancel input; the request draft is kept"},

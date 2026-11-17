@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"pilharmonic/internal/orchestrator"
@@ -260,13 +261,7 @@ func toolStatusStyle(status, running string) (lipgloss.Style, string) {
 // runningGlyph returns the current frame of the Bubble Tea spinner. Models
 // constructed without Run, such as in tests, fall back to the first frame.
 func (m model) runningGlyph() string {
-	if m.anim != nil {
-		return m.anim.Render()
-	}
-	if len(m.spinner.Spinner.Frames) == 0 {
-		return defaultRunningGlyph
-	}
-	return m.spinner.View()
+	return lipgloss.NewStyle().Foreground(statusRunning).Render(spinner.MiniDot.Frames[m.runningFrame])
 }
 
 // fit limits the rendered surface to the terminal's cells, including ANSI styles.

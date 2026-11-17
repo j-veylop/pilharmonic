@@ -67,9 +67,8 @@ func TestToolActivityIsDistinctFromAssistantText(t *testing.T) {
 }
 
 func TestRunningToolGlyphAdvancesWithSpinner(t *testing.T) {
-	m := model{spinner: spinner.New(spinner.WithSpinner(spinner.MiniDot))}
-	m.spinner, _ = m.spinner.Update(m.spinner.Tick())
-	glyph := m.runningGlyph()
+	m := model{runningFrame: 1}
+	glyph := ansi.Strip(m.runningGlyph())
 	if glyph != spinner.MiniDot.Frames[1] {
 		t.Fatalf("spinner did not advance: %q", glyph)
 	}

@@ -56,6 +56,8 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case "esc":
 		m.router.open = false
 		m.clampScroll()
+	case "ctrl+o":
+		return m.openExternalEditor(true)
 	case "tab":
 		m.completeRouterMention()
 	case "enter", "ctrl+s":

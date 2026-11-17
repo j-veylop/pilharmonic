@@ -177,15 +177,12 @@ func TestHeaderWordmarkIsFlat(t *testing.T) {
 	}
 }
 
-func TestRunningGlyphUsesCrushAnimation(t *testing.T) {
-	m := model{anim: newRunningAnim()}
-	first := m.runningGlyph()
-	if first == "" || first == "⠋" {
-		t.Fatalf("animation did not replace the MiniDot glyph: %q", first)
-	}
-	m.anim.Advance()
-	if m.runningGlyph() == "" {
-		t.Fatal("animated glyph disappeared")
+func TestRunningGlyphUsesSpinner(t *testing.T) {
+	m := model{}
+	first := ansi.Strip(m.runningGlyph())
+	m.runningFrame++
+	if next := ansi.Strip(m.runningGlyph()); first == "" || next == first {
+		t.Fatalf("spinner did not advance: %q → %q", first, next)
 	}
 }
 

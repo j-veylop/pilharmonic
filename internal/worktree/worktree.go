@@ -66,6 +66,17 @@ func Isolatable(workspace string) bool {
 	return err == nil
 }
 
+func requireCleanSource(ctx context.Context, source string) error {
+	status, err := gitOutput(ctx, source, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return err
+	}
+	if status != "" {
+		return errors.New("source workspace has uncommitted changes; commit or stash them before creating an isolated worktree")
+	}
+	return nil
+}
+
 type workspaceOwner struct{ TaskID, Source, CommonDir, Commit string }
 
 // reservationPath names a task's worktree reservation beside the state file.
@@ -280,6 +291,10 @@ func reserveWorkspace(ctx context.Context, reservation string, owner workspaceOw
 			return owner, false, readErr
 		}
 	} else if err != nil {
+		return owner, false, err
+	}
+	if err := requireCleanSource(ctx, owner.Source); err != nil {
+		removeReservation(reservation)
 		return owner, false, err
 	}
 	var err error

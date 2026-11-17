@@ -160,7 +160,10 @@ enabled; then the task gets a detached Git worktree. This is a lexical
 heuristic, not proof. An explicit task choice overrides it, and the scheduler
 reconciles a persisted automatic choice with the immutable mandate. Children
 inherit the parent's execution workspace. Agents keep the host user's
-permissions.
+permissions. New worktrees refuse a source with tracked or non-ignored untracked
+changes; existing reservations remain available for retry. Ignored files are not
+checked and are not copied. The cleanliness check is not atomic with external
+workspace edits.
 
 After a successful isolated run the service commits pending changes and opens a
 review of that exact commit. Approval persists the decision and schedules a

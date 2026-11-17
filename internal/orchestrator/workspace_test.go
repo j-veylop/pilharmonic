@@ -75,7 +75,6 @@ func startIsolated(t *testing.T, s *Service, title, prompt, workspace string) Ta
 func TestIsolatedExecutionRunsInCommittedWorktree(t *testing.T) {
 	repo := committedRepo(t)
 	head := testGit(t, repo, "rev-parse", "HEAD")
-	must(t, os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("local only"), 0600))
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	s := openTestService(t, statePath)
 	seen := make(chan Task, 1)
@@ -92,9 +91,6 @@ func TestIsolatedExecutionRunsInCommittedWorktree(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(run.Workspace, "tracked.txt")); err != nil {
 		t.Fatalf("committed file missing from worktree: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(run.Workspace, "untracked.txt")); !os.IsNotExist(err) {
-		t.Fatalf("uncommitted file was copied into the worktree: %v", err)
 	}
 	if got := testGit(t, run.Workspace, "rev-parse", "HEAD"); got != head {
 		t.Fatalf("worktree HEAD %q, want %q", got, head)
@@ -140,6 +136,7 @@ func TestIsolatedRetryReusesPreparedWorktree(t *testing.T) {
 	}))
 	task := startIsolated(t, s, "retry", "do work", repo)
 	await(t, s, task.ID, Failed)
+	must(t, os.WriteFile(filepath.Join(repo, "local.txt"), []byte("local"), 0600))
 	must(t, s.Retry(task.ID))
 	must(t, s.Start(context.Background(), task.ID))
 	done := await(t, s, task.ID, Completed)

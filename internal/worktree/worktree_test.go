@@ -1,7 +1,11 @@
 package worktree
 
 import (
+	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,6 +42,41 @@ func TestRequestsChanges(t *testing.T) {
 				t.Fatalf("RequestsChanges(%q) = %v, want %v", tc.prompt, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPrepareRejectsUncommittedSourceWithoutChangingIt(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	source := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = source
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(source, "base"), []byte("base"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "base"}, {"commit", "-qm", "initial"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = source
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	local := filepath.Join(source, "local")
+	if err := os.WriteFile(local, []byte("keep me"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := Prepare(context.Background(), Spec{StatePath: filepath.Join(t.TempDir(), "state.json"), TaskID: "dirty", Workspace: source})
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("Prepare error = %v", err)
+	}
+	if got, err := os.ReadFile(local); err != nil || string(got) != "keep me" {
+		t.Fatalf("local change = %q, %v", got, err)
 	}
 }
 

@@ -148,9 +148,6 @@ const (
 	// helpChromeRows are the border, title, topic strip, gap under the header,
 	// gap above the hints and the hint row. A frame without a strip has one fewer.
 	helpChromeRows = 7
-	// Every tab reserves the active marker's column so the strip never shifts.
-	helpActiveTabMarker = "▸"
-	helpInactiveTabLead = " "
 )
 
 // helpKeyColumn is the description column for every topic: the widest shortcut
@@ -298,9 +295,9 @@ func helpTabs(width, page int) string {
 		row := ""
 		for i, label := range labels {
 			if i == page {
-				row += activeTabStyle.Render(helpActiveTabMarker+label) + " "
+				row += activeTabStyle.Render(label) + " "
 			} else {
-				row += inactiveTabStyle.Render(helpInactiveTabLead+label) + " "
+				row += inactiveTabStyle.Render(label) + " "
 			}
 		}
 		if lipgloss.Width(row) <= width {

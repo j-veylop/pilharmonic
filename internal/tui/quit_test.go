@@ -182,15 +182,15 @@ func TestQuitDialogFocusMovesBetweenButtons(t *testing.T) {
 	}
 }
 
-// The focused button is marked in the text as well as by colour, and the hint
-// follows the focus so Enter's effect is never a surprise.
+// The hint follows focus so Enter's effect is never a surprise, without arrows
+// in either button.
 func TestQuitDialogMarksTheFocusedButton(t *testing.T) {
 	m := boardWithTask().requestQuit()
-	if plain := quitPlain(m.View()); !strings.Contains(plain, "▸ y quit") || strings.Contains(plain, "▸ n/esc stay") || !strings.Contains(plain, "enter quit") {
+	if plain := quitPlain(m.View()); strings.Contains(plain, "▸") || !strings.Contains(plain, "y quit") || !strings.Contains(plain, "enter quit") {
 		t.Fatalf("quit button not marked as focused: %s", plain)
 	}
 	m = key(m, tea.KeyMsg{Type: tea.KeyTab})
-	if plain := quitPlain(m.View()); !strings.Contains(plain, "▸ n/esc stay") || strings.Contains(plain, "▸ y quit") || !strings.Contains(plain, "enter stay") {
+	if plain := quitPlain(m.View()); strings.Contains(plain, "▸") || !strings.Contains(plain, "n/esc stay") || !strings.Contains(plain, "enter stay") {
 		t.Fatalf("focus marker or hint did not follow the selection: %s", plain)
 	}
 }

@@ -56,6 +56,21 @@ func (c Catalog) Lookup(name string) (Skill, bool) {
 	return Skill{}, false
 }
 
+// Without returns a catalog with the named skills removed. The receiver is
+// unchanged, so a disabled view can be rebuilt without reloading files.
+func (c Catalog) Without(names map[string]bool) Catalog {
+	if len(names) == 0 {
+		return c
+	}
+	active := make([]Skill, 0, len(c.skills))
+	for _, skill := range c.skills {
+		if !names[skill.Name] {
+			active = append(active, skill)
+		}
+	}
+	return Catalog{skills: active}
+}
+
 // Prompt renders the catalog index appended to the system prompt. An empty
 // catalog renders nothing.
 func (c Catalog) Prompt() string {

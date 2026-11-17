@@ -148,6 +148,9 @@ func (m model) View() string {
 	if m.models.menu {
 		screen = m.modelMenuView(screen, w, h)
 	}
+	if m.skills.open {
+		screen = m.skillMenuView(screen, w, h)
+	}
 	if m.setup.target != "" {
 		screen = m.setupView(screen, w, h)
 	}

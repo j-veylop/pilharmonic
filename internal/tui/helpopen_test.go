@@ -95,6 +95,10 @@ func helpSurfaces() map[string]model {
 	s.models.customInput = "custom-id"
 	surfaces["custom model entry"] = s
 
+	s = base
+	s.skills.open = true
+	surfaces["skills menu"] = s
+
 	return surfaces
 }
 

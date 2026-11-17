@@ -52,3 +52,67 @@ func TestConfigureLoadsOptionalSkillsDirectory(t *testing.T) {
 		t.Fatalf("missing explicit skills path: %v", err)
 	}
 }
+
+func TestConfigureRejectsMalformedSkillsConfig(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(filepath.Join(dir, "skills.json"), []byte(`{"disabled":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := openTestService(t, statePath)
+	if _, err := s.Configure(Options{MaxConcurrent: 1}); err == nil {
+		t.Fatal("malformed skills config was accepted")
+	}
+}
+
+func TestSetSkillEnabledPersistsAndFiltersCatalog(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	s := openTestService(t, statePath)
+	skillsDir := filepath.Join(dir, "skills")
+	writeTestSkill(t, skillsDir, "verify", "---\nname: verify\ndescription: Verify a change.\n---\nRun the checks.\n")
+	writeTestSkill(t, skillsDir, "audit", "---\nname: audit\ndescription: Audit a change.\n---\nInspect the diff.\n")
+	if _, err := s.Configure(Options{MaxConcurrent: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if infos := s.ListSkills(); len(infos) != 2 || !infos[0].Enabled || !infos[1].Enabled {
+		t.Fatalf("initial skills = %+v", infos)
+	}
+	if err := s.SetSkillEnabled("verify", false); err != nil {
+		t.Fatal(err)
+	}
+	infos := s.ListSkills()
+	if infos[0].Name != "audit" || !infos[0].Enabled || infos[1].Name != "verify" || infos[1].Enabled {
+		t.Fatalf("skills after disabling verify = %+v", infos)
+	}
+	runner := s.runners[DefaultRouteAgent].(FantasyRunner)
+	if _, ok := runner.skills.Lookup("verify"); ok {
+		t.Fatal("disabled skill stayed in the runner catalog")
+	}
+	if _, ok := runner.skills.Lookup("audit"); !ok {
+		t.Fatal("enabled skill disappeared from the runner catalog")
+	}
+	prompt := runner.systemPrompt(nil)
+	if strings.Contains(prompt, "verify:") || !strings.Contains(prompt, "audit:") {
+		t.Fatalf("system prompt did not follow activation: %q", prompt)
+	}
+	if err := s.SetSkillEnabled("missing", false); err == nil {
+		t.Fatal("unknown skill was accepted")
+	}
+	must(t, s.Shutdown())
+
+	reopened := openTestService(t, statePath)
+	defer func() { _ = reopened.Shutdown() }()
+	if _, err := reopened.Configure(Options{MaxConcurrent: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if infos := reopened.ListSkills(); len(infos) != 2 || infos[1].Name != "verify" || infos[1].Enabled {
+		t.Fatalf("persisted skills = %+v", infos)
+	}
+	if err := reopened.SetSkillEnabled("verify", true); err != nil {
+		t.Fatal(err)
+	}
+	if infos := reopened.ListSkills(); !infos[1].Enabled {
+		t.Fatalf("re-enabled skill = %+v", infos)
+	}
+}

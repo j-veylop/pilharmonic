@@ -111,6 +111,8 @@ Run `scripts/build-release.sh <tag>` and verify the checksums.
 
 The frontmatter supplies `name` (defaults to the directory name) and a one-line `description`. The system prompt lists installed skills and their descriptions; the agent loads a body with the `skill` tool, so unused instructions cost no context. A skill supplies instructions only and grants no authority beyond the task mandate or the profile's tool palette. Malformed skills, duplicate names and an explicitly configured missing directory fail startup; the default directory is optional.
 
+Use `/skills` in the request box to enable or disable installed skills. The opt-out list persists in `skills.json` beside the state file, and a change applies from the next attempt; a running attempt keeps the prompt it started with.
+
 ## Command executors
 
 For smoke tests or wrapping a program, run `go run . -agents agents.json`:

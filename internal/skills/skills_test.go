@@ -121,3 +121,23 @@ func TestEmptyCatalogIsUsable(t *testing.T) {
 		t.Fatal("empty catalog returned a skill")
 	}
 }
+
+func TestWithoutFiltersSkillsAndKeepsTheSource(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "one", "---\nname: one\ndescription: One.\n---\nBody one.\n")
+	writeSkill(t, dir, "two", "---\nname: two\ndescription: Two.\n---\nBody two.\n")
+	catalog, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := catalog.Without(map[string]bool{"two": true})
+	if active.Len() != 1 {
+		t.Fatalf("active skills = %v", active.List())
+	}
+	if _, ok := active.Lookup("two"); ok {
+		t.Fatal("disabled skill remained active")
+	}
+	if catalog.Len() != 2 {
+		t.Fatal("source catalog was mutated")
+	}
+}

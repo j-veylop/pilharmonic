@@ -30,6 +30,12 @@ type reviewDiffMsg struct {
 	err                         error
 }
 
+type skillToggleMsg struct {
+	name    string
+	enabled bool
+	err     error
+}
+
 type actionResultMsg struct {
 	notice string
 	err    error
@@ -63,6 +69,8 @@ type Service interface {
 	SessionUsage() orchestrator.SessionUsage
 	ListAgents() []orchestrator.AgentInfo
 	ListProfiles() []orchestrator.Profile
+	ListSkills() []orchestrator.SkillInfo
+	SetSkillEnabled(name string, enabled bool) error
 	SubmitRequest(text, workspace string) (orchestrator.Task, error)
 	Start(ctx context.Context, id string) error
 	Retry(id string) error
@@ -143,6 +151,7 @@ type model struct {
 	quitChoice    int
 	login         loginState
 	models        modelMenuState
+	skills        skillMenuState
 }
 
 // detailTab is the detail pane's OUTPUT, INFO or ACTIVITY view.
@@ -329,6 +338,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case reviewDiffMsg:
 		m = m.acceptReviewDiff(msg)
+	case skillToggleMsg:
+		m.finishSkillToggle(msg)
 	case actionResultMsg:
 		m.finish(msg)
 	case composerResultMsg:
@@ -451,6 +462,8 @@ func (m model) keyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case m.models.menu:
 		return m.modelMenuKey(key)
+	case m.skills.open:
+		return m.skillMenuKey(key)
 	case m.setup.target != "":
 		return m.setupKey(key)
 	case m.router.open:

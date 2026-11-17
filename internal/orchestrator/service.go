@@ -35,9 +35,12 @@ type Service struct {
 	specialistTools map[string][]string
 	profiles        map[string]Profile
 	// skills are operator-installed instruction packs exposed to Fantasy
-	// runners through the system prompt and the skill tool.
-	skills     skills.Catalog
-	skillsPath string
+	// runners through the system prompt and the skill tool. disabledSkills is
+	// the durable opt-out list; runners receive the filtered catalog.
+	skills          skills.Catalog
+	skillsPath      string
+	skillConfigPath string
+	disabledSkills  map[string]bool
 	// routeProfile is the profile the router assigns and the default for tasks
 	// created without an explicit choice.
 	routeProfile   string
@@ -104,6 +107,8 @@ func Open(path string) (*Service, error) {
 		controlConns:        make(map[net.Conn]struct{}),
 		credentialsPath:     credentialsPathFor(path),
 		modelSelectionPath:  modelSelectionPathFor(path),
+		skillConfigPath:     skillConfigPathFor(path),
+		disabledSkills:      map[string]bool{},
 	}
 	s.lifeCtx, s.lifeCancel = context.WithCancel(context.Background())
 	s.titleGenerator = s.generateTitle
@@ -201,6 +206,12 @@ func (s *Service) Configure(o Options) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
+	s.mu.Lock()
+	err := s.loadSkillConfigLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
 	if o.DefaultModel != "" {
 		s.SetDefaultModel(o.DefaultModel)
 	}
@@ -239,12 +250,7 @@ func (s *Service) LoadSkills(path string) error {
 	defer s.mu.Unlock()
 	s.skills = catalog
 	s.skillsPath = path
-	for name, runner := range s.runners {
-		if fantasyRunner, ok := runner.(FantasyRunner); ok {
-			fantasyRunner.skills = catalog
-			s.runners[name] = fantasyRunner
-		}
-	}
+	s.applySkillsLocked()
 	return nil
 }
 

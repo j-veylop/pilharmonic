@@ -98,6 +98,13 @@ directory is empty; malformed files, duplicate names and a missing explicit
 directory fail startup. The loader is a leaf package so the executor can use a
 catalog without importing the service.
 
+The operator enables or disables installed skills with `/skills`. The opt-out
+list is durable in `skills.json` beside the state file, and the service gives
+every Fantasy runner the filtered catalog, so a disabled skill leaves the
+system-prompt index and the skill tool for the next attempt. Running attempts
+keep the prompt they started with. Enabling a skill restores its instructions;
+neither direction changes the mandate or the profile's tool palette.
+
 The service resolves a Fantasy attempt's model as the task profile model, else
 the agent's class model (`models.json`; `general` is big, specialists small),
 else the specialist model (`profiles.json`), else `-model`. A profile or

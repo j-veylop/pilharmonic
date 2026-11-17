@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,8 @@ type fakeLoginService struct {
 	models        map[string][]string
 	setModelCalls []string // recorded as "class=selector"
 	setModelErr   error
+	skills        []orchestrator.SkillInfo
+	skillSetCalls []string // recorded as "name=enabled"
 }
 
 func (f *fakeLoginService) ListTasks() []orchestrator.Task       { return f.tasks }
@@ -48,6 +51,18 @@ func (f *fakeLoginService) SessionUsage() orchestrator.SessionUsage {
 }
 func (f *fakeLoginService) PersistenceError() error { return nil }
 func (f *fakeLoginService) StartupWarning() string  { return "" }
+
+func (f *fakeLoginService) ListSkills() []orchestrator.SkillInfo { return f.skills }
+
+func (f *fakeLoginService) SetSkillEnabled(name string, enabled bool) error {
+	f.skillSetCalls = append(f.skillSetCalls, fmt.Sprintf("%s=%t", name, enabled))
+	for i := range f.skills {
+		if f.skills[i].Name == name {
+			f.skills[i].Enabled = enabled
+		}
+	}
+	return nil
+}
 
 func (f *fakeLoginService) SubmitRequest(text, _ string) (orchestrator.Task, error) {
 	f.submitCalls = append(f.submitCalls, text)

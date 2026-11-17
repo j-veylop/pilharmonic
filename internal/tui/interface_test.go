@@ -143,8 +143,8 @@ func TestFooterKeepsModalComposerActivityAndDetailModes(t *testing.T) {
 	if footer := ansi.Strip(composerModel.footer(120)); !strings.Contains(footer, "enter submit") || !strings.Contains(footer, "ctrl+j/alt+enter newline") {
 		t.Fatalf("composer footer changed: %q", footer)
 	}
-	if view := ansi.Strip(composerModel.View()); !strings.Contains(view, "REPORT") || !strings.Contains(view, "!keep this") {
-		t.Fatalf("composer box missing its label or draft: %q", view)
+	if view := ansi.Strip(composerModel.View()); !strings.Contains(view, "!keep this") {
+		t.Fatalf("composer box missing its draft: %q", view)
 	}
 
 	cleanup := base

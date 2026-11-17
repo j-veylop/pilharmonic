@@ -110,7 +110,7 @@ func TestFollowUpComposerRecordsContext(t *testing.T) {
 	}
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35}
 	m = key(m, runeKey("f"))
-	if !strings.Contains(m.View(), "FOLLOW UP") {
+	if m.input.kind != followUpInput {
 		t.Fatalf("follow-up composer not shown: %s", m.View())
 	}
 	m = key(m, runeKey("also update docs"))

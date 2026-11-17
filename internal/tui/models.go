@@ -217,7 +217,7 @@ func (m model) modelMenuView(background string, w, h int) string {
 	mh := min(len(choices)+8, h-2)
 	switch {
 	case m.models.step == modelStepCustom:
-		body = append(body, accentStyle.Render("› ")+titleStyle.Render(m.models.provider+"/"+m.models.customInput)+accentStyle.Render("▏"))
+		body = append(body, accentStyle.Render("› ")+titleStyle.Render(m.models.provider+"/"+m.models.customInput)+cursorGlyph())
 		empty, footer, mh = "", "enter save · f1 help · esc back · ctrl+c quit", min(9, h-2)
 	case m.models.step == modelStepModel && m.models.loading:
 		body = append(body, mutedStyle.Render("Loading models…"))

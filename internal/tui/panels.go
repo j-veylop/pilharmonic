@@ -15,6 +15,19 @@ func panel(content string, width, height int) string {
 	return panelWith(content, width, height, false)
 }
 
+// surfacePanel draws a borderless content surface with the two-cell margin
+// Crush uses for its main chat and sidebar panes.
+func surfacePanel(content string, width, height int) string {
+	if width < 4 || height < 1 {
+		return fit(content, width, height)
+	}
+	style := lipgloss.NewStyle().
+		Width(width).MaxWidth(width).
+		Height(height).MaxHeight(height).
+		Padding(0, 2)
+	return style.Render(fit(content, width-4, height))
+}
+
 func focusedPanel(content string, width, height int, focused bool) string {
 	return panelWith(content, width, height, focused)
 }
@@ -58,18 +71,13 @@ func (m model) taskPanel(width, height int) string {
 	inner := m.layout().panelInner(width)
 	all := taskListRows(m.tasks)
 	rows := m.mainRows()
-	var lines []string
-	running, attention := 0, m.attentionCount()
-	for _, row := range all {
-		if _, label, _ := m.taskState(row.task); label == "RUNNING" {
-			running++
-		}
+	title := sectionStyle.Render("TASKS") + faintStyle.Render(fmt.Sprintf("  / %02d", len(all)))
+	if models := m.modelSummary(inner - lipgloss.Width(title) - 1); models != "" {
+		title += strings.Repeat(" ", inner-lipgloss.Width(title)-lipgloss.Width(models)) + models
 	}
-	lines = append(lines, gradientText("TASKS")+faintStyle.Render(fmt.Sprintf("  / %02d", len(all)))+
-		fit(blueStyle().Render(fmt.Sprintf("  %d running", running))+mutedStyle.Render("  ·  ")+amberStyle().Render(fmt.Sprintf("%d need action", attention)), inner-lipgloss.Width("TASKS  / 00"), 1))
-	lines = append(lines, "")
+	lines := []string{fit(title, inner, 1), ""}
 	if len(all) == 0 {
-		return focusedPanel(m.landingContent(inner), width, height, true)
+		return surfacePanel(m.landingContent(inner), width, height)
 	}
 	highlight := rootIndex(m.tasks, m.selected)
 	selectedStart, selectedEnd := -1, -1
@@ -86,7 +94,7 @@ func (m model) taskPanel(width, height int) string {
 		}
 		start := len(lines)
 		lines = append(lines,
-			m.taskTitleRow(row.task, i+1, len(rows), inner, row.index == highlight),
+			m.taskTitleRow(row.task, i+1, len(rows), inner, row.index == highlight && !m.inputFocused()),
 			m.mainTaskMetaLine(row.task, inner))
 		if row.index == highlight {
 			selectedStart, selectedEnd = start, len(lines)
@@ -108,7 +116,7 @@ func (m model) taskPanel(width, height int) string {
 		summary := fmt.Sprintf("DONE %d · merged %d", done, merged)
 		lines = append(lines, faintStyle.Render(summary)+mutedStyle.Render("    E expand"))
 	}
-	available := max(1, height-2)
+	available := max(1, height)
 	start := 0
 	if selectedEnd > available {
 		start = selectedEnd - available
@@ -120,17 +128,12 @@ func (m model) taskPanel(width, height int) string {
 		start = max(0, maxStart)
 	}
 	end := min(len(lines), start+available)
-	return focusedPanel(strings.Join(lines[start:end], "\n"), width, height, true)
+	return surfacePanel(strings.Join(lines[start:end], "\n"), width, height)
 }
 
-// groupHeader names one board group and counts its visible rows.
-func (m model) groupHeader(group taskGroup, rows []taskListRow) string {
-	count := 0
-	for _, row := range rows {
-		if m.groupOf(row.task) == group {
-			count++
-		}
-	}
+// groupHeader names one board group. The header already carries the counts, so
+// the heading stays one word.
+func (m model) groupHeader(group taskGroup, _ []taskListRow) string {
 	style := mutedStyle
 	switch group {
 	case groupAttention:
@@ -138,7 +141,7 @@ func (m model) groupHeader(group taskGroup, rows []taskListRow) string {
 	case groupRunning:
 		style = blueStyle()
 	}
-	return style.Render(group.label()) + faintStyle.Render(fmt.Sprintf("  %d", count))
+	return style.Render(group.label())
 }
 
 // visibleGroupCount reports how many groups the current rows occupy. One group
@@ -155,7 +158,7 @@ func (m model) visibleGroupCount(rows []taskListRow) int {
 // main task, with the focused subtask marked.
 func (m model) subtaskPanel(width, height int, inner int, root orchestrator.Task, rows []taskListRow) string {
 	lines := []string{
-		accentStyle.Render("SUBTASKS") + mutedStyle.Render(fmt.Sprintf("  / %02d", len(rows))),
+		sectionStyle.Render("SUBTASKS") + mutedStyle.Render(fmt.Sprintf("  / %02d", len(rows))),
 		mutedStyle.Render(fit(singleLine(root.Title), inner, 1)),
 		"",
 	}
@@ -166,14 +169,14 @@ func (m model) subtaskPanel(width, height int, inner int, root orchestrator.Task
 			break
 		}
 	}
-	start, end := windowRows(selected, len(rows), (height-5)/2)
+	start, end := windowRows(selected, len(rows), (height-3)/2)
 	for i := start; i < end; i++ {
 		row := rows[i]
 		lines = append(lines,
-			m.taskTitleRow(row.task, 0, 0, inner, row.index == m.selected),
+			m.taskTitleRow(row.task, 0, 0, inner, row.index == m.selected && !m.inputFocused()),
 			taskMetaLine(row.task, inner))
 	}
-	return focusedPanel(strings.Join(lines, "\n"), width, height, false)
+	return surfacePanel(strings.Join(lines, "\n"), width, height)
 }
 
 // selectedPosition returns the selected task's one-based position in grouped

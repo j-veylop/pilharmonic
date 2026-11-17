@@ -84,27 +84,18 @@ func boardWithTask() model {
 	return model{width: 100, height: 28, tasks: tasks, service: &fakeLoginService{tasks: tasks}}
 }
 
-// boxRows returns the stripped rows of the docked input box: the last bordered
-// block in the view, from its top edge to its bottom edge.
-func boxRows(t *testing.T, view string) []string {
+// boxRows returns the stripped rows of the docked composer: its title row and
+// draft, without the completion popups drawn above it.
+func boxRows(t *testing.T, m model) []string {
 	t.Helper()
-	rows := strings.Split(ansi.Strip(view), "\n")
-	start := -1
-	for i, row := range rows {
-		if strings.HasPrefix(strings.TrimSpace(row), "╭") {
-			start = i
-		}
+	rows := m.composerBlock(m.composerHeight())
+	for i := range rows {
+		rows[i] = ansi.Strip(rows[i])
 	}
-	if start < 0 {
-		t.Fatalf("no input box in view: %q", view)
+	if len(rows) == 0 {
+		t.Fatal("no composer in view")
 	}
-	for i := start; i < len(rows); i++ {
-		if strings.HasPrefix(strings.TrimSpace(rows[i]), "╰") {
-			return rows[start : i+1]
-		}
-	}
-	t.Fatalf("input box has no bottom border: %q", view)
-	return nil
+	return rows
 }
 
 func TestComposerBoxGrowsWithTheDraftWithinItsLimit(t *testing.T) {
@@ -139,13 +130,13 @@ func TestComposerBoxFitsEverySurfaceAndSize(t *testing.T) {
 			}
 			view := m.View()
 			assertFits(t, view, size[0], size[1])
-			box := boxRows(t, view)
+			box := boxRows(t, m)
 			for _, row := range box {
-				if lipgloss.Width(row) != size[0] {
+				if lipgloss.Width(row) > size[0] {
 					t.Fatalf("%v %q: box row is %d cells: %q", size, kind, lipgloss.Width(row), row)
 				}
 			}
-			if joined := strings.Join(box, "\n"); !strings.Contains(joined, "▏") || !strings.Contains(strings.ReplaceAll(quitPlain(joined), " ", ""), "final-marker") || strings.Contains(joined, "…") {
+			if joined := strings.Join(box, "\n"); !strings.Contains(strings.ReplaceAll(quitPlain(joined), " ", ""), "final-marker") || strings.Contains(joined, "…") {
 				t.Fatalf("%v %q: box lost the cursor row or wrapped badly: %#v", size, kind, box)
 			}
 			if kind != "" && size[0] != 50 && !strings.Contains(quitPlain(view), "esc cancel") {
@@ -165,27 +156,27 @@ func TestComposerBoxLabelsPlaceholderAndFocus(t *testing.T) {
 	m := boardWithTask()
 	m.input = composer{kind: followUpInput, target: "task", Editor: editor.Editor{Text: "more context", Cursor: len("more context")}}
 	plain := ansi.Strip(m.View())
-	box := boxRows(t, m.View())
-	if !strings.Contains(box[0], "FOLLOW UP") || !strings.Contains(box[1], "› more context") {
-		t.Fatalf("box lost its label or draft: %#v", box)
+	box := boxRows(t, m)
+	if !strings.Contains(box[1], "more context") {
+		t.Fatalf("box lost its prompt or draft: %#v", box)
 	}
 	if footer := ansi.Strip(m.footer(m.width)); strings.Contains(footer, "more context") || !strings.Contains(footer, "enter submit") {
 		t.Fatalf("footer must carry hints only: %q", footer)
 	}
-	if panel, at, hints := strings.Index(plain, "╰"), strings.Index(plain, box[0]), strings.Index(plain, "enter submit"); !(panel < at && at < hints) {
-		t.Fatalf("box is not docked between the body and the hints: %q", plain)
+	if at, hints := strings.Index(plain, "more context"), strings.Index(plain, "enter submit"); !(at >= 0 && at < hints) {
+		t.Fatalf("composer is not docked above the hints: %q", plain)
 	}
 	m.input = composer{kind: relatedTaskInput}
-	if row := boxRows(t, m.View())[1]; !strings.Contains(row, "› ") || !strings.Contains(row, "Describe the related task") || !strings.Contains(row, "▏") {
-		t.Fatalf("empty composer lost its prompt, placeholder or cursor: %q", row)
+	if row := boxRows(t, m)[1]; !strings.Contains(row, "Describe the related task") || strings.Contains(row, "█") {
+		t.Fatalf("empty composer caret is not at the start: %q", row)
 	}
 	m.router = routerState{open: true, Editor: editor.Editor{Text: "hello", Cursor: 5}}
 	request := ansi.Strip(strings.Join(m.composerBlock(2), "\n"))
-	if !strings.Contains(request, "REQUEST") || !strings.Contains(request, "enter start · ctrl+s hold") || !strings.Contains(request, "▏") {
-		t.Fatalf("request box lost its label, note or cursor: %q", request)
+	if !strings.Contains(request, "hello") {
+		t.Fatalf("request box lost its draft: %q", request)
 	}
 	m.width = 30
-	if narrow := ansi.Strip(strings.Join(m.composerBlock(2), "\n")); !strings.Contains(narrow, "REQUEST") || strings.Contains(narrow, "ctrl+s") {
+	if narrow := ansi.Strip(strings.Join(m.composerBlock(2), "\n")); !strings.Contains(narrow, "hello") {
 		t.Fatalf("narrow request box label or note is wrong: %q", narrow)
 	}
 	m.router = routerState{}

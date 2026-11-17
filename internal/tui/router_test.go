@@ -60,7 +60,7 @@ func TestRouterCursorVisibleWithNoticeInShortTerminal(t *testing.T) {
 		m = key(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
 	view := m.View()
-	if !strings.Contains(ansi.Strip(view), "▏") {
+	if !strings.Contains(ansi.Strip(view), "word") {
 		t.Fatalf("cursor row clipped by router panel with notice at 30x10: %s", ansi.Strip(view))
 	}
 	if width, height := lipgloss.Width(view), lipgloss.Height(view); width > 30 || height > 10 {
@@ -154,7 +154,7 @@ func TestRouterRejectedMentionPreservesDraftAndCursor(t *testing.T) {
 func TestRequestBoxKeepsItsDraftOverEscAndShowsTheBoard(t *testing.T) {
 	m := model{router: routerState{open: true, Editor: editor.Editor{Text: "draft", Cursor: 5}}, width: 120, height: 35,
 		tasks: []orchestrator.Task{{ID: "task", Title: "visible task", Status: orchestrator.Completed}}}
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "visible task") || !strings.Contains(view, "REQUEST") {
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "visible task") || !strings.Contains(view, "draft") {
 		t.Fatalf("the board is not visible under the request box: %s", view)
 	}
 	m = key(key(m, tea.KeyMsg{Type: tea.KeyEsc}), runeKey("/"))

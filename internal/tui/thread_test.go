@@ -2,7 +2,6 @@ package tui
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,12 +20,12 @@ func TestRelatedTaskAndThreadContextControls(t *testing.T) {
 	}
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35}
 	m = key(m, runeKey("a"))
-	if !strings.Contains(m.View(), "RELATED TASK") {
+	if m.input.kind != relatedTaskInput {
 		t.Fatal("related-task prompt not shown")
 	}
 	m = key(m, runeKey("second mandate"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if strings.Contains(m.View(), "RELATED TASK") {
+	if m.input.kind == relatedTaskInput {
 		t.Fatal("related-task composer still open after submit")
 	}
 	tasks := s.ListTasks()
@@ -36,7 +35,7 @@ func TestRelatedTaskAndThreadContextControls(t *testing.T) {
 	m = key(m, runeKey("m"))
 	m = key(m, runeKey("shared context"))
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if strings.Contains(m.View(), "FOLLOW UP") {
+	if m.input.kind == followUpInput {
 		t.Fatal("follow-up composer still open after submit")
 	}
 	tasks = s.ListTasks()

@@ -90,6 +90,9 @@ func TestHelpEveryTopicFitsAndScrollsToItsEnd(t *testing.T) {
 				if lipgloss.Width(line) > mw-4 {
 					t.Fatalf("%s at %v: row %d overflows: %q", topic.title, size, row, ansi.Strip(line))
 				}
+				if strings.Contains(line, "\x1b[48;") {
+					t.Fatalf("%s at %v: help sets a background colour", topic.title, size)
+				}
 			}
 			m.scrollHelpBody(1000)
 			view := m.View()
@@ -97,9 +100,6 @@ func TestHelpEveryTopicFitsAndScrollsToItsEnd(t *testing.T) {
 			lines := helpLines(topic, helpBodyWidth(mw))
 			if last := strings.TrimSpace(ansi.Strip(lines[len(lines)-1])); !strings.Contains(ansi.Strip(view), last) {
 				t.Fatalf("%s at %v: last line %q is unreachable", topic.title, size, last)
-			}
-			if strings.Contains(view, "\x1b[48;") {
-				t.Fatalf("%s at %v: help sets a background colour", topic.title, size)
 			}
 			text := ""
 			for _, line := range lines {

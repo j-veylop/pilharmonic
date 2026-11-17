@@ -8,7 +8,6 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"pilharmonic/internal/providers"
 )
 
@@ -152,8 +151,8 @@ func (m model) loginComposerLines(width int) []string {
 		masked = strings.Repeat("*", utf8.RuneCountInString(m.login.key))
 	}
 	line := "Enter API key for " + terminalText(m.login.provider) + ": " + masked
-	content := max(1, width-lipgloss.Width(composerPrompt)-1)
-	return []string{fit(accentStyle.Render(composerPrompt)+line, content, 1) + "▏"}
+	content := max(1, width-1)
+	return []string{fit(line, content, 1) + cursorGlyph()}
 }
 
 func trimLastRune(text string) string {

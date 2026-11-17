@@ -10,32 +10,20 @@ import (
 	"pilharmonic/internal/tui/editor"
 )
 
-func TestStatusPillsShowModeAndModel(t *testing.T) {
+func TestTaskListShowsModels(t *testing.T) {
 	m := boardWithTask()
-	m.service = &fakeLoginService{tasks: m.tasks, overrides: orchestrator.ModelSelection{Big: "openai-subscription/gpt-6.1-sol"}}
-	plain := ansi.Strip(m.statusPills(120))
-	if !strings.Contains(plain, "TASKS") || !strings.Contains(plain, "gpt-6.1-sol") || strings.Contains(plain, "openai-subscription/") {
-		t.Fatalf("status pills = %q", plain)
+	m.service = &fakeLoginService{tasks: m.tasks, overrides: orchestrator.ModelSelection{
+		Big:   "openai-subscription/gpt-6.1-sol",
+		Small: "openai/gpt-5.6-luna",
+	}}
+	plain := ansi.Strip(m.View())
+	for _, want := range []string{"TASKS", "BIG gpt-6.1-sol", "SMALL gpt-5.6-luna"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("task list missing %q: %q", want, plain)
+		}
 	}
-	m.router.open = true
-	if plain := ansi.Strip(m.statusPills(120)); !strings.Contains(plain, "REQUEST") {
-		t.Fatalf("request mode missing: %q", plain)
-	}
-	narrow := ansi.Strip(m.statusPills(12))
-	if !strings.Contains(narrow, "REQUEST") || strings.Contains(narrow, "gpt-6.1-sol") {
-		t.Fatalf("narrow pills kept the model: %q", narrow)
-	}
-}
-
-func TestStatusPillsRespectShortTerminals(t *testing.T) {
-	m := boardWithTask()
-	m.width, m.height = 80, 12
-	if strings.Contains(ansi.Strip(m.footer(80)), "TASKS") {
-		t.Fatal("short terminal lost a body row to pills")
-	}
-	m.height = 24
-	if !strings.Contains(ansi.Strip(m.footer(80)), "TASKS") {
-		t.Fatal("tall terminal omitted the status pills")
+	if strings.Contains(plain, "openai-subscription/") {
+		t.Fatalf("task list kept the provider prefix: %q", plain)
 	}
 }
 
@@ -79,7 +67,7 @@ func TestCompletionPopupSitsAboveComposer(t *testing.T) {
 	if !strings.Contains(joined, "No registered executor") || !strings.Contains(joined, "╭") {
 		t.Fatalf("completion popup missing: %q", joined)
 	}
-	if strings.Index(joined, "No registered executor") > strings.Index(joined, "REQUEST") {
+	if strings.Index(joined, "No registered executor") > strings.Index(joined, "@ge") {
 		t.Fatalf("completion popup is not above the box: %q", joined)
 	}
 }
@@ -98,7 +86,7 @@ func TestRequestBoxStaysVisibleWhenUnfocused(t *testing.T) {
 	m := boardWithTask()
 	m.router = routerState{Editor: editor.Editor{Text: "kept draft", Cursor: len("kept draft")}}
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "REQUEST") || !strings.Contains(view, "kept draft") || !strings.Contains(view, "i or / to type") {
+	if !strings.Contains(view, "kept draft") {
 		t.Fatalf("unfocused request box missing: %q", view)
 	}
 }
@@ -157,16 +145,6 @@ func TestFooterKeepsItsHeight(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-// The status bar carries no animation: the row keeps its width while tasks run.
-func TestStatusPillsCarryNoAnimation(t *testing.T) {
-	m := boardWithTask()
-	idle := ansi.Strip(m.statusPills(120))
-	m.spinnerActive = true
-	if got := ansi.Strip(m.statusPills(120)); got != idle {
-		t.Fatalf("spinner changed the status row: %q → %q", idle, got)
 	}
 }
 

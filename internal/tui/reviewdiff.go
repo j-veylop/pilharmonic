@@ -38,7 +38,7 @@ func (m model) reviewDiffView(width, height int) string {
 		}
 	}
 	content := strings.Join(lines, "\n")
-	visible := max(1, height-2)
+	visible := max(1, height)
 	all := strings.Split(content, "\n")
 	end := max(0, len(all)-m.historyOffset)
 	start := max(0, end-visible)
@@ -46,7 +46,7 @@ func (m model) reviewDiffView(width, height int) string {
 		start = end - visible
 	}
 	content = strings.Join(all[start:end], "\n")
-	return lipgloss.NewStyle().Width(width).Height(height).Border(lipgloss.RoundedBorder()).BorderForeground(muted).Render(content)
+	return lipgloss.NewStyle().Width(width).Height(height).Padding(0, 2).Render(content)
 }
 
 func (m model) reviewTask() (orchestrator.Task, bool) {

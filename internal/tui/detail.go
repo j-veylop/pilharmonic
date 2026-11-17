@@ -249,7 +249,7 @@ func (m model) detailPanel(width, height int) string {
 	inner := l.panelInner(width)
 	t, ok := m.selectedTask()
 	if !ok {
-		return panel(m.landingContent(inner), width, height)
+		return surfacePanel(m.landingContent(inner), width, height)
 	}
 	titleLine := titleStyle.Render(singleLine(t.Title)) + "  " + m.taskLabel(t)
 	if action := m.currentAction(t); action != "" {
@@ -267,27 +267,31 @@ func (m model) detailPanel(width, height int) string {
 	}
 	position := fmt.Sprintf("%s  %d–%d / %d  ·  %s", detailTabNames[m.tab], min(start+1, end), end, len(content), m.detailFocusHint())
 	lines = append(lines, mutedStyle.Render(position))
-	return focusedPanel(strings.Join(lines, "\n"), width, height, m.detailFocus || m.fullscreen)
+	return surfacePanel(strings.Join(lines, "\n"), width, height)
 }
 
 // landingContent is the empty board: identity, examples and the first keys.
+// Like Crush's landing page it sits at the left margin and reads top to bottom.
 func (m model) landingContent(width int) string {
-	line := func(text string) string { return lipgloss.PlaceHorizontal(width, lipgloss.Center, text) }
-	ruleWidth := max(1, min(26, width-2))
+	ruleWidth := max(1, min(40, width))
 	lines := []string{
-		line(wordmark()),
-		line(mutedStyle.Render("Local agents with recorded mandates and attempts")),
-		"",
-		line(gradientFill(strings.Repeat("━", ruleWidth), 0)),
-		"",
-		line(pinkStyle().Render("/") + mutedStyle.Render("  submit a request")),
-		line(cyanStyle().Render("@tester") + mutedStyle.Render("  pick an executor")),
-		line(blueStyle().Render("/model") + mutedStyle.Render("  choose a model")),
-		"",
-		line(gradientFill(strings.Repeat("━", ruleWidth), 0)),
-		"",
-		line(faintStyle.Render("f1 help  ·  q quit")),
+		wordmark(),
+		mutedStyle.Render("Local agents with recorded mandates and attempts"),
 	}
+	if models := m.modelSummary(width); models != "" {
+		lines = append(lines, "", models)
+	}
+	lines = append(lines,
+		"",
+		faintStyle.Render(strings.Repeat("─", ruleWidth)),
+		sectionStyle.Render("GET STARTED"),
+		pinkStyle().Render("/")+mutedStyle.Render("  submit a request"),
+		cyanStyle().Render("@tester")+mutedStyle.Render("  pick an executor"),
+		blueStyle().Render("/model")+mutedStyle.Render("  choose a model"),
+		"",
+		faintStyle.Render(strings.Repeat("─", ruleWidth)),
+		faintStyle.Render("f1 help  ·  q quit"),
+	)
 	return strings.Join(lines, "\n")
 }
 

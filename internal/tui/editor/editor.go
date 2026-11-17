@@ -485,12 +485,23 @@ func editorOffsetWithinLine(text string, lines []editorLine, index, offset int) 
 	return line.end - size
 }
 
+// CursorStyle paints the block cursor. The terminal package overrides it with
+// the theme's secondary colour; a reverse-video block keeps the plain editor
+// package legible on its own.
+var CursorStyle = lipgloss.NewStyle().Reverse(true)
+
 func insertEditorCursor(text string, column int) string {
-	const cursor = "▏"
 	width := lipgloss.Width(text)
+	column = max(0, min(column, width))
 	if column >= width {
-		return text + cursor
+		return text + CursorStyle.Render(" ")
 	}
-	column = max(0, column)
-	return ansi.Cut(text, 0, column) + cursor + ansi.Cut(text, column, width)
+	rest := ansi.Cut(text, column, width)
+	_, size := utf8.DecodeRuneInString(rest)
+	if size == 0 {
+		return text + CursorStyle.Render(" ")
+	}
+	// Style the rune under the cursor instead of replacing it, so the letter
+	// stays readable while the block paints its cell.
+	return ansi.Cut(text, 0, column) + CursorStyle.Render(rest[:size]) + ansi.Cut(text, column+lipgloss.Width(rest[:size]), width)
 }

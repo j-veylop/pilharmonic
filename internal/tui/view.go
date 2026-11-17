@@ -79,7 +79,7 @@ func (m model) layout() layout {
 	if m.composerOpen() {
 		extra := m.composerExtraRows()
 		l.composerDraft = m.composerDraftRows(footerRows + extra)
-		l.composerRows = l.composerDraft + 2 + extra
+		l.composerRows = l.composerDraft + 1 + extra
 	}
 	l.bodyHeight = h - 1 - footerRows - l.composerRows
 	l.details = m.detailFocus || m.fullscreen
@@ -95,12 +95,12 @@ func (m model) layout() layout {
 	return l
 }
 
-// panelInner is the content width inside a bordered panel.
+// panelInner is the content width inside a borderless, two-cell-margin pane.
 func (layout) panelInner(width int) int { return width - 4 }
 
 // detailRows is how many content rows a detail panel of height shows below its
 // tab row, title and position line.
-func (layout) detailRows(height int) int { return height - 5 }
+func (layout) detailRows(height int) int { return height - 3 }
 
 func (m model) View() string {
 	l := m.layout()
@@ -165,23 +165,38 @@ func (m model) View() string {
 	if m.quitConfirm {
 		screen = m.quitView(screen, w, h)
 	}
-	return screen
+	return paintCanvas(screen, w, h)
+}
+
+// paintCanvas washes the whole frame in the pastel application background.
+// Each rendered line is padded to the frame width, and the background is
+// re-applied after every style reset so nested styling cannot punch holes in
+// the surface.
+func paintCanvas(screen string, width, height int) string {
+	bg := canvasEscape()
+	if bg == "" || width < 1 || height < 1 {
+		return screen
+	}
+	lines := strings.Split(screen, "\n")
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	lines = lines[:height]
+	for i, line := range lines {
+		line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+bg)
+		if pad := width - ansi.StringWidth(line); pad > 0 {
+			line += strings.Repeat(" ", pad)
+		}
+		lines[i] = bg + line + "\x1b[0m"
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) attentionCount() int { return len(m.attentionTasks()) }
 
-// headerMode is the surface that owns the keyboard, shown as a status pill.
-func (m model) headerMode() string {
-	switch {
-	case m.router.open:
-		return "REQUEST"
-	case m.input.kind != "":
-		return "INSERT"
-	case m.detailFocus || m.fullscreen:
-		return "DETAILS"
-	}
-	return "TASKS"
-}
+// inputFocused reports whether the composer owns the keyboard. The task list
+// drops its selection row while typing so the input is the only active thing.
+func (m model) inputFocused() bool { return m.router.open || m.input.kind != "" }
 
 // headerRow is the wordmark and, right-aligned, the task counters and session
 // total, joined by the diagonal filler Crush uses. The session total is dropped
@@ -208,30 +223,7 @@ fit:
 	if fill < 3 {
 		return fit(header+right, width, 1)
 	}
-	return fit(header+" "+gradientFill(strings.Repeat("╱", fill), 0)+" "+right, width, 1)
-}
-
-// statusPills is the mode and model badge row above the key hints. Badges drop
-// right to left so the mode is always visible. It carries no moving parts, so
-// the row never changes width while tasks run.
-func (m model) statusPills(width int) string {
-	mode := m.headerMode()
-	pills := []string{pillStyle.Render(mode)}
-	if m.service != nil {
-		selection := m.service.ModelSelection()
-		for _, class := range []struct{ name, model string }{{"BIG", selection.Big}, {"SMALL", selection.Small}} {
-			if class.model == "" {
-				continue
-			}
-			pills = append(pills, modelPillStyle(class.name).Render(class.name+" "+shortModel(class.model)))
-		}
-	}
-	row := strings.Join(pills, " ")
-	for len(pills) > 1 && lipgloss.Width(row) > width {
-		pills = pills[:len(pills)-1]
-		row = strings.Join(pills, " ")
-	}
-	return fit(row, width, 1)
+	return fit(header+" "+lipgloss.NewStyle().Foreground(accent).Render(strings.Repeat("╱", fill))+" "+right, width, 1)
 }
 
 // shortModel keeps the model ID without its provider prefix, which the pill
@@ -241,6 +233,32 @@ func shortModel(selector string) string {
 		return model
 	}
 	return selector
+}
+
+// modelSummary names the big and small models where the board can show them.
+// The small model is dropped before the big one when space runs out.
+func (m model) modelSummary(width int) string {
+	if m.service == nil || width < 4 {
+		return ""
+	}
+	selection := m.service.ModelSelection()
+	var parts []string
+	for _, class := range []struct{ name, model string }{{"BIG", selection.Big}, {"SMALL", selection.Small}} {
+		if class.model == "" {
+			continue
+		}
+		parts = append(parts, faintStyle.Render(class.name)+" "+mutedStyle.Render(shortModel(class.model)))
+	}
+	join := func(parts []string) string { return strings.Join(parts, faintStyle.Render("  ·  ")) }
+	row := join(parts)
+	for len(parts) > 1 && lipgloss.Width(row) > width {
+		parts = parts[:len(parts)-1]
+		row = join(parts)
+	}
+	if lipgloss.Width(row) > width {
+		return ""
+	}
+	return row
 }
 
 // headerUsageVariants lists the session total, richest first and ending with
@@ -276,18 +294,26 @@ func (m model) headerCountOptions() []string {
 	if attention == 1 {
 		actionText = "needs action"
 	}
-	tasks := fmt.Sprintf("  %d tasks", len(m.tasks))
+	tasks := fmt.Sprintf("%d tasks", len(m.tasks))
+	dot := faintStyle.Render(" • ")
 	format := func(runningText, queuedText, attentionText string) string {
-		return mutedStyle.Render(tasks) +
-			lipgloss.NewStyle().Foreground(statusRunning).Render(runningText) +
-			lipgloss.NewStyle().Foreground(statusWaiting).Render(queuedText) +
-			accentStyle.Render(attentionText)
+		parts := []string{mutedStyle.Render(tasks)}
+		if runningText != "" {
+			parts = append(parts, lipgloss.NewStyle().Foreground(statusRunning).Render(runningText))
+		}
+		if queuedText != "" {
+			parts = append(parts, lipgloss.NewStyle().Foreground(statusWaiting).Render(queuedText))
+		}
+		if attentionText != "" {
+			parts = append(parts, accentStyle.Render(attentionText))
+		}
+		return strings.Join(parts, dot)
 	}
 	return []string{
-		format(fmt.Sprintf("  ● %d running", running), fmt.Sprintf("  ◷ %d queued", queued), fmt.Sprintf("  ◆ %d %s", attention, actionText)),
-		format(fmt.Sprintf("  ● %d run", running), fmt.Sprintf("  ◷ %d wait", queued), fmt.Sprintf("  ◆ %d action", attention)),
-		format(fmt.Sprintf("  ●%d", running), fmt.Sprintf("  ◷%d", queued), fmt.Sprintf("  ◆%d", attention)),
-		format("", "", fmt.Sprintf("  ◆%d", attention)),
+		format(fmt.Sprintf("● %d running", running), fmt.Sprintf("◷ %d queued", queued), fmt.Sprintf("◆ %d %s", attention, actionText)),
+		format(fmt.Sprintf("● %d run", running), fmt.Sprintf("◷ %d wait", queued), fmt.Sprintf("◆ %d action", attention)),
+		format(fmt.Sprintf("●%d", running), fmt.Sprintf("◷%d", queued), fmt.Sprintf("◆%d", attention)),
+		format("", "", fmt.Sprintf("◆%d", attention)),
 	}
 }
 
@@ -387,9 +413,6 @@ func (m model) footer(w int) string {
 	if pad := reserved - line; pad > 0 {
 		footer += strings.Repeat("\n", pad)
 	}
-	if _, height := m.size(); height >= 14 {
-		footer = m.statusPills(w) + "\n" + footer
-	}
 	return ansi.Hardwrap(footer, w, true)
 }
 
@@ -398,7 +421,7 @@ func renderHints(hints ...string) string {
 	parts := make([]string, len(hints))
 	for i, hint := range hints {
 		key, desc, _ := strings.Cut(hint, " ")
-		parts[i] = keyStyle.Render(key) + mutedStyle.Render(" "+desc)
+		parts[i] = keyStyle.Render(key) + faintStyle.Render(" "+desc)
 	}
 	return strings.Join(parts, faintStyle.Render("  ·  "))
 }

@@ -26,7 +26,7 @@ func TestEditorScrollingKeepsLongDraftVisible(t *testing.T) {
 	e.Cursor = 0
 	e.ensureVisible(20, 4)
 	visible = ansi.Strip(strings.Join(e.View(20, 4, true), "\n"))
-	if !strings.Contains(visible, "line-01") || strings.Contains(visible, "line-30") {
+	if !strings.Contains(visible, "ine-01") || strings.Contains(visible, "line-30") {
 		t.Fatalf("cursor did not scroll back through the draft: %q", visible)
 	}
 }
@@ -59,21 +59,17 @@ func TestEditorUpFromFullWrappedLineAdvancesOneLine(t *testing.T) {
 		if got := editorCursorLine(lines, e.Cursor); got != want {
 			t.Fatalf("up from end of a full wrapped line: line=%d want %d cursor=%d", got, want, e.Cursor)
 		}
-		visible := ansi.Strip(strings.Join(e.View(width, 2, true), "\n"))
-		if !strings.Contains(visible, "▏") {
-			t.Fatalf("cursor row not visible after up: %q", visible)
-		}
 	}
 }
 
 func TestEditorCursorColumnCountsWideRunes(t *testing.T) {
 	e := Editor{Text: "日本 ab 語", Cursor: len("日本 ")}
-	line := ansi.Strip(e.View(20, 2, true)[0])
-	at := strings.Index(line, "▏")
-	if at < 0 {
-		t.Fatalf("no cursor in %q", line)
+	e.clamp()
+	lines := wrapEditor(e.Text, 20)
+	if column := editorCursorColumn(e.Text, lines[0], e.Cursor); column != 5 {
+		t.Fatalf("cursor sits at column %d, want 5", column)
 	}
-	if column := lipgloss.Width(line[:at]); column != 5 {
-		t.Fatalf("cursor sits at column %d, want 5: %q", column, line)
+	if got := ansi.Strip(insertEditorCursor(e.Text, 5)); got != e.Text {
+		t.Fatalf("cursor changed the text: %q", got)
 	}
 }

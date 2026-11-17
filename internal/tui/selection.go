@@ -199,7 +199,7 @@ func (m model) detailViewport() (detailViewport, bool) {
 	}
 	return detailViewport{
 		x:       x + 2,
-		y:       4,
+		y:       3,
 		width:   inner,
 		start:   start,
 		end:     end,

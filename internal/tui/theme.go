@@ -6,50 +6,77 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"pilharmonic/internal/tui/editor"
 )
 
 // The interface uses one compact, adaptive palette. Keep colour decisions here
 // so status, selection, badges and transcript styling stay in the same visual
 // language.
 const (
-	colorInk        = "#E8EDF9"
-	colorMuted      = "#8D9AB5"
-	colorFaint      = "#5F6D88"
-	colorAccent     = "#B7A6FF"
-	colorAccentDeep = "#7C6AE8"
-	colorCyan       = "#7BE0CF"
-	colorBlue       = "#7BA7FF"
-	colorGreen      = "#8FE3B0"
-	colorAmber      = "#F4C97A"
-	colorRed        = "#FF96A5"
-	colorPink       = "#FF9ED8"
-	colorViolet     = "#C4B0FF"
-	colorBorder     = "#35425D"
-	colorSurface    = "#232B3D"
+	colorInk        = "#ECEBF0" // Sash, the base foreground
+	colorMuted      = "#858392" // Squid, secondary metadata
+	colorFaint      = "#605F6B" // Oyster, the quietest text
+	colorAccent     = "#6B50FF" // Charple, the focus colour
+	colorAccentDeep = "#5B40EC" // Darple, selection background
+	colorCyan       = "#68FFD6" // Bok, keywords
+	colorBlue       = "#00A4FF" // Malibu, running state
+	colorGreen      = "#12C78F" // Guac, success
+	colorAmber      = "#F5EF34" // Mustard, waiting state
+	colorRed        = "#EB4268" // Sriracha, failure
+	colorPink       = "#FF60FF" // Dolly, the brand's second stop
+	colorViolet     = "#8B75FF" // Hazy, the brand's middle stop
+	colorBorder     = "#3A3943" // Char, separators and quiet borders
+	colorSurface    = "#2D2C36" // BBQ, raised surfaces
+	colorOnAccent   = "#FFFAF1" // Butter, text on an accent fill
+	colorCanvas     = "#272433" // soft plum canvas behind every pane
+	colorPastel     = "#3F3A5C" // muted lavender selection fill
 )
 
 // The palette adapts to the terminal background: the light variants read as
 // the same hierarchy on a white surface without changing any call site.
 var (
-	ink    = lipgloss.AdaptiveColor{Light: "#1B2232", Dark: colorInk}
-	muted  = lipgloss.AdaptiveColor{Light: "#5B667C", Dark: colorMuted}
-	accent = lipgloss.AdaptiveColor{Light: "#6450C8", Dark: colorAccent}
+	ink    = lipgloss.AdaptiveColor{Light: "#201F26", Dark: colorInk}
+	muted  = lipgloss.AdaptiveColor{Light: "#605F6B", Dark: colorMuted}
+	accent = lipgloss.AdaptiveColor{Light: "#5B40EC", Dark: colorAccent}
 	cyan   = lipgloss.AdaptiveColor{Light: "#0E8C7C", Dark: colorCyan}
-	border = lipgloss.AdaptiveColor{Light: "#B9C2D4", Dark: colorBorder}
-	blue   = lipgloss.AdaptiveColor{Light: "#2F6BD8", Dark: colorBlue}
-	green  = lipgloss.AdaptiveColor{Light: "#2E8A57", Dark: colorGreen}
+	border = lipgloss.AdaptiveColor{Light: "#D6D3DC", Dark: colorBorder}
+	blue   = lipgloss.AdaptiveColor{Light: "#007AB8", Dark: colorBlue}
+	green  = lipgloss.AdaptiveColor{Light: "#00A475", Dark: colorGreen}
 	amber  = lipgloss.AdaptiveColor{Light: "#A66A0A", Dark: colorAmber}
-	red    = lipgloss.AdaptiveColor{Light: "#C24055", Dark: colorRed}
-	faint  = lipgloss.AdaptiveColor{Light: "#8A94A8", Dark: colorFaint}
-	pink   = lipgloss.AdaptiveColor{Light: "#B93B8E", Dark: colorPink}
+	red    = lipgloss.AdaptiveColor{Light: "#AB2454", Dark: colorRed}
+	faint  = lipgloss.AdaptiveColor{Light: "#858392", Dark: colorFaint}
+	pink   = lipgloss.AdaptiveColor{Light: "#E940B0", Dark: colorPink}
 
-	surface       = lipgloss.AdaptiveColor{Light: "#E9EDF7", Dark: colorSurface}
-	pillBlueBG    = lipgloss.AdaptiveColor{Light: "#DCE8FF", Dark: "#243A5C"}
-	pillTealBG    = lipgloss.AdaptiveColor{Light: "#D9F5EF", Dark: "#1E3F3B"}
-	pillOnSurface = lipgloss.AdaptiveColor{Light: "#1B2232", Dark: colorInk}
+	surface       = lipgloss.AdaptiveColor{Light: "#ECEBF0", Dark: colorSurface}
+	pillOnSurface = lipgloss.AdaptiveColor{Light: "#201F26", Dark: colorInk}
+	canvas        = lipgloss.AdaptiveColor{Light: "#F7F3FC", Dark: colorCanvas}
+	pastelFill    = lipgloss.AdaptiveColor{Light: "#DFD6F5", Dark: colorPastel}
 )
 
-var accentDeep = lipgloss.AdaptiveColor{Light: "#6450C8", Dark: colorAccentDeep}
+var accentDeep = lipgloss.AdaptiveColor{Light: "#5B40EC", Dark: colorAccentDeep}
+
+// editorCursorStyle is Crush's block cursor: Dolly pink, bold, one cell.
+var editorCursorStyle = lipgloss.NewStyle().Background(pink).Foreground(lipgloss.Color("#201F26"))
+
+func init() { editor.CursorStyle = editorCursorStyle }
+
+// cursorGlyph is the visible caret at the draft's cursor position.
+func cursorGlyph() string { return editorCursorStyle.Render("█") }
+
+// canvasEscape paints the application background. The terminal's own
+// background is replaced so tinted panes sit on one pastel surface.
+func canvasEscape() string {
+	var hex string
+	if lipgloss.HasDarkBackground() {
+		hex = colorCanvas
+	} else {
+		hex = "#F7F3FC"
+	}
+	var r, g, b int
+	fmt.Sscanf(hex, "#%02X%02X%02X", &r, &g, &b)
+	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
+}
 
 func blueStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(blue) }
 func amberStyle() lipgloss.Style { return lipgloss.NewStyle().Foreground(amber) }
@@ -61,10 +88,10 @@ func cyanStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(cyan) }
 var (
 	diffAddedStyle = lipgloss.NewStyle().
 			Foreground(green).
-			Background(lipgloss.AdaptiveColor{Light: "#E4F7EC", Dark: "#183526"})
+			Background(lipgloss.AdaptiveColor{Light: "#DDF7EC", Dark: "#18463D"})
 	diffRemovedStyle = lipgloss.NewStyle().
 				Foreground(red).
-				Background(lipgloss.AdaptiveColor{Light: "#FCE4E8", Dark: "#3E2028"})
+				Background(lipgloss.AdaptiveColor{Light: "#FCE4E8", Dark: "#582238"})
 	diffHunkStyle = lipgloss.NewStyle().
 			Foreground(accent).
 			Bold(true)
@@ -81,6 +108,7 @@ var (
 
 var (
 	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(ink)
+	sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(muted)
 	mutedStyle   = lipgloss.NewStyle().Foreground(muted)
 	faintStyle   = lipgloss.NewStyle().Foreground(faint)
 	accentStyle  = lipgloss.NewStyle().Foreground(accent).Bold(true)
@@ -92,26 +120,25 @@ var (
 				Bold(true)
 	selectionBodyStyle = lipgloss.NewStyle().
 				Foreground(pillOnSurface).
-				Background(surface).
+				Background(pastelFill).
 				Bold(true)
 	selectionHighlightStyle = lipgloss.NewStyle().
-				Background(accentDeep).
-				Foreground(lipgloss.Color(colorInk))
+				Background(pastelFill).
+				Foreground(pillOnSurface)
 	keyStyle = lipgloss.NewStyle().
-			Foreground(accent).
-			Bold(true)
+			Foreground(muted)
 )
 
 // pillStyle and cardStyle carry the Crush-like chrome: compact badges and
 // bordered blocks in the transcript.
 var (
 	pillStyle = lipgloss.NewStyle().
-			Background(accentDeep).
-			Foreground(lipgloss.Color(colorInk)).
+			Background(accent).
+			Foreground(lipgloss.Color(colorOnAccent)).
 			Bold(true).
 			Padding(0, 1)
 	pillMutedStyle = lipgloss.NewStyle().
-			Background(lipgloss.AdaptiveColor{Light: "#E2E6EF", Dark: "#2A3346"}).
+			Background(surface).
 			Foreground(muted).
 			Padding(0, 1)
 	cardStyle = lipgloss.NewStyle().
@@ -119,23 +146,6 @@ var (
 			BorderForeground(border).
 			Padding(0, 1)
 )
-
-// pillFor paints a badge with a tinted background. The title colour stays
-// readable in both the light and dark palettes.
-func pillFor(background lipgloss.TerminalColor) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Background(background).
-		Foreground(pillOnSurface).
-		Bold(true).
-		Padding(0, 1)
-}
-
-func modelPillStyle(class string) lipgloss.Style {
-	if class == "SMALL" {
-		return pillFor(pillTealBG)
-	}
-	return pillFor(pillBlueBG)
-}
 
 // The help overlay is prose plus a two-column shortcut table, so it needs a
 // heading, a description and a scrollbar style of its own. They reuse the
@@ -167,19 +177,16 @@ func ApplyTheme(mode string) string {
 	return "auto"
 }
 
-// wordmark is the product identity as one flat heading. It is deliberately
-// single-coloured: a per-rune gradient shifted colour every frame without
-// carrying any meaning.
-func wordmark() string { return titleStyle.Render("◈ PILHARMONIC") }
+// wordmark is the product identity as one compact logo, painted through the
+// same pink-to-violet ramp Crush uses for its own wordmark.
+func wordmark() string {
+	return accentStyle.Render("◈ ") + gradientText("PILHARMONIC")
+}
 
-// gradientText paints a wordmark through violet, pink and teal without
-// changing its visible text or width. ANSI styling is applied per rune, so
-// callers can continue to use normal cell-width helpers for layout.
+// gradientText paints a wordmark through pink and violet without changing its
+// visible text or width. ANSI styling is applied per rune, so callers can
+// continue to use normal cell-width helpers for layout.
 func gradientText(text string) string { return gradientRunes(text, 0) }
-
-// gradientFill paints repeated chrome, such as the header's diagonal filler,
-// with the same moving ramp as the wordmark.
-func gradientFill(text string, phase int) string { return gradientRunes(text, phase) }
 
 func gradientRunes(text string, phase int) string {
 	runes := []rune(text)
@@ -193,13 +200,12 @@ func gradientRunes(text string, phase int) string {
 	return b.String()
 }
 
-// gradientStops is the brand ramp: violet, pink, teal and blue. More than two
-// stops keep the wordmark from reading as a single dim hue.
+// gradientStops is the brand ramp: Dolly pink into Charple violet, matching
+// the Crush wordmark's two-stop gradient.
 var gradientStops = [][3]float64{
-	{183, 166, 255},
-	{255, 158, 216},
-	{123, 224, 207},
-	{123, 167, 255},
+	{255, 96, 255},
+	{139, 117, 255},
+	{107, 80, 255},
 }
 
 // gradientColor interpolates the wordmark through the brand stops, shifting

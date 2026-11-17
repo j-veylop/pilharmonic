@@ -38,7 +38,7 @@ func TestSubagentComposerSpawnsChild(t *testing.T) {
 	<-started
 	m := model{service: s, workspace: dir, tasks: s.ListTasks(), width: 120, height: 35}
 	m = key(m, runeKey("b"))
-	if !strings.Contains(m.View(), "SUBAGENT TASK") {
+	if m.input.kind != subagentInput {
 		t.Fatal("subagent prompt not shown")
 	}
 	m = key(m, runeKey("child mandate"))

@@ -3,9 +3,9 @@ package tui
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"pilharmonic/internal/orchestrator"
 	"pilharmonic/internal/tui/editor"
@@ -25,8 +25,6 @@ const (
 // composerMaxLines bounds the draft rows so the box never crowds out the
 // panels above it.
 const composerMaxLines = 6
-
-const composerPrompt = "› "
 
 // composer is a task-scoped input. target is captured when it opens, because
 // task ordering can change while the operator types.
@@ -63,12 +61,13 @@ func (m model) composerBoxWidth() int {
 	return max(4, w)
 }
 
-// composerInnerWidth leaves four cells for the rounded border and padding.
+// composerInnerWidth leaves the two-cell margin Crush uses on each side of
+// the draft.
 func (m model) composerInnerWidth() int { return max(1, m.composerBoxWidth()-4) }
 
 // composerWidth wraps the draft, reserving a cell for the cursor at line end.
 func (m model) composerWidth() int {
-	return max(1, m.composerInnerWidth()-lipgloss.Width(composerPrompt)-1)
+	return max(1, m.composerInnerWidth()-1)
 }
 
 func (m model) composerHeight() int { return max(1, m.layout().composerDraft) }
@@ -98,42 +97,12 @@ func (m model) composerExtraRows() int {
 	return rows
 }
 
-// composerTitle names the box on its top border, with an optional note on the
-// right such as the authorization step that records its decision.
-func (m model) composerTitle() (title, note string) {
-	switch {
-	case m.router.open && m.login.provider != "":
-		return "API KEY", terminalText(m.login.provider)
-	case m.input.kind != "" && !m.router.open:
-		if m.input.kind == rejectReviewInput {
-			return string(m.input.kind), "keeps worktree · f requeues"
-		}
-		return string(m.input.kind), ""
-	case m.detailFocus || m.fullscreen:
-		return "FOLLOW UP", "enter send · h tasks"
-	case m.router.open:
-		return "REQUEST", "enter start · ctrl+s hold"
-	case m.input.kind != "":
-		return string(m.input.kind), ""
-	}
-	return "REQUEST", "i or / to type"
-}
-
-// composerBoxLines renders the draft with the prompt on the first row and a
-// hanging indent on wrapped rows.
+// composerBoxLines renders the draft flush with the composer margin.
 func (m model) composerBoxLines(rows int) []string {
 	if m.router.open && m.login.provider != "" {
 		return m.loginComposerLines(m.composerInnerWidth())
 	}
 	focused := m.router.open || m.input.kind != ""
-	cursor := "▏"
-	if !focused {
-		cursor = " "
-	}
-	prefix := mutedStyle.Render(composerPrompt)
-	if focused {
-		prefix = accentStyle.Render(composerPrompt)
-	}
 	e := m.composerEditor()
 	var visible []string
 	if e.Text == "" {
@@ -144,34 +113,32 @@ func (m model) composerBoxLines(rows int) []string {
 		if m.input.kind != "" {
 			placeholder = composerPlaceholders[m.input.kind]
 		}
-		visible = []string{fit(mutedStyle.Render(placeholder), m.composerWidth(), 1) + cursor}
+		visible = []string{fit(placeholderLine(placeholder, focused), m.composerWidth(), 1)}
 	} else {
 		visible = e.View(m.composerWidth(), rows, focused)
-	}
-	for i := range visible {
-		if i == 0 {
-			visible[i] = prefix + visible[i]
-		} else {
-			visible[i] = strings.Repeat(" ", lipgloss.Width(composerPrompt)) + visible[i]
-		}
 	}
 	return visible
 }
 
-// composerBlock is the docked box, labelled on its top border, plus the
-// request box's executor hints.
-func (m model) composerBlock(rows int) []string {
-	title, note := m.composerTitle()
-	width := m.composerBoxWidth()
-	edge := border
-	if m.router.open || m.input.kind != "" {
-		edge = accent
+// placeholderLine shows the empty draft's hint. While the composer has focus
+// the pink block cursor sits on its first character.
+func placeholderLine(placeholder string, focused bool) string {
+	if !focused || placeholder == "" {
+		return mutedStyle.Render(placeholder)
 	}
-	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(edge).Padding(0, 1).
-		Width(width - 2).Height(rows).MaxWidth(width).MaxHeight(rows + 2)
-	content := fit(strings.Join(m.composerBoxLines(rows), "\n"), m.composerInnerWidth(), rows)
-	box := strings.Split(style.Render(content), "\n")
-	box[0] = composerTopBorderWithColor(title, note, width, m.router.open || m.input.kind != "")
+	_, size := utf8.DecodeRuneInString(placeholder)
+	return editor.CursorStyle.Render(placeholder[:size]) + mutedStyle.Render(placeholder[size:])
+}
+
+// composerBlock is the docked input: a rule and the draft in a two-cell
+// margin, the way Crush keeps its editor borderless.
+func (m model) composerBlock(rows int) []string {
+	width := m.composerBoxWidth()
+	rule := faintStyle.Render(strings.Repeat("─", width))
+	box := []string{rule}
+	for _, line := range m.composerBoxLines(rows) {
+		box = append(box, fit("  "+line, width, 1))
+	}
 	if m.router.open {
 		box = append(m.routerCompletionPopup(width), box...)
 		box = append(m.attachmentChips(width), box...)
@@ -188,31 +155,6 @@ func (m model) routerCompletionPopup(width int) []string {
 	}
 	card := cardStyle.Width(width - 2).MaxWidth(width).Render(fit(strings.Join(hints, "\n"), m.composerInnerWidth(), len(hints)))
 	return strings.Split(card, "\n")
-}
-
-func composerTopBorderWithColor(title, note string, width int, focused bool) string {
-	color := border
-	if focused {
-		color = accent
-	}
-	edge := lipgloss.NewStyle().Foreground(color)
-	label := " " + title + " "
-	labelWidth := lipgloss.Width(label)
-	if labelWidth+4 > width {
-		return edge.Render("╭" + strings.Repeat("─", max(0, width-2)) + "╮")
-	}
-	if note != "" {
-		note = " " + note + " "
-	}
-	fill := width - 4 - labelWidth - lipgloss.Width(note)
-	if fill < 3 {
-		note, fill = "", width-4-labelWidth
-	}
-	labelStyle := mutedStyle
-	if focused {
-		labelStyle = accentStyle
-	}
-	return edge.Render("╭─") + labelStyle.Render(label) + edge.Render(strings.Repeat("─", fill)) + faintStyle.Render(note) + edge.Render("─╮")
 }
 
 func (m model) composerKey(msg tea.KeyMsg) (model, tea.Cmd) {

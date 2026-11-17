@@ -62,7 +62,7 @@ func chatUserBlock(text string, width int) []string {
 	for _, row := range body {
 		wrapped := strings.Split(ansi.Hardwrap(row, max(1, width-2), true), "\n")
 		for _, line := range wrapped {
-			lines = append(lines, gradientFill("▌", len(lines))+" "+line)
+			lines = append(lines, selectionRailStyle.Render("▌")+" "+line)
 		}
 	}
 	return lines

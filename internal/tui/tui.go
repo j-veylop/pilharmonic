@@ -24,10 +24,26 @@ type tickMsg time.Time
 // animTickMsg drives the shared animation clock at Crush's 20 fps.
 type animTickMsg struct{}
 
-// actionResultMsg reports a mutating service call by its notice or error.
+// reviewDiffMsg reports a loaded review patch.
 type reviewDiffMsg struct {
 	target, commit, title, diff string
 	err                         error
+}
+
+// diffStatEntry caches one worktree's line churn. key ties the value to the
+// commit it describes so a new attempt never shows stale numbers.
+type diffStatEntry struct {
+	key     string
+	added   int
+	removed int
+	at      time.Time
+	failed  bool
+}
+
+type diffStatMsg struct {
+	id, key        string
+	added, removed int
+	err            error
 }
 
 type skillToggleMsg struct {
@@ -36,6 +52,7 @@ type skillToggleMsg struct {
 	err     error
 }
 
+// actionResultMsg reports a mutating service call by its notice or error.
 type actionResultMsg struct {
 	notice string
 	err    error
@@ -80,6 +97,7 @@ type Service interface {
 	ApproveReview(id, commit, note string) error
 	RejectReview(id, commit, note string) error
 	ReviewDiff(ctx context.Context, id, commit string) (string, error)
+	TaskDiffStat(ctx context.Context, id string) (added, removed int, err error)
 	FollowUp(taskID, text string) (bool, error)
 	CreateTask(title, prompt, workspace string) (orchestrator.Task, error)
 	CreateRelatedTask(parentID, title, prompt, workspace string) (orchestrator.Task, error)
@@ -123,6 +141,8 @@ type model struct {
 	workspace     string
 	tasks         []orchestrator.Task
 	usage         orchestrator.SessionUsage
+	diffStats     map[string]diffStatEntry
+	doneExpanded  bool
 	selected      int
 	router        routerState
 	width, height int
@@ -328,6 +348,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishExternalEditor(msg)
 	case reviewDiffMsg:
 		m = m.acceptReviewDiff(msg)
+	case diffStatMsg:
+		if m.diffStats == nil {
+			m.diffStats = map[string]diffStatEntry{}
+		}
+		m.diffStats[msg.id] = diffStatEntry{key: msg.key, added: msg.added, removed: msg.removed, at: time.Now(), failed: msg.err != nil}
 	case skillToggleMsg:
 		m.finishSkillToggle(msg)
 	case actionResultMsg:
@@ -423,11 +448,39 @@ func (m *model) tick() tea.Cmd {
 	m.clampScroll()
 	m.cancelStaleSelection()
 	m.expireNotice()
+	cmds := []tea.Cmd{tick()}
 	if m.hasLiveWork() && !m.spinnerActive {
 		m.spinnerActive = true
-		return tea.Batch(tick(), animTick())
+		cmds = append(cmds, animTick())
 	}
-	return tick()
+	cmds = append(cmds, m.diffStatCommands(time.Now())...)
+	return tea.Batch(cmds...)
+}
+
+// diffStatCommands refreshes the visible worktrees' line churn off the update
+// loop. A static task is fetched once; a running one at most every few seconds.
+func (m model) diffStatCommands(now time.Time) []tea.Cmd {
+	if m.service == nil {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, row := range m.mainRows() {
+		task := row.task
+		if !task.Isolated || task.ExecutionWorkspace == "" {
+			continue
+		}
+		key := diffStatKey(task)
+		entry, cached := m.diffStats[task.ID]
+		if cached && entry.key == key && !(task.Status == orchestrator.Running && now.Sub(entry.at) >= 5*time.Second) {
+			continue
+		}
+		service, id := m.service, task.ID
+		cmds = append(cmds, func() tea.Msg {
+			added, removed, err := service.TaskDiffStat(context.Background(), id)
+			return diffStatMsg{id: id, key: key, added: added, removed: removed, err: err}
+		})
+	}
+	return cmds
 }
 
 // keyMsg routes a key to the surface that owns the keyboard, topmost first.
@@ -492,7 +545,25 @@ func (m *model) refreshTasks() {
 	m.tasks = m.service.ListTasks()
 	m.usage = m.service.SessionUsage()
 	m.notice.service = serviceNotice(m.service)
+	m.pruneDiffStats()
 	m.selectTask(selected)
+	m.ensureVisibleSelection()
+}
+
+// pruneDiffStats forgets worktrees of tasks that no longer exist.
+func (m *model) pruneDiffStats() {
+	if len(m.diffStats) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(m.tasks))
+	for _, task := range m.tasks {
+		live[task.ID] = true
+	}
+	for id := range m.diffStats {
+		if !live[id] {
+			delete(m.diffStats, id)
+		}
+	}
 }
 
 // expireNotice clears a notice that has stayed unchanged for about five ticks.

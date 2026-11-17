@@ -101,6 +101,25 @@ func (s *Service) ReviewDiff(ctx context.Context, id, commit string) (string, er
 	return worktree.ReviewDiff(ctx, s.worktreeSpec(t), commit)
 }
 
+// TaskDiffStat summarizes the worktree's line churn for the board. It uses the
+// reviewed or prepared commit when one exists and the working tree otherwise.
+func (s *Service) TaskDiffStat(ctx context.Context, id string) (added, removed int, err error) {
+	t, ok := s.GetTask(id)
+	if !ok {
+		return 0, 0, errTaskNotFound
+	}
+	if !t.Isolated || t.ExecutionWorkspace == "" {
+		return 0, 0, errors.New("task has no retained worktree")
+	}
+	commit := t.ReviewCommit
+	if commit == "" {
+		commit = t.WorktreeCommit
+	}
+	s.mergeMu.Lock()
+	defer s.mergeMu.Unlock()
+	return worktree.DiffStat(ctx, s.worktreeSpec(t), commit)
+}
+
 const workspaceCleanupTimeout = 30 * time.Second
 
 // cleanupTaskWorkspace removes a deleted task's worktree and reservation

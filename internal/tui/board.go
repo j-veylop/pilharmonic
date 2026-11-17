@@ -36,6 +36,7 @@ func init() {
 		}},
 		{"z", "full width", "Toggle full-width details", "Navigation", func(m *model) tea.Cmd { m.fullscreen = !m.fullscreen; return nil }},
 		{"B", "sidebar", "Toggle the task sidebar", "Navigation", func(m *model) tea.Cmd { m.sidebarHidden = !m.sidebarHidden; return nil }},
+		{"E", "done", "Expand or fold completed tasks while active work is on the board", "Navigation", func(m *model) tea.Cmd { m.toggleDone(); return nil }},
 		{"[", "prev subtask", "Select the previous subtask in the detailed view", "Navigation", func(m *model) tea.Cmd { m.cycleSubtask(-1); return nil }},
 		{"]", "next subtask", "Select the next subtask in the detailed view", "Navigation", func(m *model) tea.Cmd { m.cycleSubtask(1); return nil }},
 		{"esc", "leave", "Leave the input, return to the task list, or collapse the expanded call", "Navigation", func(m *model) tea.Cmd { m.fullscreen, m.detailFocus = false, false; return nil }},

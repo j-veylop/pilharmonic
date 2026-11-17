@@ -63,7 +63,7 @@ func (m *model) jumpVim(bottom bool, count int) {
 			m.historyOffset = m.maxScroll()
 		}
 	} else {
-		rows := taskListRows(m.tasks)
+		rows := m.mainRows()
 		position := 0
 		if len(rows) > 0 {
 			if bottom {
@@ -84,7 +84,7 @@ func (m *model) jumpVim(bottom bool, count int) {
 // grouped sidebar order, wrapping at the end. It reports whether any task needs
 // attention; when none do, the selection is left unchanged.
 func (m *model) jumpAttention() bool {
-	rows := taskListRows(m.tasks)
+	rows := m.mainRows()
 	any := false
 	for _, row := range rows {
 		if needsAttention(row.task) {
@@ -137,7 +137,7 @@ func (m *model) cycleSubtask(delta int) {
 // moveTaskSelection follows the main view order. Selection of a subtask moves
 // from its main task's position.
 func (m *model) moveTaskSelection(delta int) {
-	rows := taskListRows(m.tasks)
+	rows := m.mainRows()
 	if len(rows) == 0 {
 		m.selected = 0
 		m.historyOffset = 0

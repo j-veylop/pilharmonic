@@ -229,9 +229,9 @@ func TestTaskPanelNumbersRowsInGroupedOrder(t *testing.T) {
 	}
 	m := model{width: 120, height: 40, tasks: tasks, selected: 1}
 	plain := ansi.Strip(m.taskPanel(60, 30))
-	for _, want := range []string{"▌ 1 ◷ parent work", "2 ✓ other work"} {
+	for _, want := range []string{"▌ 1 ◷ parent work", "DONE 1", "E expand"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("missing numbered row %q in %q", want, plain)
+			t.Fatalf("missing grouped row %q in %q", want, plain)
 		}
 	}
 }

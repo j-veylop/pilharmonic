@@ -210,7 +210,7 @@ func TestNarrowLayoutShowsSelectedTaskPosition(t *testing.T) {
 		{ID: "other", Title: "other", Status: orchestrator.Completed},
 	}
 	m := model{width: 50, height: 24, tasks: tasks, selected: 0, detailFocus: true}
-	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "TASK 1/2") {
+	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "TASK 1/1") {
 		t.Fatalf("narrow layout lost main task position: %q", plain)
 	}
 	m.tasks[0].Attempts = []orchestrator.Attempt{{ID: "attempt"}}
@@ -219,13 +219,13 @@ func TestNarrowLayoutShowsSelectedTaskPosition(t *testing.T) {
 		m.width = width
 		m.fullscreen = width == 120
 		plain := ansi.Strip(m.View())
-		if !strings.Contains(plain, "TASK 1/2") || !strings.Contains(plain, "read") {
+		if !strings.Contains(plain, "TASK 1/1") || !strings.Contains(plain, "read") {
 			t.Fatalf("width %d: active tool hid task position or action: %q", width, plain)
 		}
 	}
 	m.fullscreen = false
 	m.width = 120
-	if plain := ansi.Strip(m.View()); strings.Contains(plain, "TASK 1/2") {
+	if plain := ansi.Strip(m.View()); strings.Contains(plain, "TASK 1/1") {
 		t.Fatalf("wide layout duplicated position beside the sidebar: %q", plain)
 	}
 }

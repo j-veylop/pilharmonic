@@ -1,11 +1,13 @@
 package worktree
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -72,6 +74,76 @@ func Commit(ctx context.Context, spec Spec) (Preparation, error) {
 		outcome.UpToDate = true
 	}
 	return outcome, nil
+}
+
+// DiffStat summarizes the line churn from the isolation base to commit. An
+// empty commit compares the worktree's working tree, so a running task reports
+// its uncommitted progress too.
+func DiffStat(ctx context.Context, spec Spec, commit string) (added, removed int, err error) {
+	owner, tree, err := validateMergeWorkspace(ctx, spec)
+	if err != nil {
+		return 0, 0, err
+	}
+	args := []string{"diff", "--numstat", "--no-ext-diff", "--no-color", owner.Commit}
+	if commit != "" {
+		resolved, resolveErr := gitOutput(ctx, tree, "rev-parse", "--verify", commit+"^{commit}")
+		if resolveErr != nil || resolved != commit {
+			return 0, 0, errors.New("diff commit is not available in the worktree")
+		}
+		if _, err = gitOutput(ctx, tree, "merge-base", "--is-ancestor", owner.Commit, commit); err != nil {
+			return 0, 0, errors.New("diff commit does not descend from the isolation commit")
+		}
+		args = append(args, commit)
+	}
+	args = append(args, "--")
+	output, err := gitOutput(ctx, tree, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) < 2 {
+			continue
+		}
+		// Binary files report "-" for both counts.
+		if a, aErr := strconv.Atoi(fields[0]); aErr == nil {
+			added += a
+		}
+		if r, rErr := strconv.Atoi(fields[1]); rErr == nil {
+			removed += r
+		}
+	}
+	if commit == "" {
+		// git diff omits files Git has never seen. Agents create those often,
+		// so count their lines directly; a NUL byte marks a binary file.
+		untracked, listErr := gitOutput(ctx, tree, "ls-files", "--others", "--exclude-standard", "--")
+		if listErr != nil {
+			return 0, 0, listErr
+		}
+		for _, path := range strings.Split(untracked, "\n") {
+			if path == "" {
+				continue
+			}
+			data, readErr := os.ReadFile(filepath.Join(tree, path))
+			if readErr != nil || bytes.IndexByte(data, 0) >= 0 {
+				continue
+			}
+			added += newlines(data)
+		}
+	}
+	return added, removed, nil
+}
+
+// newlines counts the lines in a text file, including a final unterminated one.
+func newlines(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	count := bytes.Count(data, []byte{'\n'})
+	if data[len(data)-1] != '\n' {
+		count++
+	}
+	return count
 }
 
 // ReviewDiff returns the patch from the isolation base to a validated reviewed commit.

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -55,38 +56,99 @@ func selectionRow(text string, width int) string {
 
 func (m model) taskPanel(width, height int) string {
 	inner := m.layout().panelInner(width)
-	rows := taskListRows(m.tasks)
+	all := taskListRows(m.tasks)
+	rows := m.mainRows()
 	var lines []string
 	running, attention := 0, m.attentionCount()
-	for _, row := range rows {
+	for _, row := range all {
 		if _, label, _ := m.taskState(row.task); label == "RUNNING" {
 			running++
 		}
 	}
-	lines = append(lines, gradientText("TASKS")+faintStyle.Render(fmt.Sprintf("  / %02d", len(rows)))+
+	lines = append(lines, gradientText("TASKS")+faintStyle.Render(fmt.Sprintf("  / %02d", len(all)))+
 		fit(blueStyle().Render(fmt.Sprintf("  %d running", running))+mutedStyle.Render("  ·  ")+amberStyle().Render(fmt.Sprintf("%d need action", attention)), inner-lipgloss.Width("TASKS  / 00"), 1))
 	lines = append(lines, "")
-	if len(rows) == 0 {
+	if len(all) == 0 {
 		return focusedPanel(m.landingContent(inner), width, height, true)
 	}
-	{
-		highlight := rootIndex(m.tasks, m.selected)
-		selected := 0
-		for i, row := range rows {
-			if row.index == highlight {
-				selected = i
-				break
+	highlight := rootIndex(m.tasks, m.selected)
+	selectedStart, selectedEnd := -1, -1
+	showHeaders := m.visibleGroupCount(rows) > 1
+	current := taskGroup(-1)
+	for i, row := range rows {
+		group := m.groupOf(row.task)
+		if showHeaders && group != current {
+			if current >= 0 {
+				lines = append(lines, "")
 			}
+			lines = append(lines, m.groupHeader(group, rows))
+			current = group
 		}
-		start, end := windowRows(selected, len(rows), (height-4)/2)
-		for i := start; i < end; i++ {
-			row := rows[i]
-			lines = append(lines,
-				m.taskTitleRow(row.task, i+1, len(rows), inner, row.index == highlight),
-				m.mainTaskMetaLine(row.task, inner))
+		start := len(lines)
+		lines = append(lines,
+			m.taskTitleRow(row.task, i+1, len(rows), inner, row.index == highlight),
+			m.mainTaskMetaLine(row.task, inner))
+		if row.index == highlight {
+			selectedStart, selectedEnd = start, len(lines)
 		}
 	}
-	return focusedPanel(strings.Join(lines, "\n"), width, height, true)
+	if m.doneCollapsed(all) {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		done, merged := 0, 0
+		for _, row := range all {
+			if m.groupOf(row.task) == groupDone {
+				done++
+				if row.task.MergeStatus == orchestrator.MergeMerged {
+					merged++
+				}
+			}
+		}
+		summary := fmt.Sprintf("DONE %d · merged %d", done, merged)
+		lines = append(lines, faintStyle.Render(summary)+mutedStyle.Render("    E expand"))
+	}
+	available := max(1, height-2)
+	start := 0
+	if selectedEnd > available {
+		start = selectedEnd - available
+		if selectedStart >= 0 && selectedStart < start {
+			start = selectedStart
+		}
+	}
+	if maxStart := len(lines) - available; start > maxStart {
+		start = max(0, maxStart)
+	}
+	end := min(len(lines), start+available)
+	return focusedPanel(strings.Join(lines[start:end], "\n"), width, height, true)
+}
+
+// groupHeader names one board group and counts its visible rows.
+func (m model) groupHeader(group taskGroup, rows []taskListRow) string {
+	count := 0
+	for _, row := range rows {
+		if m.groupOf(row.task) == group {
+			count++
+		}
+	}
+	style := mutedStyle
+	switch group {
+	case groupAttention:
+		style = amberStyle()
+	case groupRunning:
+		style = blueStyle()
+	}
+	return style.Render(group.label()) + faintStyle.Render(fmt.Sprintf("  %d", count))
+}
+
+// visibleGroupCount reports how many groups the current rows occupy. One group
+// needs no heading; the rows already say what they are.
+func (m model) visibleGroupCount(rows []taskListRow) int {
+	seen := map[taskGroup]bool{}
+	for _, row := range rows {
+		seen[m.groupOf(row.task)] = true
+	}
+	return len(seen)
 }
 
 // subtaskPanel is the detailed view's sidebar: every descendant of the selected
@@ -117,7 +179,7 @@ func (m model) subtaskPanel(width, height int, inner int, root orchestrator.Task
 // selectedPosition returns the selected task's one-based position in grouped
 // display order, which is the order the sidebar and navigation use.
 func (m model) selectedPosition() (position, total int, ok bool) {
-	rows := taskListRows(m.tasks)
+	rows := m.mainRows()
 	highlight := rootIndex(m.tasks, m.selected)
 	for i, row := range rows {
 		if row.index == highlight {
@@ -128,14 +190,49 @@ func (m model) selectedPosition() (position, total int, ok bool) {
 }
 
 // mainTaskMetaLine is the task list's secondary row: executor, workspace or
-// review state and the number of delegated subtasks.
+// review state, elapsed time, model, line churn and the keys that resolve an
+// attention state. A running task also shows the last observed activity, so a
+// silent agent looks different from a busy one.
 func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
-	label := executorLabel(task)
-	meta := "  " + mutedStyle.Render(label) + "  " + workspaceBadgeFor(task).render()
+	now := time.Now()
+	parts := []string{mutedStyle.Render(executorLabel(task)) + "  " + workspaceBadgeFor(task).render()}
 	if count := len(subtaskRows(m.tasks, task.ID)); count > 0 {
-		meta += mutedStyle.Render(fmt.Sprintf("  · %d subtask(s)", count))
+		parts = append(parts, mutedStyle.Render(fmt.Sprintf("%d subtask(s)", count)))
 	}
-	return fit(meta, width, 1)
+	elapsed, hasElapsed := taskElapsed(task, now)
+	stale := false
+	if task.Status == orchestrator.Running {
+		if at, _ := lastActivity(task); !at.IsZero() && now.Sub(at) > staleAfter {
+			stale = true
+		}
+	}
+	if hasElapsed {
+		text := shortDuration(elapsed)
+		if stale {
+			parts = append(parts, warningStyle.Render("⚠ "+text))
+		} else {
+			parts = append(parts, mutedStyle.Render(text))
+		}
+	}
+	if model := taskModel(task); model != "" {
+		parts = append(parts, mutedStyle.Render(model))
+	}
+	if added, removed, ok := m.diffStat(task); ok && added+removed > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("+%d", added))+
+			mutedStyle.Render(" ")+lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("−%d", removed)))
+	}
+	if hint := actionHint(task); hint != "" {
+		parts = append(parts, lipgloss.NewStyle().Foreground(statusWaiting).Render(hint))
+	}
+	if task.Status == orchestrator.Running {
+		if at, summary := lastActivity(task); summary != "" && !at.IsZero() {
+			line := "last " + shortDuration(now.Sub(at)) + ": " + singleLine(summary)
+			parts = append(parts, faintStyle.Render(line))
+		} else if stale {
+			parts = append(parts, faintStyle.Render("no activity "+shortDuration(now.Sub(task.UpdatedAt))))
+		}
+	}
+	return fit("  "+strings.Join(parts, mutedStyle.Render("  ·  ")), width, 1)
 }
 
 // executorLabel shows the executor and, when chosen, its profile.

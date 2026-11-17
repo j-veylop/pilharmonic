@@ -12,6 +12,7 @@ import (
 	"charm.land/fantasy"
 
 	"pilharmonic/internal/agenttools"
+	"pilharmonic/internal/skills"
 )
 
 // FantasyRunner executes a task in-process through the fantasy agent loop,
@@ -28,6 +29,9 @@ type FantasyRunner struct {
 	// ModelFactory resolves a model ID to a fantasy.LanguageModel. Nil means
 	// DefaultFantasyModelFactory.
 	ModelFactory ModelFactory
+	// skills lists operator-installed instruction packs. Their metadata travels
+	// in the system prompt and their bodies are read through the skill tool.
+	skills skills.Catalog
 }
 
 // SupportsProfile accepts the parameters this adapter can translate. Tool names
@@ -59,6 +63,9 @@ func (f FantasyRunner) systemPrompt(profile *Profile) string {
 	}
 	if profile != nil && profile.Instructions != "" {
 		guidance += "\nOrchestrator role " + profile.Name + " (adds no authority beyond the mandate):\n" + profile.Instructions
+	}
+	if index := f.skills.Prompt(); index != "" {
+		guidance += "\n" + index
 	}
 	return guidance
 }
@@ -144,7 +151,7 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 	}
 	agent := fantasy.NewAgent(model,
 		fantasy.WithSystemPrompt(f.systemPrompt(t.ProfileSpec)),
-		fantasy.WithTools(agenttools.Tools(t.Workspace, f.toolPalette(t.ProfileSpec), t.runnerEnvironment())...),
+		fantasy.WithTools(agenttools.ToolsWithSkills(t.Workspace, f.toolPalette(t.ProfileSpec), t.runnerEnvironment(), f.skills)...),
 	)
 	stream := &fantasyStream{transcript: transcript{out: out}, reasoning: map[string]int{}, inFlight: map[string]ToolActivity{}}
 	stream.recorder, _ = out.(ToolActivityRecorder)

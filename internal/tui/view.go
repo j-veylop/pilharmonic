@@ -110,22 +110,26 @@ func (m model) View() string {
 		if m.quitConfirm {
 			// The frame cannot hold the footer prompt, but the answer keys still work,
 			// so the resize prompt explains them.
-			prompt = "y quit · n/esc stay"
+			prompt = "y " + quitButtonLabels[quitButtonQuit] + " · n " + quitButtonLabels[quitButtonStay]
 		}
 		return fit("PILHARMONIC\nResize terminal to at least 30 × 10\n"+prompt, w, h)
 	}
 	var body string
-	switch {
-	case !l.details:
-		body = m.taskPanel(w, l.bodyHeight)
-	case l.sidebar:
-		root, _ := m.selectedTask()
-		root = m.rootTask(root)
-		body = lipgloss.JoinHorizontal(lipgloss.Top,
-			m.subtaskPanel(l.taskWidth, l.bodyHeight, l.panelInner(l.taskWidth), root, subtaskRows(m.tasks, root.ID)),
-			" ", m.detailPanel(l.detailWidth, l.bodyHeight))
-	default:
-		body = m.detailPanel(w, l.bodyHeight)
+	if m.reviewDiff.target != "" {
+		body = m.reviewDiffView(w, l.bodyHeight)
+	} else {
+		switch {
+		case !l.details:
+			body = m.taskPanel(w, l.bodyHeight)
+		case l.sidebar:
+			root, _ := m.selectedTask()
+			root = m.rootTask(root)
+			body = lipgloss.JoinHorizontal(lipgloss.Top,
+				m.subtaskPanel(l.taskWidth, l.bodyHeight, l.panelInner(l.taskWidth), root, subtaskRows(m.tasks, root.ID)),
+				" ", m.detailPanel(l.detailWidth, l.bodyHeight))
+		default:
+			body = m.detailPanel(w, l.bodyHeight)
+		}
 	}
 	rows := []string{m.headerRow(w)}
 	if body != "" {
@@ -347,6 +351,8 @@ func (m model) footer(w int) string {
 	var footerText string
 	board := false
 	switch {
+	case m.reviewDiff.target != "":
+		footerText = "j/k scroll · y approve + merge · n reject · esc close · ? help · q quit"
 	case m.router.open && (m.detailFocus || m.fullscreen):
 		footerText = withHelpHint("enter send · esc leave · ctrl+c quit", w)
 	case m.router.open:

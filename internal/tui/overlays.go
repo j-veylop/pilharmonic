@@ -61,7 +61,7 @@ func (m model) actionPromptView(screen string, w, h int) string {
 	case m.quitConfirm:
 		title = "QUIT  › Leave pilharmonic?"
 		body = m.quitCountLine() + "\nHistory and worktrees are kept."
-		keys = "y quit  ·  n/esc stay"
+		keys = "y " + quitButtonLabels[quitButtonQuit] + "  ·  n/esc " + quitButtonLabels[quitButtonStay]
 	case m.review.target != "":
 		title = "REVIEW  › " + singleLine(m.review.title)
 		body = "commit " + singleLine(m.review.commit)

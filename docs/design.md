@@ -89,6 +89,15 @@ Specialist tool limits intersect with the task profile's tools; disjoint lists
 prevent the start. An executor that cannot honor a profile's tools or model
 fails the start instead of ignoring them. A profile is not a sandbox.
 
+Skills are operator-owned instruction packs loaded at startup from the `skills`
+directory beside the state file or an explicit path. Only their names and
+descriptions enter the system prompt; the agent reads a body through the skill
+tool. Loading a skill adds instructions, never authority: the mandate, profile
+tool palette and orchestrator policies still bound the task. A missing default
+directory is empty; malformed files, duplicate names and a missing explicit
+directory fail startup. The loader is a leaf package so the executor can use a
+catalog without importing the service.
+
 The service resolves a Fantasy attempt's model as the task profile model, else
 the agent's class model (`models.json`; `general` is big, specialists small),
 else the specialist model (`profiles.json`), else `-model`. A profile or

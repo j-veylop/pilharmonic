@@ -5,9 +5,10 @@ import (
 	"sort"
 	"strings"
 
+	"pilharmonic/internal/orchestrator"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"pilharmonic/internal/orchestrator"
 )
 
 // The dialog's buttons, in focus order. Quitting comes first so Enter keeps
@@ -17,7 +18,7 @@ const (
 	quitButtonStay
 )
 
-var quitButtonLabels = [2]string{"y quit", "n/esc stay"}
+var quitButtonLabels = [2]string{"quit", "cancel"}
 
 // requestQuit opens the confirmation. Every exit key on every surface asks
 // first, so a stray q or Ctrl-c never ends a run with work in flight. The card

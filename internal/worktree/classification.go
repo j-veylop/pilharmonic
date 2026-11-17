@@ -110,7 +110,7 @@ func RequestsChanges(text string) bool {
 			// A subject or auxiliary may precede the verb. Keep the request-start
 			// position so "we should refactor this" and "help me fix the parser"
 			// still count as requested work.
-			if requestLeadWords[token] && !changeVerbs[token] {
+			if requestLeadWords[token] {
 				continue
 			}
 		}

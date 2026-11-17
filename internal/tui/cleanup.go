@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"pilharmonic/internal/orchestrator"
@@ -129,6 +131,20 @@ func (r cleanupRequest) run(service Service) string {
 // are captured when it opens, so a newer attempt is never approved by mistake.
 type reviewPrompt struct {
 	target, commit, title string
+}
+
+type reviewDiffState struct {
+	target, commit, title, diff string
+	loading                     bool
+}
+
+func (m model) loadReviewDiff(id, commit, title string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		diff, err := m.service.ReviewDiff(ctx, id, commit)
+		return reviewDiffMsg{target: id, commit: commit, title: title, diff: diff, err: err}
+	}
 }
 
 func (m model) reviewKey(key string) (model, tea.Cmd) {

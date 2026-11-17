@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+
+	"pilharmonic/internal/skills"
 )
 
 func must(t *testing.T, err error) {
@@ -46,6 +48,33 @@ func TestToolsCoverThePalette(t *testing.T) {
 	subset := Tools(t.TempDir(), []string{"read", "unknown-tool"}, nil)
 	if len(subset) != 1 || subset[0].Info().Name != "read" {
 		t.Fatalf("palette filtering failed: %v", subset)
+	}
+}
+
+func TestToolsExposeInstalledSkills(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "verify")
+	must(t, os.MkdirAll(skillDir, 0o755))
+	must(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: verify\ndescription: Verify a change.\n---\nRun the checks.\n"), 0o644))
+	catalog, err := skills.Load(dir)
+	must(t, err)
+
+	tools := ToolsWithSkills(t.TempDir(), []string{"read"}, nil, catalog)
+	if len(tools) != 2 || tools[1].Info().Name != "skill" {
+		t.Fatalf("skill tool missing from %v", tools)
+	}
+	response, err := tools[1].Run(context.Background(), fantasy.ToolCall{ID: "call-1", Name: "skill", Input: `{"name":"verify"}`})
+	must(t, err)
+	if response.IsError || !strings.Contains(response.Content, "Run the checks.") {
+		t.Fatalf("skill response: %+v", response)
+	}
+	missing, err := tools[1].Run(context.Background(), fantasy.ToolCall{ID: "call-2", Name: "skill", Input: `{"name":"unknown"}`})
+	must(t, err)
+	if !missing.IsError {
+		t.Fatalf("unknown skill did not fail: %+v", missing)
+	}
+	if len(Tools(t.TempDir(), nil, nil)) != len(Names()) {
+		t.Fatal("empty catalog changed the default palette")
 	}
 }
 

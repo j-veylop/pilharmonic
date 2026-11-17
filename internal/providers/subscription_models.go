@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -15,11 +14,11 @@ import (
 const subscriptionModelsClientVersion = "999.0.0"
 
 func listSubscriptionModels(ctx context.Context) ([]string, error) {
-	home, err := subscriptionHome()
+	path, err := subscriptionAuthPath()
 	if err != nil {
 		return nil, subscriptionError(ctx, err)
 	}
-	return fetchSubscriptionModels(ctx, filepath.Join(home, "auth.json"), subscriptionBaseURL, subscriptionTokenURL, &http.Client{})
+	return fetchSubscriptionModels(ctx, path, subscriptionBaseURL, subscriptionTokenURL, &http.Client{})
 }
 
 func fetchSubscriptionModels(ctx context.Context, authPath, baseURL, tokenURL string, client *http.Client) ([]string, error) {
@@ -32,7 +31,7 @@ func fetchSubscriptionModels(ctx context.Context, authPath, baseURL, tokenURL st
 	if err != nil {
 		return nil, subscriptionError(ctx, err)
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models?client_version="+subscriptionModelsClientVersion, nil)
 		if err != nil {
 			return nil, subscriptionError(ctx, err)
@@ -86,5 +85,4 @@ func fetchSubscriptionModels(ctx context.Context, authPath, baseURL, tokenURL st
 		sort.Strings(models)
 		return models, nil
 	}
-	return nil, fmt.Errorf("ChatGPT subscription models authentication failed")
 }

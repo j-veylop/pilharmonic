@@ -46,6 +46,14 @@ func subscriptionHome() (string, error) {
 	return filepath.Join(dir, "orchestrator", "openai-subscription"), nil
 }
 
+func subscriptionAuthPath() (string, error) {
+	home, err := subscriptionHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "auth.json"), nil
+}
+
 func LoginCommand(device bool) *exec.Cmd {
 	args := []string{"-c", `cli_auth_credentials_store="file"`, "login"}
 	if device {
@@ -88,11 +96,11 @@ func readSubscriptionAuth(path string) (subscriptionAuth, []byte, error) {
 }
 
 func SubscriptionConfigured() bool {
-	home, err := subscriptionHome()
+	path, err := subscriptionAuthPath()
 	if err != nil {
 		return false
 	}
-	_, _, err = readSubscriptionAuth(filepath.Join(home, "auth.json"))
+	_, _, err = readSubscriptionAuth(path)
 	return err == nil
 }
 
@@ -114,7 +122,7 @@ func subscriptionCredential(ctx context.Context, path, tokenURL string, client *
 	if err := ctx.Err(); err != nil {
 		return subscriptionTokens{}, err
 	}
-	auth, original, err := readSubscriptionAuth(path)
+	auth, _, err := readSubscriptionAuth(path)
 	if err != nil {
 		return subscriptionTokens{}, err
 	}
@@ -134,7 +142,7 @@ func subscriptionCredential(ctx context.Context, path, tokenURL string, client *
 		}
 	}
 	defer release()
-	auth, original, err = readSubscriptionAuth(path)
+	auth, original, err := readSubscriptionAuth(path)
 	if err != nil {
 		return subscriptionTokens{}, err
 	}
@@ -325,11 +333,10 @@ func (t *subscriptionTransport) RoundTrip(req *http.Request) (*http.Response, er
 }
 
 func resolveSubscription(ctx context.Context, model string) (fantasy.LanguageModel, error) {
-	home, err := subscriptionHome()
+	path, err := subscriptionAuthPath()
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(home, "auth.json")
 	if _, _, err := readSubscriptionAuth(path); err != nil {
 		return nil, err
 	}

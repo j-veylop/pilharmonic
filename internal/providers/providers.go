@@ -1,6 +1,6 @@
 // Package providers resolves provider/model selectors to Fantasy language
-// models and lists provider catalogs. Callers supply credentials; nothing here
-// stores them.
+// models and lists provider catalogs. API-key callers supply credentials; the
+// ChatGPT subscription provider reads and refreshes its own file-backed login.
 package providers
 
 import (

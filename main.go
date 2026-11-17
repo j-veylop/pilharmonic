@@ -61,6 +61,7 @@ func parseFlags() options {
 	flag.StringVar(&o.DefaultModel, "model", "", "fallback model (provider/model) when no profile, class or specialist model applies")
 	flag.StringVar(&o.AgentsPath, "agents", "", "path to optional agent command configuration JSON")
 	flag.StringVar(&o.ProfilesPath, "profiles", "", "profile and specialist settings (default: profiles.json beside the state file)")
+	flag.StringVar(&o.SkillsPath, "skills", "", "skill instruction packs (default: skills directory beside the state file)")
 	flag.StringVar(&o.RoutingProfile, "profile", "", "default profile for routed and unchosen tasks (built-in profile uses executor defaults)")
 	flag.IntVar(&o.MaxConcurrent, "max-concurrent", orchestrator.DefaultConcurrency, "maximum simultaneous agent processes")
 	flag.DurationVar(&o.IdleTimeout, "idle-timeout", 0, "cancel an agent that produces no output for this long (0 disables)")
@@ -130,6 +131,9 @@ func run() (err error) {
 	}
 	if profiles != "" {
 		fmt.Fprintf(os.Stderr, "pilharmonic: loaded profiles from %s\n", profiles)
+	}
+	if path, names := service.SkillInfo(); len(names) > 0 {
+		fmt.Fprintf(os.Stderr, "pilharmonic: loaded %d skill(s) from %s\n", len(names), path)
 	}
 	return tui.Run(service, o.workspace, tui.Options{Icons: o.icons, Theme: o.theme})
 }

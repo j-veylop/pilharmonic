@@ -74,7 +74,7 @@ func (s *Service) acceptLocal(purpose, parentID, title, text, workspace, profile
 	// An explicit caller title is kept. A title equal to the derived fallback
 	// came from the request itself, so the title model may improve it once the
 	// task exists.
-	generateTitle := purpose == PurposeRouter || title == derived
+	generateTitle := title == derived
 	abs, err := filepath.Abs(workspace)
 	if err != nil {
 		return Task{}, err

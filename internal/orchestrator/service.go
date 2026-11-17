@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"pilharmonic/internal/providers"
+	"pilharmonic/internal/skills"
 )
 
 type Service struct {
@@ -33,6 +34,10 @@ type Service struct {
 	runners         map[string]Runner
 	specialistTools map[string][]string
 	profiles        map[string]Profile
+	// skills are operator-installed instruction packs exposed to Fantasy
+	// runners through the system prompt and the skill tool.
+	skills     skills.Catalog
+	skillsPath string
 	// routeProfile is the profile the router assigns and the default for tasks
 	// created without an explicit choice.
 	routeProfile   string
@@ -148,6 +153,7 @@ func DefaultStatePath() (string, error) {
 type Options struct {
 	AgentsPath     string // optional command agent definitions
 	ProfilesPath   string // profiles.json; required only when set explicitly
+	SkillsPath     string // skills directory; required only when set explicitly
 	DefaultModel   string
 	RoutingProfile string
 	Isolation      bool
@@ -183,6 +189,18 @@ func (s *Service) Configure(o Options) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
+	skillPath := o.SkillsPath
+	if skillPath == "" {
+		skillPath = filepath.Join(filepath.Dir(s.path), "skills")
+	}
+	if err := s.LoadSkills(skillPath); errors.Is(err, os.ErrNotExist) && o.SkillsPath == "" {
+		// The default skills directory is optional.
+		s.mu.Lock()
+		s.skillsPath = skillPath
+		s.mu.Unlock()
+	} else if err != nil {
+		return "", err
+	}
 	if o.DefaultModel != "" {
 		s.SetDefaultModel(o.DefaultModel)
 	}
@@ -207,6 +225,38 @@ func (s *Service) Configure(o Options) (string, error) {
 		}
 	}
 	return profiles, errors.Join(s.SetConcurrencyLimit(o.MaxConcurrent), s.SetIdleTimeout(o.IdleTimeout), s.SetAttemptRetention(o.AttemptRetention))
+}
+
+// LoadSkills reads the operator's skill directory and attaches the catalog to
+// every Fantasy runner. A skill supplies instructions only: it cannot widen the
+// mandate or the profile's tool palette.
+func (s *Service) LoadSkills(path string) error {
+	catalog, err := skills.Load(path)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.skills = catalog
+	s.skillsPath = path
+	for name, runner := range s.runners {
+		if fantasyRunner, ok := runner.(FantasyRunner); ok {
+			fantasyRunner.skills = catalog
+			s.runners[name] = fantasyRunner
+		}
+	}
+	return nil
+}
+
+// SkillInfo reports the skills directory and the loaded skill names.
+func (s *Service) SkillInfo() (string, []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, s.skills.Len())
+	for _, skill := range s.skills.List() {
+		names = append(names, skill.Name)
+	}
+	return s.skillsPath, names
 }
 
 func (s *Service) RegisterRunner(name string, runner Runner) {

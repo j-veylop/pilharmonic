@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -106,17 +105,11 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 			if err != nil {
 				return routerResultMsg{err: err}
 			}
-			requeued, err := service.FollowUp(id, prompt)
-			if err != nil {
+			notice, err := sendFollowUp(service, id, prompt)
+			if notice == "" {
 				return routerResultMsg{err: err}
 			}
-			if !requeued {
-				return routerResultMsg{task: target, notice: "Follow-up recorded; delivery status is in history."}
-			}
-			if err := service.Start(context.Background(), id); err != nil {
-				return routerResultMsg{task: target, notice: "Follow-up recorded, but the conversation could not resume.", err: err}
-			}
-			return routerResultMsg{task: target, notice: "Follow-up sent; continuing the conversation."}
+			return routerResultMsg{task: target, notice: notice, err: err}
 		}
 	}
 	service, workspace, attachments := m.service, m.workspace, append([]string(nil), m.attachments...)

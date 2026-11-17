@@ -17,7 +17,7 @@ pilharmonic opens on the task board with the **REQUEST** box always docked at th
 
 Inputs use standard text editing keys (word delete, line kill, word movement, Home/End). **Ctrl-J** or **Alt-Enter** inserts a newline.
 
-`go run . -help` lists all flags. Common ones: `-workspace` (default current directory), `-state` (default `<user config dir>/orchestrator/state.json`), `-idle-timeout`, `-isolation`, `-attempt-retention` (default 8, `0` keeps all), `-theme auto|dark|light`, `-icons` (Nerd Font status glyphs), `-version`. One instance per state file (enforced by a lock). The state file stores prompts, recent output (up to 256 KiB per attempt), decisions and history in plain text.
+`go run . -help` lists all flags. Common ones: `-workspace` (default current directory), `-state` (default `<user config dir>/orchestrator/state.json`), `-skills` (default `skills` beside the state file), `-idle-timeout`, `-isolation`, `-attempt-retention` (default 8, `0` keeps all), `-theme auto|dark|light`, `-icons` (Nerd Font status glyphs), `-version`. One instance per state file (enforced by a lock). The state file stores prompts, recent output (up to 256 KiB per attempt), decisions and history in plain text.
 
 ## OpenAI subscription login
 
@@ -40,7 +40,7 @@ Login uses a dedicated file-backed Codex home at `<user config dir>/orchestrator
 | Inspect | `Tab`/`Shift-Tab` cycle the OUTPUT, INFO and ACTIVITY tabs; `t` thinking; `e` activity filter; **Enter** in focused ACTIVITY expands a call. |
 | Navigate | `h`/`l` panes, `j`/`k` move (counts like `5j`), `gg`/`G`, `Ctrl-u`/`Ctrl-d`, `PgUp`/`PgDn`, **Enter** open details, `[`/`]` previous/next subtask, `!` next task needing action, `z` full width, `B` toggle the subtask sidebar, mouse wheel. |
 | Copy | Drag in the details pane; release copies via OSC 52. |
-| Report / review | `p` status report; `v` asks: `y` approve and merge, `n` reject with reason. |
+| Report / review | `p` status report; `v` opens the prepared commit diff, `y` approves and merges, `n` rejects with a reason, `Esc` closes. |
 | Clean up | `x` discard clean integrated worktree, `d` delete task; `X`/`D` bulk. Confirm with `y`. |
 | Delegate | `b` create a child task from a running one. |
 | Login / models | `/login`, `/model [big\|small]`, `/theme [auto\|dark\|light]`. |
@@ -95,6 +95,22 @@ Startup reads `profiles.json` beside the state file (never the current directory
 
 Built-in profiles `implementer` (routing default) and `coordinator` set nothing and inherit executor defaults. Entries overlay built-ins field by field; `default_profile` picks the routing default. Specialist tool limits (`specialists[].tools`) intersect with the task profile; disjoint lists prevent the start.
 
+## Skills
+
+Skills are local instruction packs that a Fantasy task can load on demand. Startup reads the `skills` directory beside the state file (`<user config dir>/orchestrator/skills`), or `-skills PATH`. Each skill is a subdirectory containing `SKILL.md` with YAML frontmatter and instructions:
+
+```markdown
+---
+name: release
+description: Build and publish a tagged release without skipping verification.
+---
+# Release
+
+Run `scripts/build-release.sh <tag>` and verify the checksums.
+```
+
+The frontmatter supplies `name` (defaults to the directory name) and a one-line `description`. The system prompt lists installed skills and their descriptions; the agent loads a body with the `skill` tool, so unused instructions cost no context. A skill supplies instructions only and grants no authority beyond the task mandate or the profile's tool palette. Malformed skills, duplicate names and an explicitly configured missing directory fail startup; the default directory is optional.
+
 ## Command executors
 
 For smoke tests or wrapping a program, run `go run . -agents agents.json`:
@@ -120,7 +136,7 @@ grep " ${name}\$" sha256sums.txt | sha256sum -c -   # verify a download
 
 ## Development
 
-`internal/orchestrator` owns task state and execution; `internal/tui` is the Bubble Tea interface. The leaf packages `internal/worktree` (Git worktrees), `internal/providers` (model providers), `internal/agenttools` (workspace tools) and `internal/instance` (state-file lock, atomic writes) do not depend on the engine. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
+`internal/orchestrator` owns task state and execution; `internal/tui` is the Bubble Tea interface. The leaf packages `internal/worktree` (Git worktrees), `internal/providers` (model providers), `internal/agenttools` (workspace tools), `internal/skills` (skill loader) and `internal/instance` (state-file lock, atomic writes) do not depend on the engine. Tests use temporary directories, local Git repositories, Unix sockets and fake executors.
 
 ```sh
 go test ./... && go vet ./...

@@ -19,6 +19,13 @@ var boardKeys []binding
 
 // init fills boardKeys because its handlers render the footer, which reads it.
 func init() {
+	focusRequest := func(m *model) tea.Cmd {
+		m.router.open = true
+		m.router.Cursor = len(m.router.Text)
+		m.router.Scroll = 0
+		m.notice.text = ""
+		return nil
+	}
 	boardKeys = []binding{
 		{"enter", "details", "Open the selected task; in details, keep it open (Esc returns); in ACTIVITY, expand / collapse the call", "Navigation", func(m *model) tea.Cmd {
 			if !m.detailFocus && !m.fullscreen {
@@ -38,20 +45,8 @@ func init() {
 			}
 			return nil
 		}},
-		{"/", "request", "Focus the request box: Enter routes and starts, Ctrl-s holds the task for setup", "Tasks", func(m *model) tea.Cmd {
-			m.router.open = true
-			m.router.Cursor = len(m.router.Text)
-			m.router.Scroll = 0
-			m.notice.text = ""
-			return nil
-		}},
-		{"i", "input", "Focus the request box (Esc leaves it; it stays visible)", "Tasks", func(m *model) tea.Cmd {
-			m.router.open = true
-			m.router.Cursor = len(m.router.Text)
-			m.router.Scroll = 0
-			m.notice.text = ""
-			return nil
-		}},
+		{"/", "request", "Focus the request box: Enter routes and starts, Ctrl-s holds the task for setup", "Tasks", focusRequest},
+		{"i", "input", "Focus the request box (Esc leaves it; it stays visible)", "Tasks", focusRequest},
 		{"o", "setup", "Set executor, profile and isolation of a held task", "Tasks", onTask(func(m *model, t orchestrator.Task) tea.Cmd {
 			if configurable(t, "Set up a task only while it is held: queued and not started.", &m.notice.text) {
 				m.setup = setupState{target: t.ID}
@@ -77,9 +72,10 @@ func init() {
 				m.notice.text = "No worktree commit awaits review."
 				return nil
 			}
-			m.review = reviewPrompt{target: t.ID, commit: t.ReviewCommit, title: t.Title}
+			m.reviewDiff = reviewDiffState{target: t.ID, commit: t.ReviewCommit, title: t.Title, loading: true}
+			m.historyOffset = 0
 			m.notice.text = ""
-			return nil
+			return m.loadReviewDiff(t.ID, t.ReviewCommit, t.Title)
 		})},
 		{"f", "follow up", "Continue the conversation; a finished task resumes immediately", "Tasks", onTask(func(m *model, t orchestrator.Task) tea.Cmd {
 			notice := "Follow-up continues the conversation from the existing output."

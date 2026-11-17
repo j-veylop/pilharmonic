@@ -134,45 +134,6 @@ func taskListRows(tasks []orchestrator.Task) []taskListRow {
 	return rows
 }
 
-// taskTreeRows groups delegated children directly beneath their parent while
-// preserving newest-first order. It feeds the detailed view's subtask sidebar.
-func taskTreeRows(tasks []orchestrator.Task) []taskListRow {
-	known := make(map[string]bool, len(tasks))
-	for _, task := range tasks {
-		if task.ID != "" {
-			known[task.ID] = true
-		}
-	}
-	children := make(map[string][]int)
-	for i, task := range tasks {
-		if task.ParentID != "" && known[task.ParentID] {
-			children[task.ParentID] = append(children[task.ParentID], i)
-		}
-	}
-	rows := make([]taskListRow, 0, len(tasks))
-	visited := make([]bool, len(tasks))
-	var walk func(int)
-	walk = func(index int) {
-		if visited[index] {
-			return
-		}
-		visited[index] = true
-		rows = append(rows, taskListRow{index: index, task: tasks[index]})
-		for _, child := range children[tasks[index].ID] {
-			walk(child)
-		}
-	}
-	for i, task := range tasks {
-		if task.ParentID == "" || !known[task.ParentID] {
-			walk(i)
-		}
-	}
-	for i := range tasks {
-		walk(i)
-	}
-	return rows
-}
-
 // taskNumberColumn formats a task's one-based position for the sidebar's number
 // gutter. The column is as wide as total so rows stay aligned.
 func taskNumberColumn(position, total int) string {

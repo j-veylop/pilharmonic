@@ -25,6 +25,11 @@ type tickMsg time.Time
 type animTickMsg struct{}
 
 // actionResultMsg reports a mutating service call by its notice or error.
+type reviewDiffMsg struct {
+	target, commit, title, diff string
+	err                         error
+}
+
 type actionResultMsg struct {
 	notice string
 	err    error
@@ -64,6 +69,7 @@ type Service interface {
 	Cancel(id string) error
 	ApproveReview(id, commit, note string) error
 	RejectReview(id, commit, note string) error
+	ReviewDiff(ctx context.Context, id, commit string) (string, error)
 	FollowUp(taskID, text string) (bool, error)
 	CreateTask(title, prompt, workspace string) (orchestrator.Task, error)
 	CreateRelatedTask(parentID, title, prompt, workspace string) (orchestrator.Task, error)
@@ -124,6 +130,7 @@ type model struct {
 	isolationBusy bool
 	cleanup       cleanupRequest
 	review        reviewPrompt
+	reviewDiff    reviewDiffState
 	cleanupBusy   bool
 	selection     textSelection
 	clipboard     io.Writer
@@ -320,6 +327,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+	case reviewDiffMsg:
+		m = m.acceptReviewDiff(msg)
 	case actionResultMsg:
 		m.finish(msg)
 	case composerResultMsg:
@@ -448,6 +457,8 @@ func (m model) keyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.routerKey(msg)
 	case m.cleanup.kind != "":
 		return m.cleanupKey(key)
+	case m.reviewDiff.target != "":
+		return m.reviewDiffKey(msg)
 	case m.review.target != "":
 		return m.reviewKey(key)
 	case m.input.kind != "":
@@ -518,28 +529,6 @@ func (m model) selectedTaskOrZero() orchestrator.Task {
 func (m model) selectedID() string {
 	t, _ := m.selectedTask()
 	return t.ID
-}
-
-// runningElapsed is the age of the earliest running attempt, shown as the
-// spinner suffix while work is live.
-func (m model) runningElapsed() string {
-	var earliest time.Time
-	for _, task := range m.tasks {
-		if task.Status != orchestrator.Running || len(task.Attempts) == 0 {
-			continue
-		}
-		started := task.Attempts[len(task.Attempts)-1].StartedAt
-		if started.IsZero() {
-			continue
-		}
-		if earliest.IsZero() || started.Before(earliest) {
-			earliest = started
-		}
-	}
-	if earliest.IsZero() {
-		return ""
-	}
-	return elapsedLabel(time.Since(earliest))
 }
 
 // selectedTurnElapsed is the age of the selected task's live attempt.

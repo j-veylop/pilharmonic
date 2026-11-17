@@ -87,6 +87,20 @@ func (s *Service) prepareExecution(ctx context.Context, t Task) (Task, error) {
 	return t, nil
 }
 
+// ReviewDiff returns the patch from the isolation base to the exact commit awaiting review.
+func (s *Service) ReviewDiff(ctx context.Context, id, commit string) (string, error) {
+	t, ok := s.GetTask(id)
+	if !ok {
+		return "", errTaskNotFound
+	}
+	if !t.AwaitingReview() || t.ReviewCommit != commit || !t.Isolated || t.ExecutionWorkspace == "" {
+		return "", errors.New("commit is not awaiting review for this isolated task")
+	}
+	s.mergeMu.Lock()
+	defer s.mergeMu.Unlock()
+	return worktree.ReviewDiff(ctx, s.worktreeSpec(t), commit)
+}
+
 const workspaceCleanupTimeout = 30 * time.Second
 
 // cleanupTaskWorkspace removes a deleted task's worktree and reservation

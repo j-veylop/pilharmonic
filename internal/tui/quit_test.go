@@ -34,7 +34,7 @@ func TestQuitKeysAskOnEverySurface(t *testing.T) {
 				t.Fatalf("%s: %s did not ask before quitting", name, msg)
 			}
 			plain := ansi.Strip(armed.View())
-			if !strings.Contains(plain, "Leave pilharmonic?") || !strings.Contains(plain, "y quit") || !strings.Contains(plain, "n/esc stay") {
+			if !strings.Contains(plain, "Leave pilharmonic?") || !strings.Contains(plain, quitButtonLabels[quitButtonQuit]) || !strings.Contains(plain, quitButtonLabels[quitButtonStay]) {
 				t.Fatalf("%s: confirmation not drawn: %s", name, plain)
 			}
 			after := key(key(armed, runeKey("j")), runeKey("a"))
@@ -119,12 +119,12 @@ func TestQuitConfirmationCountsLiveWorkAndFits(t *testing.T) {
 		assertFits(t, view, size[0], size[1])
 		plain := quitPlain(view)
 		if size[0] < 30 {
-			if !strings.Contains(plain, "y quit · n/esc stay") {
+			if !strings.Contains(plain, "y "+quitButtonLabels[quitButtonQuit]+" · n "+quitButtonLabels[quitButtonStay]) {
 				t.Fatalf("%v: resize prompt lost the answer keys: %s", size, plain)
 			}
 			continue
 		}
-		if !strings.Contains(plain, "y quit") || !strings.Contains(plain, "when you quit") {
+		if !strings.Contains(plain, quitButtonLabels[quitButtonQuit]) || !strings.Contains(plain, "when you quit") {
 			t.Fatalf("%v: dialog lost its count or answers: %s", size, plain)
 		}
 		if size[1] > 10 && !strings.Contains(plain, "History and worktrees are kept") {
@@ -227,7 +227,7 @@ func TestQuitDialogDrawsBothButtons(t *testing.T) {
 		view := m.requestQuit().View()
 		assertFits(t, view, size[0], size[1])
 		plain := quitPlain(view)
-		want := []string{"QUIT", "Leave pilharmonic?", "y quit", "n/esc stay"}
+		want := []string{"QUIT", "Leave pilharmonic?", quitButtonLabels[quitButtonQuit], quitButtonLabels[quitButtonStay]}
 		for _, text := range want {
 			if !strings.Contains(plain, text) {
 				t.Fatalf("%v: dialog lost %q: %s", size, text, plain)

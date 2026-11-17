@@ -38,10 +38,9 @@ func SplitAgentMention(text string) (agent, request string, explicit bool) {
 // general fallback. An unavailable or incomplete mention is rejected rather
 // than silently routed elsewhere.
 func (s *Service) routeTopLevelRequest(text string) (string, string, error) {
-	text = strings.TrimSpace(text)
 	agent, request, explicit := SplitAgentMention(text)
 	if !explicit {
-		return DefaultRouteAgent, text, nil
+		return DefaultRouteAgent, request, nil
 	}
 	if agent == "" {
 		return "", "", errors.New("executor name is required after @")

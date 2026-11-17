@@ -42,28 +42,19 @@ var (
 	red    = lipgloss.AdaptiveColor{Light: "#C24055", Dark: colorRed}
 	faint  = lipgloss.AdaptiveColor{Light: "#8A94A8", Dark: colorFaint}
 	pink   = lipgloss.AdaptiveColor{Light: "#B93B8E", Dark: colorPink}
-	violet = lipgloss.AdaptiveColor{Light: "#6B4FD8", Dark: colorViolet}
 
-	surface          = lipgloss.AdaptiveColor{Light: "#E9EDF7", Dark: colorSurface}
-	pillBlueBG       = lipgloss.AdaptiveColor{Light: "#DCE8FF", Dark: "#243A5C"}
-	pillTealBG       = lipgloss.AdaptiveColor{Light: "#D9F5EF", Dark: "#1E3F3B"}
-	pillAmberBG      = lipgloss.AdaptiveColor{Light: "#FCEFD2", Dark: "#453719"}
-	pillGreenBG      = lipgloss.AdaptiveColor{Light: "#DDF5E5", Dark: "#1E3B2A"}
-	pillOnSurface    = lipgloss.AdaptiveColor{Light: "#1B2232", Dark: colorInk}
-	statusPillBlue   = lipgloss.AdaptiveColor{Light: "#2F6BD8", Dark: "#2D4E8F"}
-	statusPillTeal   = lipgloss.AdaptiveColor{Light: "#0E8C7C", Dark: "#216B61"}
-	statusPillViolet = lipgloss.AdaptiveColor{Light: "#6450C8", Dark: colorAccentDeep}
+	surface       = lipgloss.AdaptiveColor{Light: "#E9EDF7", Dark: colorSurface}
+	pillBlueBG    = lipgloss.AdaptiveColor{Light: "#DCE8FF", Dark: "#243A5C"}
+	pillTealBG    = lipgloss.AdaptiveColor{Light: "#D9F5EF", Dark: "#1E3F3B"}
+	pillOnSurface = lipgloss.AdaptiveColor{Light: "#1B2232", Dark: colorInk}
 )
 
 var accentDeep = lipgloss.AdaptiveColor{Light: "#6450C8", Dark: colorAccentDeep}
 
-func greenStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(green) }
-func redStyle() lipgloss.Style    { return lipgloss.NewStyle().Foreground(red) }
-func blueStyle() lipgloss.Style   { return lipgloss.NewStyle().Foreground(blue) }
-func amberStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(amber) }
-func pinkStyle() lipgloss.Style   { return lipgloss.NewStyle().Foreground(pink) }
-func cyanStyle() lipgloss.Style   { return lipgloss.NewStyle().Foreground(cyan) }
-func violetStyle() lipgloss.Style { return lipgloss.NewStyle().Foreground(violet) }
+func blueStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(blue) }
+func amberStyle() lipgloss.Style { return lipgloss.NewStyle().Foreground(amber) }
+func pinkStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(pink) }
+func cyanStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(cyan) }
 
 // Diff lines carry a tinted background so additions and removals stay distinct
 // even in a monochrome terminal.
@@ -96,12 +87,6 @@ var (
 	warningStyle = lipgloss.NewStyle().Foreground(statusWaiting).Bold(true)
 	panelStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1)
 
-	activeTabStyle = lipgloss.NewStyle().
-			Foreground(accent).
-			Bold(true).
-			Underline(true)
-	inactiveTabStyle = lipgloss.NewStyle().
-				Foreground(muted)
 	selectionRailStyle = lipgloss.NewStyle().
 				Foreground(accent).
 				Bold(true)
@@ -145,38 +130,11 @@ func pillFor(background lipgloss.TerminalColor) lipgloss.Style {
 		Padding(0, 1)
 }
 
-func modePillStyle(mode string) lipgloss.Style {
-	switch mode {
-	case "REQUEST", "INSERT":
-		return pillFor(statusPillViolet)
-	case "DETAILS":
-		return pillFor(statusPillTeal)
-	default:
-		return pillFor(statusPillBlue)
-	}
-}
-
 func modelPillStyle(class string) lipgloss.Style {
 	if class == "SMALL" {
 		return pillFor(pillTealBG)
 	}
 	return pillFor(pillBlueBG)
-}
-
-// tabStyle gives each detail tab its own tint so the active view is visible at
-// a glance without dropping the underline convention.
-func tabStyle(tab detailTab) lipgloss.Style {
-	background := pillGreenBG
-	switch tab {
-	case infoTab:
-		background = pillAmberBG
-	case activityTab:
-		background = pillTealBG
-	}
-	return lipgloss.NewStyle().
-		Foreground(pillOnSurface).
-		Background(background).
-		Bold(true)
 }
 
 // The help overlay is prose plus a two-column shortcut table, so it needs a
@@ -217,15 +175,11 @@ func wordmark() string { return titleStyle.Render("◈ PILHARMONIC") }
 // gradientText paints a wordmark through violet, pink and teal without
 // changing its visible text or width. ANSI styling is applied per rune, so
 // callers can continue to use normal cell-width helpers for layout.
-func gradientText(text string) string { return gradientPhase(text, 0) }
+func gradientText(text string) string { return gradientRunes(text, 0) }
 
 // gradientFill paints repeated chrome, such as the header's diagonal filler,
 // with the same moving ramp as the wordmark.
 func gradientFill(text string, phase int) string { return gradientRunes(text, phase) }
-
-// gradientPhase shifts the wordmark gradient for the running animation. Phase 0
-// is the static brand mark.
-func gradientPhase(text string, phase int) string { return gradientRunes(text, phase) }
 
 func gradientRunes(text string, phase int) string {
 	runes := []rune(text)

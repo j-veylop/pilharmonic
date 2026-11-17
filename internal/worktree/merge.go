@@ -74,11 +74,30 @@ func Commit(ctx context.Context, spec Spec) (Preparation, error) {
 	return outcome, nil
 }
 
+// ReviewDiff returns the patch from the isolation base to a validated reviewed commit.
+func ReviewDiff(ctx context.Context, spec Spec, reviewed string) (string, error) {
+	owner, tree, err := validateMergeWorkspace(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := gitOutput(ctx, tree, "rev-parse", "--verify", reviewed+"^{commit}")
+	if err != nil || resolved != reviewed {
+		return "", errors.New("reviewed commit is not available in the worktree")
+	}
+	if _, err = gitOutput(ctx, tree, "merge-base", "--is-ancestor", reviewed, "HEAD"); err != nil {
+		return "", errors.New("reviewed commit is no longer part of the worktree history")
+	}
+	if _, err = gitOutput(ctx, tree, "merge-base", "--is-ancestor", owner.Commit, reviewed); err != nil {
+		return "", errors.New("reviewed commit does not descend from the isolation commit")
+	}
+	return gitOutput(ctx, tree, "diff", "--no-ext-diff", "--no-color", "--find-renames", owner.Commit, reviewed, "--")
+}
+
 // Merge merges exactly the reviewed commit into the source
 // repository's current checkout. It verifies that the commit is still part of
-// the retained worktree history and descends from the isolation commit. A
-// failed merge is aborted so the source does not remain in a conflicted state;
-// uncommitted worktree content is left untouched by the merge.
+// the retained worktree history and descends from the isolation commit. If the
+// merge conflicts, the merge commit is rolled back so the source does not keep
+// conflict markers; uncommitted worktree content is left untouched.
 func Merge(ctx context.Context, spec Spec, reviewed string) (MergeResult, error) {
 	owner, tree, err := validateMergeWorkspace(ctx, spec)
 	if err != nil {

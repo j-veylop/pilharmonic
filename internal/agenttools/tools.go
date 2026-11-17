@@ -1,5 +1,5 @@
 // Package agenttools implements the workspace tools an in-process agent may
-// call. Every tool is confined to the task workspace and returns bounded,
+// call. Workspace tools are confined to the task workspace and return bounded,
 // sanitized text; none composes shell text from task input.
 package agenttools
 
@@ -16,6 +16,8 @@ import (
 	"unicode/utf8"
 
 	"charm.land/fantasy"
+
+	"pilharmonic/internal/skills"
 )
 
 const (
@@ -41,6 +43,14 @@ func Names() []string { return append([]string(nil), names...) }
 // Every tool is confined to workspace: file paths are resolved inside it and
 // commands run with it as their working directory.
 func Tools(workspace string, palette []string, env []string) []fantasy.AgentTool {
+	return ToolsWithSkills(workspace, palette, env, skills.Catalog{})
+}
+
+// ToolsWithSkills builds the workspace tools and, when the catalog is not
+// empty, the skill tool. Skills are local operator instructions, not workspace
+// authority, so the skill tool is available regardless of the workspace
+// palette.
+func ToolsWithSkills(workspace string, palette []string, env []string, catalog skills.Catalog) []fantasy.AgentTool {
 	selected := make(map[string]bool, len(palette))
 	if len(palette) == 0 {
 		palette = names
@@ -69,6 +79,9 @@ func Tools(workspace string, palette []string, env []string) []fantasy.AgentTool
 		case "ls":
 			tools = append(tools, lsTool(workspace, env))
 		}
+	}
+	if catalog.Len() > 0 {
+		tools = append(tools, skillTool(catalog))
 	}
 	return tools
 }
@@ -159,6 +172,10 @@ type findToolInput struct {
 
 type lsToolInput struct {
 	Path string `json:"path,omitempty" description:"Optional workspace-relative directory to list; defaults to the workspace root"`
+}
+
+type skillToolInput struct {
+	Name string `json:"name" description:"Name of the installed skill to load"`
 }
 
 func readTool(workspace string) fantasy.AgentTool {
@@ -309,6 +326,17 @@ func lsTool(workspace string, env []string) fantasy.AgentTool {
 			}
 			text, err := runWorkspaceCommand(ctx, workspace, env, "ls", "-la", path)
 			return commandResponse("ls", text, err), nil
+		})
+}
+
+func skillTool(catalog skills.Catalog) fantasy.AgentTool {
+	return fantasy.NewAgentTool("skill", "Load the full instructions of an installed skill by name.",
+		func(_ context.Context, in skillToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			skill, ok := catalog.Lookup(strings.TrimSpace(in.Name))
+			if !ok {
+				return fantasy.NewTextErrorResponse("unknown skill: " + strings.TrimSpace(in.Name)), nil
+			}
+			return fantasy.NewTextResponse("# Skill: " + skill.Name + "\n\n" + skill.Body), nil
 		})
 }
 

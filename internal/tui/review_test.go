@@ -128,8 +128,13 @@ func TestReviewKeysApproveAndReject(t *testing.T) {
 	approved := startIsolatedReviewTask(t, s, repo, "approve")
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selectTask(t, &m, approved.ID)
-	if m = key(m, runeKey("v")); m.review.target != approved.ID || !strings.Contains(ansi.Strip(m.View()), "approve + merge (y)") {
-		t.Fatalf("v did not open the review prompt: %+v", m.review)
+	if m = key(m, runeKey("v")); m.reviewDiff.target != approved.ID || !m.reviewDiff.loading {
+		t.Fatalf("v did not open the diff view: %+v", m.reviewDiff)
+	}
+	cmd := m.loadReviewDiff(approved.ID, approved.ReviewCommit, approved.Title)
+	m = m.acceptReviewDiff(cmd().(reviewDiffMsg))
+	if !strings.Contains(ansi.Strip(m.View()), "diff --git a/change.txt") {
+		t.Fatalf("review diff missing prepared change: %s", ansi.Strip(m.View()))
 	}
 	m = key(m, runeKey("y"))
 	got, _ := s.GetTask(approved.ID)
@@ -196,7 +201,8 @@ func TestReviewKeysRefuseStaleCommit(t *testing.T) {
 		// The screen still shows the commit from an earlier attempt.
 		m.tasks[m.selected].ReviewCommit = "earlier-commit"
 		m = key(m, runeKey("v"))
-		// The task list refreshes while the prompt is open.
+		// Diff retrieval completes before a decision can be submitted.
+		m.reviewDiff.loading = false
 		m.tasks = s.ListTasks()
 		m = key(m, runeKey(name))
 		if name == "n" {
@@ -220,7 +226,7 @@ func TestReviewKeysRequirePreparedWork(t *testing.T) {
 	}
 	m := model{service: s, tasks: s.ListTasks(), width: 120, height: 35}
 	selectTask(t, &m, task.ID)
-	if m = key(m, runeKey("v")); m.review.target != "" || !strings.Contains(m.notice.text, "No worktree commit") {
+	if m = key(m, runeKey("v")); m.reviewDiff.target != "" || !strings.Contains(m.notice.text, "No worktree commit") {
 		t.Fatalf("review prompt opened without prepared work: %+v notice=%q", m.review, m.notice.text)
 	}
 }

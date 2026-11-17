@@ -190,12 +190,6 @@ func (m model) routerCompletionPopup(width int) []string {
 	return strings.Split(card, "\n")
 }
 
-// composerTopBorder writes the box edge with its label, keeping the note on the
-// right when the terminal is wide enough for it.
-func composerTopBorder(title, note string, width int) string {
-	return composerTopBorderWithColor(title, note, width, true)
-}
-
 func composerTopBorderWithColor(title, note string, width int, focused bool) string {
 	color := border
 	if focused {
@@ -253,21 +247,26 @@ func (m model) submitInput(prompt string) composerResultMsg {
 	case threadInput:
 		return done("Context recorded; delivery status is in history.", s.AddManualThreadContext(id, prompt))
 	case followUpInput:
-		requeued, err := s.FollowUp(id, prompt)
-		if err != nil {
-			return done("", err)
-		}
-		if !requeued {
-			return done("Follow-up recorded; delivery status is in history.", nil)
-		}
-		if err := s.Start(context.Background(), id); err != nil {
-			return done("Follow-up recorded, but the conversation could not resume.", err)
-		}
-		return done("Follow-up sent; continuing the conversation.", nil)
+		notice, err := sendFollowUp(s, id, prompt)
+		return done(notice, err)
 	case subagentInput:
 		task, err := s.SpawnSubagent(id, "", prompt, "")
 		return done("Subagent started: "+task.ID, err)
 	}
 	task, err := s.CreateRelatedTask(id, orchestrator.DerivedTitle(prompt), prompt, m.workspace)
 	return done("Task queued: "+task.ID, err)
+}
+
+func sendFollowUp(service Service, id, prompt string) (string, error) {
+	requeued, err := service.FollowUp(id, prompt)
+	if err != nil {
+		return "", err
+	}
+	if !requeued {
+		return "Follow-up recorded; delivery status is in history.", nil
+	}
+	if err := service.Start(context.Background(), id); err != nil {
+		return "Follow-up recorded, but the conversation could not resume.", err
+	}
+	return "Follow-up sent; continuing the conversation.", nil
 }

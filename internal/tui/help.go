@@ -56,7 +56,7 @@ var helpTopics = []helpTopic{
 			{"Action", "Tasks that need you: blocked, waiting, awaiting review, undelivered input, merge failed, failed or interrupted."},
 			{"Attempt", "One run of a task. Retry keeps the task and adds an attempt."},
 			{"Usage", "Tokens and estimated cost per attempt; the board header sums them for this session, subagents included."},
-			{"Review", "Approval merges prepared work; rejection keeps it for a follow-up."},
+			{"Review", "v opens the exact prepared commit diff; y approves and merges it, n rejects with a reason, and Esc closes."},
 		}}},
 	},
 	{

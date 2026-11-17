@@ -1,7 +1,12 @@
 package tui
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
+
+	"pilharmonic/internal/orchestrator"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -44,6 +49,37 @@ func (m model) reviewDiffView(width, height int) string {
 	return lipgloss.NewStyle().Width(width).Height(height).Border(lipgloss.RoundedBorder()).BorderForeground(muted).Render(content)
 }
 
+func (m model) reviewTask() (orchestrator.Task, bool) {
+	for _, task := range m.tasks {
+		if task.ID == m.reviewDiff.target {
+			return task, true
+		}
+	}
+	return orchestrator.Task{}, false
+}
+
+func openReviewTool(key string, task orchestrator.Task) tea.Cmd {
+	dir := task.ExecutionWorkspace
+	if dir == "" {
+		return func() tea.Msg { return actionResultMsg{err: fmt.Errorf("review task has no worktree")} }
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return func() tea.Msg { return actionResultMsg{err: fmt.Errorf("review worktree is unavailable: %s", dir)} }
+	}
+	name := "nvim"
+	if key == "ctrl+g" {
+		name = "lazygit"
+	}
+	cmd := exec.Command(name)
+	cmd.Dir = dir
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return actionResultMsg{err: err}
+		}
+		return nil
+	})
+}
+
 func shortID(id string) string {
 	if len(id) > 12 {
 		return id[:12]
@@ -53,6 +89,14 @@ func shortID(id string) string {
 
 func (m model) reviewDiffKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	key := msg.String()
+	if key == "ctrl+o" || key == "ctrl+g" {
+		t, ok := m.reviewTask()
+		if !ok {
+			m.notice.text = "Review task is no longer available."
+			return m, nil
+		}
+		return m, openReviewTool(key, t)
+	}
 	switch key {
 	case "esc", "q":
 		m.reviewDiff = reviewDiffState{}

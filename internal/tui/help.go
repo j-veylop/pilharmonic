@@ -57,7 +57,7 @@ var helpTopics = []helpTopic{
 			{"Attempt", "One run of a task. Retry keeps the task and adds an attempt."},
 			{"Skill", "Operator instructions an agent loads on demand; /skills enables or disables one for the next attempt."},
 			{"Usage", "Tokens and estimated cost per attempt; the board header sums them for this session, subagents included."},
-			{"Review", "v opens the exact prepared commit diff; y approves and merges it, n rejects with a reason, and Esc closes."},
+			{"Review", "v opens the exact prepared commit diff; y approves and merges it, n rejects with a reason, and Esc closes. During review, Ctrl-o opens the review task workspace in nvim; Ctrl-g opens lazygit."},
 		}}},
 	},
 	{

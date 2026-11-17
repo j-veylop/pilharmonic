@@ -120,6 +120,27 @@ func selectTask(t *testing.T, m *model, id string) {
 	t.Fatal("task not found in model")
 }
 
+func TestReviewToolShortcutsUseCapturedReviewTask(t *testing.T) {
+	m := model{reviewDiff: reviewDiffState{target: "review"}, tasks: []orchestrator.Task{
+		{ID: "selected", Workspace: "/unrelated"},
+		{ID: "review", Workspace: "/review", ExecutionWorkspace: t.TempDir()},
+	}}
+	for _, key := range []string{"ctrl+o", "ctrl+g"} {
+		_, cmd := m.reviewDiffKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+		if key == "ctrl+g" {
+			_, cmd = m.reviewDiffKey(tea.KeyMsg{Type: tea.KeyCtrlG})
+		}
+		if cmd == nil {
+			t.Fatalf("%s did not launch a tool", key)
+		}
+	}
+	m.tasks = m.tasks[:1]
+	updated, cmd := m.reviewDiffKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	if cmd != nil || !strings.Contains(updated.notice.text, "no longer available") {
+		t.Fatalf("missing review target did not fail safely: notice=%q cmd=%v", updated.notice.text, cmd)
+	}
+}
+
 func TestReviewKeysApproveAndReject(t *testing.T) {
 	repo := reviewRepo(t)
 	s := newTestService(t)

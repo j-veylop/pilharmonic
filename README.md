@@ -40,7 +40,7 @@ Login uses a dedicated file-backed Codex home at `<user config dir>/orchestrator
 | Inspect | `Tab`/`Shift-Tab` cycle the OUTPUT, INFO and ACTIVITY tabs; `t` thinking; `e` activity filter; **Enter** in focused ACTIVITY expands a call. |
 | Navigate | `h`/`l` panes, `j`/`k` move (counts like `5j`), `gg`/`G`, `Ctrl-u`/`Ctrl-d`, `PgUp`/`PgDn`, **Enter** open details, `[`/`]` previous/next subtask, `!` next task needing action, `z` full width, `B` toggle the subtask sidebar, mouse wheel. |
 | Copy | Drag in the details pane; release copies via OSC 52. |
-| Report / review | `p` status report; `v` opens the prepared commit diff, `y` approves and merges, `n` rejects with a reason, `Esc` closes. |
+| Report / review | `p` status report; `v` opens the prepared commit diff, `y` approves and merges, `n` rejects with a reason, `Esc` closes; **Ctrl-o** opens the review task workspace in `nvim`, **Ctrl-g** in `lazygit` while reviewing. |
 | Clean up | `x` discard clean integrated worktree, `d` delete task; `X`/`D` bulk. Confirm with `y`. |
 | Delegate | `b` create a child task from a running one. |
 | Login / models | `/login`, `/model [big\|small]`, `/theme [auto\|dark\|light]`. |

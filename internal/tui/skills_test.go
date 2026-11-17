@@ -8,6 +8,25 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
+func TestSkillsAgentSelection(t *testing.T) {
+	service := &fakeLoginService{agents: []orchestrator.AgentInfo{{Name: "general"}}, agentSkills: map[string][]orchestrator.SkillInfo{"general": {{Name: "verify", Enabled: true}}}}
+	m := model{width: 80, height: 24, service: service}
+	m.openSkillMenu()
+	m = key(m, runeKey("tab"))
+	for _, size := range [][2]int{{80, 24}, {40, 12}} {
+		m.width, m.height = size[0], size[1]
+		view := m.View()
+		assertFits(t, view, size[0], size[1])
+		if !strings.Contains(ansi.Strip(view), "general") {
+			t.Fatalf("agent missing: %s", view)
+		}
+	}
+	m = key(m, runeKey("enter"))
+	if len(service.skillSetCalls) != 1 || service.skillSetCalls[0] != "general/verify=false" {
+		t.Fatalf("calls: %v", service.skillSetCalls)
+	}
+}
+
 func TestSkillsCommandTogglesInstalledSkill(t *testing.T) {
 	service := &fakeLoginService{skills: []orchestrator.SkillInfo{
 		{Name: "audit", Description: "Audit a change."},

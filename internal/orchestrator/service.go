@@ -37,10 +37,11 @@ type Service struct {
 	// skills are operator-installed instruction packs exposed to Fantasy
 	// runners through the system prompt and the skill tool. disabledSkills is
 	// the durable opt-out list; runners receive the filtered catalog.
-	skills          skills.Catalog
-	skillsPath      string
-	skillConfigPath string
-	disabledSkills  map[string]bool
+	skills              skills.Catalog
+	skillsPath          string
+	skillConfigPath     string
+	disabledSkills      map[string]bool
+	agentDisabledSkills map[string]map[string]bool
 	// routeProfile is the profile the router assigns and the default for tasks
 	// created without an explicit choice.
 	routeProfile   string
@@ -109,6 +110,7 @@ func Open(path string) (*Service, error) {
 		modelSelectionPath:  modelSelectionPathFor(path),
 		skillConfigPath:     skillConfigPathFor(path),
 		disabledSkills:      map[string]bool{},
+		agentDisabledSkills: map[string]map[string]bool{},
 	}
 	s.lifeCtx, s.lifeCancel = context.WithCancel(context.Background())
 	s.titleGenerator = s.generateTitle

@@ -70,6 +70,8 @@ type Service interface {
 	ListAgents() []orchestrator.AgentInfo
 	ListProfiles() []orchestrator.Profile
 	ListSkills() []orchestrator.SkillInfo
+	ListAgentSkills(agent string) []orchestrator.SkillInfo
+	SetAgentSkillEnabled(agent, name string, enabled bool) error
 	SetSkillEnabled(name string, enabled bool) error
 	SubmitRequest(text, workspace string) (orchestrator.Task, error)
 	Start(ctx context.Context, id string) error

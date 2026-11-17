@@ -10,6 +10,7 @@ import (
 type skillMenuState struct {
 	open  bool
 	index int
+	scope int
 }
 
 // openSkillMenu shows every installed skill, enabled or not.
@@ -19,7 +20,18 @@ func (m *model) openSkillMenu() {
 	m.notice.text = "Skills: enter toggles the selected skill."
 }
 
+func (m model) skillAgent() string {
+	agents := m.service.ListAgents()
+	if m.skills.scope <= 0 || m.skills.scope > len(agents) {
+		return ""
+	}
+	return agents[m.skills.scope-1].Name
+}
+
 func (m model) skillRows() []orchestrator.SkillInfo {
+	if agent := m.skillAgent(); agent != "" {
+		return m.service.ListAgentSkills(agent)
+	}
 	return m.service.ListSkills()
 }
 
@@ -34,6 +46,14 @@ func (m model) skillMenuKey(key string) (model, tea.Cmd) {
 	case "esc", "q":
 		m.skills = skillMenuState{}
 		m.notice.text = "Skills closed."
+	case "left", "right", "tab":
+		count := len(m.service.ListAgents()) + 1
+		if key == "left" {
+			m.skills.scope = (m.skills.scope + count - 1) % count
+		} else {
+			m.skills.scope = (m.skills.scope + 1) % count
+		}
+		m.skills.index = 0
 	case "enter", " ":
 		if len(skills) == 0 {
 			return m, nil
@@ -41,8 +61,15 @@ func (m model) skillMenuKey(key string) (model, tea.Cmd) {
 		skill := skills[max(0, min(len(skills)-1, m.skills.index))]
 		enabled := !skill.Enabled
 		service := m.service
+		agent := m.skillAgent()
 		return m, func() tea.Msg {
-			return skillToggleMsg{name: skill.Name, enabled: enabled, err: service.SetSkillEnabled(skill.Name, enabled)}
+			var err error
+			if agent == "" {
+				err = service.SetSkillEnabled(skill.Name, enabled)
+			} else {
+				err = service.SetAgentSkillEnabled(agent, skill.Name, enabled)
+			}
+			return skillToggleMsg{name: skill.Name, enabled: enabled, err: err}
 		}
 	}
 	return m, nil
@@ -68,6 +95,9 @@ func (m model) skillMenuView(background string, w, h int) string {
 		if skill.Enabled {
 			tag = accentStyle.Render("enabled")
 		}
+		if skill.GlobalDisabled {
+			tag = mutedStyle.Render("global off")
+		}
 		rows[i] = menuRow{label: skill.Name, tag: tag}
 	}
 	mw := min(68, w-8) + 4
@@ -79,5 +109,9 @@ func (m model) skillMenuView(background string, w, h int) string {
 			body = append(body, mutedStyle.Render(fit(selected.Description, mw-4, 1)))
 		}
 	}
-	return menuView(background, w, h, "SKILLS", "enter toggles · esc closes", body, rows, m.skills.index, "No skills installed.", "j/k select · enter toggle · esc close", mw, mh)
+	scope := m.skillAgent()
+	if scope == "" {
+		scope = "all agents"
+	}
+	return menuView(background, w, h, "SKILLS", scope+" · tab changes agent", body, rows, m.skills.index, "No skills installed.", "j/k select · enter toggle · tab agent · esc close", mw, mh)
 }

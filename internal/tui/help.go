@@ -92,7 +92,7 @@ var helpTopics = []helpTopic{
 				{"/logout", "Forget a provider's stored key"},
 				{"/providers", "List providers and whether a key is stored"},
 				{"/model", "Choose the models, or open the menu"},
-				{"/skills", "Enable or disable installed skills"},
+				{"/skills", "Toggle skills globally or per agent (Tab switches)"},
 				{"/attach", "Attach a local file to the next request (/detach removes it)"},
 				{"/theme", "Cycle or set the palette: auto, dark or light"},
 				{"/help", "Open this help"},

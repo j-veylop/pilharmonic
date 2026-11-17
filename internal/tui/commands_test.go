@@ -42,10 +42,24 @@ type fakeLoginService struct {
 	setModelErr   error
 	skills        []orchestrator.SkillInfo
 	skillSetCalls []string // recorded as "name=enabled"
+	agents        []orchestrator.AgentInfo
+	agentSkills   map[string][]orchestrator.SkillInfo
 }
 
 func (f *fakeLoginService) ListTasks() []orchestrator.Task       { return f.tasks }
-func (f *fakeLoginService) ListAgents() []orchestrator.AgentInfo { return nil }
+func (f *fakeLoginService) ListAgents() []orchestrator.AgentInfo { return f.agents }
+func (f *fakeLoginService) ListAgentSkills(agent string) []orchestrator.SkillInfo {
+	return f.agentSkills[agent]
+}
+func (f *fakeLoginService) SetAgentSkillEnabled(agent, name string, enabled bool) error {
+	f.skillSetCalls = append(f.skillSetCalls, fmt.Sprintf("%s/%s=%t", agent, name, enabled))
+	for i := range f.agentSkills[agent] {
+		if f.agentSkills[agent][i].Name == name {
+			f.agentSkills[agent][i].Enabled = enabled
+		}
+	}
+	return nil
+}
 func (f *fakeLoginService) SessionUsage() orchestrator.SessionUsage {
 	return orchestrator.SessionUsage{}
 }

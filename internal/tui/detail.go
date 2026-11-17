@@ -225,18 +225,12 @@ func (m model) detailPage() int {
 func (m model) maxScroll() int { return max(0, m.detailLineCount()-m.detailPage()) }
 
 func (m model) detailTabRow(t orchestrator.Task, width int) string {
-	tab := func(label string, index detailTab) string {
-		if index == m.tab {
-			return tabStyle(index).Render(" " + label + " ")
-		}
-		return inactiveTabStyle.Render(" " + label + " ")
-	}
 	row := ""
 	for i, name := range detailTabNames {
 		if i > 0 {
-			row += faintStyle.Render("│")
+			row += "  "
 		}
-		row += tab(name, detailTab(i))
+		row += selectionButton(name, detailTab(i) == m.tab)
 	}
 	row += faintStyle.Render("  ·  ") + mutedStyle.Render(terminalText(executorLabel(t)))
 	return fit(row, width, 1)

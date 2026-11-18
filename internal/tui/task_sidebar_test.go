@@ -185,7 +185,7 @@ func TestTaskSelectionFollowsMainRows(t *testing.T) {
 }
 
 // Selected rows fill their width exactly and compact panels still lead with
-// status, then title and executor.
+// status, then title. The executor stays out of the list.
 func TestTaskSidebarRowsFitAndLeadWithStatus(t *testing.T) {
 	task := orchestrator.Task{ID: "task", Title: "work", Agent: "general", Status: orchestrator.Running}
 	for _, width := range []int{1, 2, 5, 20, 34} {
@@ -218,15 +218,14 @@ func TestTaskSidebarRowsFitAndLeadWithStatus(t *testing.T) {
 		}
 		iconAt := strings.Index(plain, "● ")
 		titleAt := strings.Index(plain, "Fix")
-		executorAt := strings.Index(plain, "impl")
-		if iconAt < 0 || titleAt < 0 || executorAt < 0 {
-			t.Fatalf("width %d lost status, title or executor: %q", width, plain)
+		if iconAt < 0 || titleAt < 0 {
+			t.Fatalf("width %d lost status or title: %q", width, plain)
 		}
-		if iconAt > titleAt || iconAt > executorAt {
+		if iconAt > titleAt {
 			t.Fatalf("width %d does not show status first: %q", width, plain)
 		}
-		if strings.Contains(plain, "shared") {
-			t.Fatalf("width %d kept the workspace label instead of the executor: %q", width, plain)
+		if strings.Contains(plain, "implementer") {
+			t.Fatalf("width %d still names the executor: %q", width, plain)
 		}
 	}
 }

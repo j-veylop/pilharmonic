@@ -192,14 +192,15 @@ func (m model) selectedPosition() (position, total int, ok bool) {
 	return 0, 0, false
 }
 
-// mainTaskMetaLine is the task list's secondary row: executor, workspace or
-// review state, elapsed time, model, line churn and the keys that resolve an
-// attention state. A running task also shows the last observed activity, so a
-// silent agent looks different from a busy one.
+// mainTaskMetaLine is the task list's secondary row: workspace or review state,
+// elapsed time, model, line churn and the keys that resolve an attention state.
+// The executor is left to task details because routing usually picks general. A
+// running task also shows the last observed activity, so a silent agent looks
+// different from a busy one.
 func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
 	now := time.Now()
 	sep := mutedStyle.Render("  ·  ")
-	parts := []string{mutedStyle.Render(executorLabel(task)) + "  " + workspaceBadgeFor(task).render()}
+	parts := []string{workspaceBadgeFor(task).render()}
 	if count := len(subtaskRows(m.tasks, task.ID)); count > 0 {
 		parts = append(parts, mutedStyle.Render(fmt.Sprintf("%d subtask(s)", count)))
 	}

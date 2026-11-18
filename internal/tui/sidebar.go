@@ -101,15 +101,11 @@ func (m model) taskStatusIcon(task orchestrator.Task) string {
 }
 
 // taskMetaLine holds the secondary task details; the title row already shows
-// status. Child rows omit the "subagent" suffix because indentation and the
-// inherited-workspace badge already show ownership.
+// status. The executor stays out of the list, and indentation and the
+// inherited-workspace badge already show child ownership.
 func taskMetaLine(task orchestrator.Task, width int) string {
-	label := executorLabel(task)
-	if task.ParentID != "" {
-		label = task.Agent
-	}
 	sep := mutedStyle.Render("  ·  ")
-	line := "  " + mutedStyle.Render(label) + "  " + workspaceBadgeFor(task).render()
+	line := "  " + workspaceBadgeFor(task).render()
 	if usage := task.Usage(); !usage.IsZero() {
 		if segment := taskListUsage(usage, width-lipgloss.Width(line)-lipgloss.Width(sep)); segment != "" {
 			line += sep + mutedStyle.Render(segment)

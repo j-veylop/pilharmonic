@@ -8,8 +8,21 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"pilharmonic/internal/orchestrator"
 )
+
+func TestSelectedTaskTitleKeepsBackground(t *testing.T) {
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(old)
+	task := orchestrator.Task{Title: "work", Status: orchestrator.Running}
+	row := (model{}).taskTitleRow(task, 1, 1, 20, true)
+	want := selectionRow("1 ● work", 20)
+	if row != want {
+		t.Fatalf("selected row = %q, want uninterrupted selection style %q", row, want)
+	}
+}
 
 func TestTaskSidebarStatusIconsAndLabels(t *testing.T) {
 	now := time.Now()

@@ -235,7 +235,7 @@ func (m model) taskTitleRow(task orchestrator.Task, position, total, width int, 
 	if !selected {
 		return fit("  "+mutedStyle.Render(number)+indent+icon+" "+titleStyle.Render(text), width, 1)
 	}
-	return selectionRow(number+indent+icon+" "+text, width)
+	return selectionRow(number+indent+ansi.Strip(icon)+" "+text, width)
 }
 
 // toolStatusStyle gives tool activity a consistent visual language in the

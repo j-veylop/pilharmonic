@@ -128,6 +128,11 @@ func (f *fakeLoginService) SetModel(class, model string) error {
 	return nil
 }
 
+func (f *fakeLoginService) SetAgentModel(agent, model string) error {
+	f.setModelCalls = append(f.setModelCalls, "agent:"+agent+"="+model)
+	return f.setModelErr
+}
+
 func (f *fakeLoginService) ModelSelection() orchestrator.ModelSelection {
 	return f.overrides
 }
@@ -419,7 +424,7 @@ func TestLoginAndModelMenuViews(t *testing.T) {
 			name:     "model class step",
 			m:        model{service: models, login: loginState{key: secret}, models: modelMenuState{menu: true}},
 			sizes:    small[:1],
-			want:     []string{"MODEL", "Select a model class", "big", "small", "default", "j/k select"},
+			want:     []string{"MODEL", "Select a model class or agent", "big", "small", "default", "j/k select"},
 			unwanted: []string{secret},
 		},
 		{
@@ -524,7 +529,7 @@ func TestSlashModelOpensAgentStep(t *testing.T) {
 	if m.router.open {
 		t.Fatal("/model left the request form open behind the menu")
 	}
-	if !strings.Contains(m.notice.text, "Select a model class") {
+	if !strings.Contains(m.notice.text, "Select a model class or agent") {
 		t.Fatalf("menu notice missing: %q", m.notice.text)
 	}
 	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "MODEL") || !strings.Contains(plain, "big") {
@@ -577,6 +582,24 @@ func TestModelMenuWalksAgentProviderModel(t *testing.T) {
 	}
 	if !strings.Contains(m.notice.text, "Model for big: openai/gpt-5-mini") {
 		t.Fatalf("confirmation notice missing: %q", m.notice.text)
+	}
+}
+
+func TestModelMenuAssignsAgentClass(t *testing.T) {
+	fake := modelMenuService()
+	fake.agents = []orchestrator.AgentInfo{{Name: "tester"}}
+	m := typeSlash(model{service: fake, router: routerState{open: true}, width: 120, height: 35}, "/model")
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.models.agent != "tester" || !strings.Contains(m.modelMenuTitle(), "tester") {
+		t.Fatalf("agent selection: %+v", m.models)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.setModelCalls) != 1 || fake.setModelCalls[0] != "agent:tester=big" {
+		t.Fatalf("assignment calls: %v", fake.setModelCalls)
+	}
+	m = typeSlash(model{service: fake, router: routerState{open: true}, width: 120, height: 35}, "/model tester")
+	if m.models.agent != "tester" || m.models.step != modelStepClass {
+		t.Fatalf("named agent selection: %+v", m.models)
 	}
 }
 

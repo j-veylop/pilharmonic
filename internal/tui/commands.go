@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"pilharmonic/internal/orchestrator"
 	"pilharmonic/internal/providers"
 )
 
@@ -82,11 +83,17 @@ func (m model) slashCommand(line string) model {
 		m.setAnimColors()
 		m.notice.text = "Theme: " + m.theme
 	case "/model":
-		if arg != "" && !slices.Contains(modelClasses, arg) {
+		if arg != "" && !slices.Contains(modelClasses, arg) && !slices.ContainsFunc(m.service.ListAgents(), func(a orchestrator.AgentInfo) bool { return a.Name == arg }) {
 			m.notice.text = "Unknown class: " + arg + " · use big or small"
 			return m
 		}
 		m.openModelMenu(arg)
+		if arg == "" {
+			m.models.step = modelStepClass
+		} else if !slices.Contains(modelClasses, arg) {
+			m.models.step = modelStepAgent
+			m.models.agent = ""
+		}
 	case "/skills":
 		m.openSkillMenu()
 	case "/logout":

@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"strings"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -105,29 +104,19 @@ func (m model) composerBoxLines(rows int) []string {
 	focused := m.router.open || m.input.kind != ""
 	e := m.composerEditor()
 	var visible []string
-	if e.Text == "" {
-		placeholder := "Describe the work… / or i to type, @ chooses an executor"
+	if e.Text == "" && !focused {
+		placeholder := "Describe the work… i to type, @ chooses an executor"
 		if m.detailFocus || m.fullscreen {
 			placeholder = "Continue this task's conversation…"
 		}
 		if m.input.kind != "" {
 			placeholder = composerPlaceholders[m.input.kind]
 		}
-		visible = []string{fit(placeholderLine(placeholder, focused), m.composerWidth(), 1)}
+		visible = []string{fit(mutedStyle.Render(placeholder), m.composerWidth(), 1)}
 	} else {
 		visible = e.View(m.composerWidth(), rows, focused)
 	}
 	return visible
-}
-
-// placeholderLine shows the empty draft's hint. While the composer has focus
-// the pink block cursor sits on its first character.
-func placeholderLine(placeholder string, focused bool) string {
-	if !focused || placeholder == "" {
-		return mutedStyle.Render(placeholder)
-	}
-	_, size := utf8.DecodeRuneInString(placeholder)
-	return editor.CursorStyle.Render(placeholder[:size]) + mutedStyle.Render(placeholder[size:])
 }
 
 // composerBlock is the docked input: a rule and the draft in a two-cell

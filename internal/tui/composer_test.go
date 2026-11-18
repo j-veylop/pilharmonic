@@ -167,8 +167,16 @@ func TestComposerBoxLabelsPlaceholderAndFocus(t *testing.T) {
 		t.Fatalf("composer is not docked above the hints: %q", plain)
 	}
 	m.input = composer{kind: relatedTaskInput}
-	if row := boxRows(t, m)[1]; !strings.Contains(row, "Describe the related task") || strings.Contains(row, "█") {
-		t.Fatalf("empty composer caret is not at the start: %q", row)
+	if row := boxRows(t, m)[1]; strings.TrimSpace(row) != "" {
+		t.Fatalf("focused empty composer shows placeholder: %q", row)
+	}
+	m.input = composer{}
+	if row := boxRows(t, m)[1]; !strings.Contains(row, "Describe the work") {
+		t.Fatalf("unfocused empty composer lost placeholder: %q", row)
+	}
+	m.router.open = true
+	if row := boxRows(t, m)[1]; strings.TrimSpace(row) != "" {
+		t.Fatalf("focused empty request box shows placeholder: %q", row)
 	}
 	m.router = routerState{open: true, Editor: editor.Editor{Text: "hello", Cursor: 5}}
 	request := ansi.Strip(strings.Join(m.composerBlock(2), "\n"))

@@ -102,7 +102,7 @@ var helpTopics = []helpTopic{
 	{
 		title: "Editing",
 		intro: []string{
-			"The request box always stays docked above the footer hints; / or i focuses it and Esc leaves it without hiding the draft. Every composer reuses the same box, and the draft wraps inside it and grows to six rows.",
+			"The request box always stays docked above the footer hints; i focuses it and Esc leaves it without hiding the draft. Every composer reuses the same box, and the draft wraps inside it and grows to six rows.",
 		},
 		sections: []helpSection{{rows: []helpRow{
 			{"Enter", "Submit; the request box routes and starts the task"},

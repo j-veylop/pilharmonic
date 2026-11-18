@@ -10,31 +10,34 @@ import (
 	"pilharmonic/internal/orchestrator"
 )
 
-// Model menu steps: class -> provider -> model, with a free-text step for
-// model IDs the curated catalog does not list.
 type modelStep int
 
 const (
 	modelStepClass modelStep = iota
+	modelStepAgent
 	modelStepProvider
 	modelStepModel
 	modelStepCustom
 )
-
-// customModelChoice is the sentinel row that opens free-text model entry.
 const customModelChoice = "custom…"
 
 var modelClasses = []string{orchestrator.ModelClassBig, orchestrator.ModelClassSmall}
 
-// modelChoices lists the selectable rows for the current step. Only providers
-// with a key can serve a model.
 func (m model) modelChoices() []string {
 	switch m.models.step {
+	case modelStepClass:
+		return append(append([]string(nil), modelClasses...), "Agents…")
+	case modelStepAgent:
+		names := make([]string, 0)
+		for _, agent := range m.service.ListAgents() {
+			names = append(names, agent.Name)
+		}
+		return names
 	case modelStepProvider:
 		var names []string
-		for _, credential := range m.service.ProviderCredentials() {
-			if credential.Configured {
-				names = append(names, credential.Provider)
+		for _, c := range m.service.ProviderCredentials() {
+			if c.Configured {
+				names = append(names, c.Provider)
 			}
 		}
 		return names
@@ -46,12 +49,9 @@ func (m model) modelChoices() []string {
 			return nil
 		}
 		return append(m.service.ModelsForProvider(m.models.provider), customModelChoice)
-	case modelStepCustom:
-		return nil
 	}
-	return modelClasses
+	return nil
 }
-
 func (m model) modelMenuTitle() string {
 	switch m.models.step {
 	case modelStepProvider:
@@ -61,22 +61,27 @@ func (m model) modelMenuTitle() string {
 	case modelStepCustom:
 		return "Enter a model ID (" + m.models.provider + ")"
 	}
+	switch m.models.step {
+	case modelStepAgent:
+		return "Select an agent"
+	}
+	if m.models.step == modelStepClass {
+		return "Select a model class or agent"
+	}
 	return "Select a model class"
 }
-
-// openModelMenu arms the menu, on the provider step when /model names a class.
 func (m *model) openModelMenu(class string) {
 	m.models = modelMenuState{menu: true, class: class}
 	m.router.open = false
-	m.notice.text = "Select a model class"
-	if class != "" {
+	m.notice.text = "Select a model class or agent"
+	if class == orchestrator.ModelClassBig || class == orchestrator.ModelClassSmall {
 		m.models.step = modelStepProvider
 		m.notice.text = "Select a provider for " + class
+	} else if class != "" {
+		m.models.agent = class
+		m.notice.text = "Select a model class for " + class
 	}
 }
-
-// modelMenuKey drives the model menu. Selections reach the service only on the
-// final step, so an abandoned menu changes nothing.
 func (m model) modelMenuKey(key string) (model, tea.Cmd) {
 	if m.models.step == modelStepCustom {
 		return m.modelCustomKey(key), nil
@@ -87,14 +92,17 @@ func (m model) modelMenuKey(key string) (model, tea.Cmd) {
 	}
 	switch key {
 	case "esc":
-		if m.models.step == modelStepClass {
+		if m.models.step == modelStepAgent && m.models.agent != "" {
+			m.models.agent, m.models.class, m.models.index = "", "", 0
+			return m, nil
+		}
+		if m.models.step == modelStepClass || m.models.step == modelStepAgent {
 			m.models.menu = false
 			m.notice.text = "Model menu closed"
 			return m, nil
 		}
 		m.models.step--
 		m.models.index = 0
-		m.notice.text = ""
 	case "enter":
 		if len(choices) == 0 {
 			m.notice.text = "Nothing to choose"
@@ -104,44 +112,59 @@ func (m model) modelMenuKey(key string) (model, tea.Cmd) {
 	}
 	return m, nil
 }
-
-// selectModelChoice advances the menu or, on the model step, pins the class to
-// the chosen provider/model selector.
 func (m model) selectModelChoice(choice string) (model, tea.Cmd) {
 	switch m.models.step {
 	case modelStepClass:
-		m.models.class, m.models.step, m.models.index = choice, modelStepProvider, 0
+		if choice == "Agents…" {
+			m.models.step = modelStepAgent
+			m.models.index = 0
+			m.notice.text = "Select an agent"
+			return m, nil
+		}
+		if m.models.agent != "" {
+			m.models.menu = false
+			m.notice.text = resultFor("Model class for "+m.models.agent+": "+choice, m.service.SetAgentModel(m.models.agent, choice)).text()
+			return m, nil
+		}
+		m.models.class = choice
+		m.models.step = modelStepProvider
+		m.models.index = 0
 		m.notice.text = "Select a provider for " + choice
+	case modelStepAgent:
+		m.models.agent = choice
+		m.models.index = 0
+		m.models.step = modelStepClass
+		m.models.class = "agent:" + choice
+		m.notice.text = "Select a model class for " + choice
 	case modelStepProvider:
-		m.models = modelMenuState{menu: true, step: modelStepModel, class: m.models.class, provider: choice, loading: true}
-		m.notice.text = ""
+		m.models = modelMenuState{menu: true, step: modelStepModel, class: m.models.class, agent: m.models.agent, provider: choice, loading: true}
 		return m, fetchModelsCmd(m.service, choice)
 	case modelStepModel:
 		if choice == customModelChoice {
-			m.models.step, m.models.customInput = modelStepCustom, ""
+			m.models.step = modelStepCustom
 			return m, nil
 		}
 		return m.applyModelSelection(m.models.provider + "/" + choice), nil
 	}
 	return m, nil
 }
-
-// applyModelSelection pins the chosen class and closes the menu. A provider
-// with a daily discount window is labelled with the rate in force now, because
-// that is the price the next attempt will be charged.
 func (m model) applyModelSelection(selector string) model {
-	class := m.models.class
-	m.models.menu, m.models.step, m.models.index, m.models.customInput = false, modelStepClass, 0, ""
+	class, agent := m.models.class, m.models.agent
+	m.models.menu = false
 	notice := "Model for " + class + ": " + selector
+	if agent != "" {
+		notice = "Model for " + agent + ": " + selector
+	}
 	if label := modelRateLabel(selector, time.Now()); label != "" {
 		notice += " · " + label + " now"
 	}
-	m.notice.text = resultFor(notice, m.service.SetModel(class, selector)).text()
+	if agent != "" {
+		m.notice.text = resultFor(notice, m.service.SetAgentModel(agent, selector)).text()
+	} else {
+		m.notice.text = resultFor(notice, m.service.SetModel(class, selector)).text()
+	}
 	return m
 }
-
-// fetchedModels shows a provider's fetched list, or the built-in list and a
-// notice when the fetch failed.
 func (m *model) fetchedModels(msg fetchModelsMsg) {
 	if msg.provider != m.models.provider {
 		return
@@ -159,10 +182,6 @@ func (m *model) fetchedModels(msg fetchModelsMsg) {
 	}
 	m.notice.text = "Could not fetch " + msg.provider + " models: " + reason
 }
-
-// fetchModelsCmd fetches a provider's live model list off the update loop. The
-// curated catalog is the labelled fallback, so a failed fetch never blocks
-// model selection.
 func fetchModelsCmd(service Service, provider string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -171,21 +190,21 @@ func fetchModelsCmd(service Service, provider string) tea.Cmd {
 		return fetchModelsMsg{provider: provider, models: models, err: err}
 	}
 }
-
-// modelCustomKey captures keys while a model ID is typed.
 func (m model) modelCustomKey(key string) model {
 	switch key {
 	case "ctrl+c":
 		return m.requestQuit()
 	case "enter":
-		modelID := strings.TrimSpace(m.models.customInput)
-		if modelID == "" {
+		id := strings.TrimSpace(m.models.customInput)
+		if id == "" {
 			m.notice.text = "Enter a model ID"
 			return m
 		}
-		return m.applyModelSelection(m.models.provider + "/" + modelID)
+		return m.applyModelSelection(m.models.provider + "/" + id)
 	case "esc":
-		m.models.step, m.models.index, m.models.customInput = modelStepModel, 0, ""
+		m.models.step = modelStepModel
+		m.models.index = 0
+		m.models.customInput = ""
 	case "backspace", "ctrl+h":
 		m.models.customInput = trimLastRune(m.models.customInput)
 	default:
@@ -195,59 +214,64 @@ func (m model) modelCustomKey(key string) model {
 	}
 	return m
 }
-
-// modelTextKey reports whether a key string is literal text. Named keys and
-// modifier chords are not.
 func modelTextKey(key string) bool {
 	if key == "" || strings.Contains(key, "+") || strings.IndexFunc(key, unicode.IsControl) >= 0 {
 		return false
 	}
 	switch key {
-	case "tab", "enter", "esc", "backspace", "delete", "insert", "space",
-		"home", "end", "up", "down", "left", "right", "pgup", "pgdown":
+	case "tab", "enter", "esc", "backspace", "delete", "insert", "space", "home", "end", "up", "down", "left", "right", "pgup", "pgdown":
 		return false
 	}
 	return true
 }
-
 func (m model) modelMenuView(background string, w, h int) string {
 	choices := m.modelChoices()
 	var body []string
 	empty, footer := m.modelEmptyHint(), "j/k select · enter next · f1 help · esc back"
 	mh := min(len(choices)+8, h-2)
-	switch {
-	case m.models.step == modelStepCustom:
+	if m.models.step == modelStepCustom {
 		body = append(body, accentStyle.Render("› ")+titleStyle.Render(m.models.provider+"/"+m.models.customInput)+cursorGlyph())
 		empty, footer, mh = "", "enter save · f1 help · esc back · ctrl+c quit", min(9, h-2)
-	case m.models.step == modelStepModel && m.models.loading:
+	} else if m.models.step == modelStepModel && m.models.loading {
 		body = append(body, mutedStyle.Render("Loading models…"))
-	case m.models.step == modelStepModel && m.models.fetchFailed:
+	} else if m.models.step == modelStepModel && m.models.fetchFailed {
 		body = append(body, mutedStyle.Render("Live list unavailable; showing built-in models"))
 	}
 	rows := make([]menuRow, len(choices))
-	for i, choice := range choices {
-		rows[i] = menuRow{label: choice, tag: m.modelChoiceTag(choice)}
+	for i, c := range choices {
+		rows[i] = menuRow{label: c, tag: m.modelChoiceTag(c)}
 	}
 	return menuView(background, w, h, "MODEL", m.modelMenuTitle(), body, rows, m.models.index, empty, footer, min(52, w-8)+4, mh)
 }
-
-// modelChoiceTag is a row's right-hand note: the class's current model, the
-// current rate window, or the promise of free-text entry.
 func (m model) modelChoiceTag(choice string) string {
 	switch m.models.step {
+	case modelStepAgent:
+		for _, agent := range m.service.ListAgents() {
+			if agent.Name == choice {
+				if class := m.service.ModelSelection().Agents[choice]; class != "" {
+					return accentStyle.Render(class)
+				}
+			}
+		}
+		return ""
 	case modelStepClass:
 		current := m.service.ModelSelection()
-		model := current.Small
-		if choice == orchestrator.ModelClassBig {
-			model = current.Big
+		if choice == orchestrator.ModelClassBig && current.Big != "" {
+			if tag := modelRateTag(current.Big, time.Now()); tag != "" {
+				return accentStyle.Render(current.Big) + mutedStyle.Render(" · ") + tag + mutedStyle.Render(" now")
+			}
+			return accentStyle.Render(current.Big)
 		}
-		if model == "" {
+		if choice == orchestrator.ModelClassSmall && current.Small != "" {
+			if tag := modelRateTag(current.Small, time.Now()); tag != "" {
+				return accentStyle.Render(current.Small) + mutedStyle.Render(" · ") + tag + mutedStyle.Render(" now")
+			}
+			return accentStyle.Render(current.Small)
+		}
+		if (choice == orchestrator.ModelClassBig && current.Big == "") || (choice == orchestrator.ModelClassSmall && current.Small == "") {
 			return mutedStyle.Render("default")
 		}
-		if tag := modelRateTag(model, time.Now()); tag != "" {
-			return accentStyle.Render(model) + mutedStyle.Render(" · ") + tag + mutedStyle.Render(" now")
-		}
-		return accentStyle.Render(model)
+		return ""
 	case modelStepModel:
 		if choice == customModelChoice {
 			return mutedStyle.Render("type any ID")
@@ -256,10 +280,6 @@ func (m model) modelChoiceTag(choice string) string {
 	}
 	return ""
 }
-
-// modelRateLabel names the price window in force for a selector now, or ""
-// for a model priced the same all day or not priced at all. The window belongs
-// to the orchestrator's price table.
 func modelRateLabel(selector string, now time.Time) string {
 	price, known := orchestrator.PriceFor(selector, now)
 	if !known || !price.TimeOfDay {
@@ -267,8 +287,6 @@ func modelRateLabel(selector string, now time.Time) string {
 	}
 	return price.Rate(now)
 }
-
-// modelRateTag highlights the discounted window and mutes the list price.
 func modelRateTag(selector string, now time.Time) string {
 	switch modelRateLabel(selector, now) {
 	case orchestrator.RateOffPeak:
@@ -278,11 +296,10 @@ func modelRateTag(selector string, now time.Time) string {
 	}
 	return ""
 }
-
 func (m model) modelEmptyHint() string {
 	switch m.models.step {
-	case modelStepClass:
-		return "No classes available."
+	case modelStepAgent:
+		return "No agents available."
 	case modelStepProvider:
 		return "No provider configured; type /login to log in."
 	}

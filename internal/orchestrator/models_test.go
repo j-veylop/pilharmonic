@@ -110,24 +110,46 @@ func TestFantasyModelResolutionOrder(t *testing.T) {
 	}
 }
 
-func TestLegacyAgentClassesIgnored(t *testing.T) {
+func TestAgentModelOverridesPersistAndRoute(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	s := openTestService(t, path)
+	s.LoadBuiltinSpecialists()
+	must(t, s.SetModel(ModelClassSmall, "deepseek/deepseek-chat"))
+	must(t, s.SetAgentModel("tester", ModelClassBig))
+	must(t, s.SetModel(ModelClassBig, "openai/gpt-5"))
+	if got := requestedModel(s, "tester", nil); got != "openai/gpt-5" {
+		t.Fatalf("agent override = %q", got)
+	}
+	if got := requestedModel(s, "explorer", nil); got != "deepseek/deepseek-chat" {
+		t.Fatalf("class fallback = %q", got)
+	}
+	reopened := mustGet(Open(path))(t)
+	defer func() { _ = reopened.Shutdown() }()
+	if got := requestedModel(reopened, "tester", nil); got != "openai/gpt-5" {
+		t.Fatalf("persisted override = %q", got)
+	}
+	must(t, reopened.SetAgentModel("tester", ModelClassSmall))
+	if got := requestedModel(reopened, "tester", nil); got != "deepseek/deepseek-chat" {
+		t.Fatalf("cleared override did not fall back: %q", got)
+	}
+}
+
+func TestAgentClassLoadsAndPreservesOtherSettings(t *testing.T) {
 	dir := t.TempDir()
 	modelsPath := filepath.Join(dir, "models.json")
 	must(t, os.WriteFile(modelsPath, []byte(`{"big":"hyper/prism","agents":{"tester":"big"}}`), 0600))
 	s := openTestService(t, filepath.Join(dir, "state.json"))
 	s.LoadBuiltinSpecialists()
-	if warning := s.StartupWarning(); !strings.Contains(warning, "no longer supported") || !strings.Contains(warning, `"model": "big"`) {
-		t.Fatalf("startup warning = %q", warning)
-	}
-	if got := requestedModel(s, "tester", nil); got != "" {
-		t.Fatalf("legacy class applied: %q", got)
+	if got := requestedModel(s, "tester", nil); got != "hyper/prism" {
+		t.Fatalf("agent class not applied: %q", got)
 	}
 	if got := requestedModel(s, DefaultRouteAgent, nil); got != "hyper/prism" {
 		t.Fatalf("big model not loaded: %q", got)
 	}
 	must(t, s.SetModel(ModelClassSmall, "hyper/prism-flash"))
 	b := mustGet(os.ReadFile(modelsPath))(t)
-	if strings.Contains(string(b), "agents") || !strings.Contains(string(b), "hyper/prism-flash") {
+	if !strings.Contains(string(b), `"agents"`) || !strings.Contains(string(b), "hyper/prism-flash") || !strings.Contains(string(b), `"big"`) {
 		t.Fatalf("models.json not rewritten: %s", b)
 	}
 }

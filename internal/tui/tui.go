@@ -119,6 +119,7 @@ type Service interface {
 	ProviderCredentials() []orchestrator.ProviderCredential
 	AnyProviderConfigured() bool
 	SetModel(class, model string) error
+	SetAgentModel(agent, model string) error
 	ModelSelection() orchestrator.ModelSelection
 	ModelsForProvider(provider string) []string
 	FetchModels(ctx context.Context, provider string) ([]string, error)
@@ -229,6 +230,7 @@ type modelMenuState struct {
 	step         modelStep
 	index        int
 	class        string
+	agent        string
 	provider     string
 	customInput  string
 	list         []string // fetched models for listProvider

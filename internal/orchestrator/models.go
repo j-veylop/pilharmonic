@@ -18,8 +18,7 @@ import (
 )
 
 // Model class labels: the operator's "big" (planning, heavy changes) and
-// "small" (fast, focused) models. A profile or specialist model may name a
-// class instead of a selector.
+// "small" (fast, focused) models. Individual agent selectors can override them.
 const (
 	ModelClassBig   = "big"
 	ModelClassSmall = "small"
@@ -66,15 +65,14 @@ func (s *Service) ModelsForProvider(provider string) []string {
 	return append([]string(nil), modelsForProvider(provider)...)
 }
 
-// ModelSelection is the operator's choice of one big and one small model. An
-// empty field means "use the profile/default model".
+// ModelSelection contains shared class choices and direct agent overrides.
 type ModelSelection struct {
-	Big   string
-	Small string
+	Big    string
+	Small  string
+	Agents map[string]string
 }
 
-// modelConfig is the on-disk shape of models.json. Agents holds the retired
-// per-agent classes and is read only to warn about them.
+// modelConfig is the on-disk shape of models.json. Agents holds per-agent model selectors.
 type modelConfig struct {
 	Big    string            `json:"big,omitempty"`
 	Small  string            `json:"small,omitempty"`
@@ -101,13 +99,28 @@ func loadModelConfig(path string) (map[string]string, bool, error) {
 		return nil, false, fmt.Errorf("read model config: %w", err)
 	}
 	selection := map[string]string{}
+	for agent, model := range raw.Agents {
+		if model != "" {
+			selection["agent:"+agent] = model
+		}
+	}
 	if raw.Big != "" {
 		selection[ModelClassBig] = raw.Big
 	}
 	if raw.Small != "" {
 		selection[ModelClassSmall] = raw.Small
 	}
-	return selection, len(raw.Agents) > 0, nil
+	return selection, false, nil
+}
+
+func agentSelections(selection map[string]string) map[string]string {
+	agents := map[string]string{}
+	for key, model := range selection {
+		if strings.HasPrefix(key, "agent:") {
+			agents[strings.TrimPrefix(key, "agent:")] = model
+		}
+	}
+	return agents
 }
 
 func saveModelConfig(path string, selection map[string]string) error {
@@ -115,8 +128,9 @@ func saveModelConfig(path string, selection map[string]string) error {
 		return err
 	}
 	b, err := json.Marshal(modelConfig{
-		Big:   selection[ModelClassBig],
-		Small: selection[ModelClassSmall],
+		Big:    selection[ModelClassBig],
+		Small:  selection[ModelClassSmall],
+		Agents: agentSelections(selection),
 	})
 	if err != nil {
 		return err
@@ -125,26 +139,43 @@ func saveModelConfig(path string, selection map[string]string) error {
 }
 
 // SetModel pins a model class ("big" or "small") to a provider/model selector.
-// An empty model clears the selection for that class, reverting to the
-// profile/default model.
+// An empty model clears the selected class or agent override.
 func (s *Service) SetModel(class, model string) error {
 	class = strings.TrimSpace(class)
 	model = strings.TrimSpace(model)
-	if class != ModelClassBig && class != ModelClassSmall {
+	if strings.HasPrefix(class, "agent:") {
+		name := strings.TrimPrefix(class, "agent:")
+		if name == "" || strings.ContainsAny(name, "/\\\t\n ") {
+			return fmt.Errorf("invalid agent %q", name)
+		}
+		if model != "" && model != ModelClassBig && model != ModelClassSmall {
+			return fmt.Errorf("agent model must be %q or %q", ModelClassBig, ModelClassSmall)
+		}
+	}
+	if !strings.HasPrefix(class, "agent:") && class != ModelClassBig && class != ModelClassSmall {
 		return fmt.Errorf("model class must be %q or %q", ModelClassBig, ModelClassSmall)
 	}
-	if model != "" {
+	if model != "" && !strings.HasPrefix(class, "agent:") {
 		if err := validateModelSelector(model); err != nil {
 			return err
 		}
 	}
 	return s.whileOpen(func() error {
+		previous, hadPrevious := s.modelSelection[class]
 		if model != "" {
 			s.modelSelection[class] = model
 		} else {
 			delete(s.modelSelection, class)
 		}
-		return s.saveModelConfigLocked()
+		if err := s.saveModelConfigLocked(); err != nil {
+			if hadPrevious {
+				s.modelSelection[class] = previous
+			} else {
+				delete(s.modelSelection, class)
+			}
+			return err
+		}
+		return nil
 	})
 }
 
@@ -155,12 +186,20 @@ func (s *Service) saveModelConfigLocked() error {
 
 // ModelSelection returns the operator's chosen big and small models (empty means
 // "use the profile/default").
+func (s *Service) SetAgentModel(agent, model string) error {
+	agent = strings.TrimSpace(agent)
+	if agent == "" || strings.ContainsAny(agent, "/\\\t\n ") {
+		return fmt.Errorf("invalid agent %q", agent)
+	}
+	return s.SetModel("agent:"+agent, model)
+}
+
 func (s *Service) ModelSelection() ModelSelection {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return ModelSelection{
-		Big:   s.modelSelection[ModelClassBig],
-		Small: s.modelSelection[ModelClassSmall],
+		Big: s.modelSelection[ModelClassBig], Small: s.modelSelection[ModelClassSmall],
+		Agents: agentSelections(s.modelSelection),
 	}
 }
 
@@ -184,7 +223,12 @@ func (s *Service) fantasyModelLocked(agent string, profile *Profile) string {
 	if profile != nil {
 		profileModel = profile.Model
 	}
-	for _, model := range []string{resolve(profileModel), s.modelSelection[class], resolve(specialist), resolve(s.defaultModel)} {
+	agentModel := s.modelSelection["agent:"+agent]
+	if agentModel == ModelClassBig || agentModel == ModelClassSmall {
+		class = agentModel
+		agentModel = ""
+	}
+	for _, model := range []string{resolve(profileModel), agentModel, s.modelSelection[class], resolve(specialist), resolve(s.defaultModel)} {
 		if model != "" {
 			return model
 		}

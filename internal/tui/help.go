@@ -83,6 +83,7 @@ var helpTopics = []helpTopic{
 		title: "Commands",
 		intro: []string{
 			"Type these into the REQUEST box; they are never submitted as a request. Arguments follow the command name, as in /login <provider> or /model [big|small]. Attached files are read once at submission and appended to the request as text.",
+			"Use /model <agent> to choose big, small, or a custom model from a configured provider.",
 			"For ChatGPT subscription access, run /login openai subscription. This runs the installed codex login browser flow; then use /model big and choose openai-subscription.",
 		},
 		sections: []helpSection{{

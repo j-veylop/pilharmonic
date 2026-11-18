@@ -589,7 +589,10 @@ func TestModelMenuAssignsAgentClass(t *testing.T) {
 	fake := modelMenuService()
 	fake.agents = []orchestrator.AgentInfo{{Name: "tester"}}
 	m := typeSlash(model{service: fake, router: routerState{open: true}, width: 120, height: 35}, "/model")
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = key(m, runeKey("j"))
+	m = key(m, runeKey("j"))
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter}) // Agents…
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter}) // tester
 	if m.models.agent != "tester" || !strings.Contains(m.modelMenuTitle(), "tester") {
 		t.Fatalf("agent selection: %+v", m.models)
 	}
@@ -598,8 +601,56 @@ func TestModelMenuAssignsAgentClass(t *testing.T) {
 		t.Fatalf("assignment calls: %v", fake.setModelCalls)
 	}
 	m = typeSlash(model{service: fake, router: routerState{open: true}, width: 120, height: 35}, "/model tester")
-	if m.models.agent != "tester" || m.models.step != modelStepClass {
+	if m.models.agent != "tester" || m.models.step != modelStepAgentModel {
 		t.Fatalf("named agent selection: %+v", m.models)
+	}
+	m = key(m, runeKey("j"))
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.setModelCalls) != 2 || fake.setModelCalls[1] != "agent:tester=small" {
+		t.Fatalf("assignment calls: %v", fake.setModelCalls)
+	}
+}
+
+func TestModelMenuAssignsAgentCustomModel(t *testing.T) {
+	fake := modelMenuService()
+	fake.agents = []orchestrator.AgentInfo{{Name: "tester"}}
+	fake.models["openai"] = []string{"catalog-model"}
+	enter := tea.KeyMsg{Type: tea.KeyEnter}
+	esc := tea.KeyMsg{Type: tea.KeyEsc}
+	m := typeSlash(model{service: fake, router: routerState{open: true}}, "/model tester")
+	for _, size := range [][2]int{{120, 35}, {40, 12}} {
+		m.width, m.height = size[0], size[1]
+		view := m.View()
+		assertFits(t, view, size[0], size[1])
+		for _, want := range []string{"big", "small", customModelChoice} {
+			if !strings.Contains(ansi.Strip(view), want) {
+				t.Fatalf("agent model chooser missing %q: %s", want, view)
+			}
+		}
+	}
+	m = key(key(m, runeKey("j")), runeKey("j"))
+	m = key(m, enter) // custom…
+	if m.models.step != modelStepProvider || m.models.agent != "tester" {
+		t.Fatalf("custom selection: %+v", m.models)
+	}
+	back := key(m, esc)
+	if back.models.step != modelStepAgentModel || back.models.agent != "tester" || len(fake.setModelCalls) != 0 {
+		t.Fatalf("back from custom provider: %+v, calls %v", back.models, fake.setModelCalls)
+	}
+	back = key(back, esc)
+	if back.models.step != modelStepAgent || back.models.agent != "" {
+		t.Fatalf("back from agent chooser: %+v", back.models)
+	}
+	m = key(m, enter) // openai; drain the catalog fetch
+	if m.models.loading || m.models.listProvider != "openai" {
+		t.Fatalf("provider catalog did not load: %+v", m.models)
+	}
+	typed := key(key(m, runeKey("j")), enter) // custom ID rather than a catalog entry
+	typed = key(key(typed, runeKey("ft:gpt-4.1+suffix")), enter)
+	m = key(m, enter) // catalog-model
+	if typed.models.menu || m.models.menu || len(fake.setModelCalls) != 2 ||
+		fake.setModelCalls[0] != "agent:tester=openai/ft:gpt-4.1+suffix" || fake.setModelCalls[1] != "agent:tester=openai/catalog-model" {
+		t.Fatalf("custom assignment calls: %v", fake.setModelCalls)
 	}
 }
 

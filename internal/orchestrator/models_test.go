@@ -124,14 +124,28 @@ func TestAgentModelOverridesPersistAndRoute(t *testing.T) {
 	if got := requestedModel(s, "explorer", nil); got != "deepseek/deepseek-chat" {
 		t.Fatalf("class fallback = %q", got)
 	}
-	reopened := mustGet(Open(path))(t)
-	defer func() { _ = reopened.Shutdown() }()
+	must(t, s.Shutdown())
+	reopened := openTestService(t, path)
 	if got := requestedModel(reopened, "tester", nil); got != "openai/gpt-5" {
 		t.Fatalf("persisted override = %q", got)
 	}
-	must(t, reopened.SetAgentModel("tester", ModelClassSmall))
-	if got := requestedModel(reopened, "tester", nil); got != "deepseek/deepseek-chat" {
-		t.Fatalf("cleared override did not fall back: %q", got)
+	must(t, reopened.SetAgentModel("tester", "openai/gpt-4.1"))
+	for _, invalid := range []string{"unknown/model", "openai/"} {
+		if err := reopened.SetAgentModel("tester", invalid); err == nil {
+			t.Fatalf("invalid selector %q accepted", invalid)
+		}
+	}
+	must(t, reopened.Shutdown())
+	reloaded := openTestService(t, path)
+	if got := requestedModel(reloaded, "tester", nil); got != "openai/gpt-4.1" {
+		t.Fatalf("custom model not persisted: %q", got)
+	}
+	if got := requestedModel(reloaded, "tester", &Profile{Model: "openai/gpt-5"}); got != "openai/gpt-5" {
+		t.Fatalf("custom model overrode the task profile: %q", got)
+	}
+	must(t, reloaded.SetAgentModel("tester", ModelClassSmall))
+	if got := requestedModel(reloaded, "tester", nil); got != "deepseek/deepseek-chat" {
+		t.Fatalf("class assignment did not replace custom model: %q", got)
 	}
 }
 
@@ -194,7 +208,8 @@ func requestedModel(s *Service, agent string, profile *Profile) string {
 // selector on the attempt and hands exactly that selector to the adapter.
 func TestFantasyAttemptRunsTheRecordedModel(t *testing.T) {
 	s := newTestService(t)
-	must(t, s.SetModel(ModelClassBig, "hyper/prism"))
+	must(t, s.SetModel(ModelClassBig, "hyper/prism-flash"))
+	must(t, s.SetAgentModel(DefaultRouteAgent, "hyper/prism"))
 	requested := make(chan string, 1)
 	s.RegisterRunner(DefaultRouteAgent, FantasyRunner{ModelFactory: func(_ context.Context, model string) (fantasy.LanguageModel, error) {
 		requested <- model

@@ -138,24 +138,21 @@ func saveModelConfig(path string, selection map[string]string) error {
 	return instance.WriteFileAtomic(path, ".models-*", b)
 }
 
-// SetModel pins a model class ("big" or "small") to a provider/model selector.
-// An empty model clears the selected class or agent override.
+// SetModel pins a shared model class to a provider/model selector, or sets an
+// agent override for an "agent:<name>" key. An empty model clears the selection.
 func (s *Service) SetModel(class, model string) error {
 	class = strings.TrimSpace(class)
 	model = strings.TrimSpace(model)
-	if strings.HasPrefix(class, "agent:") {
-		name := strings.TrimPrefix(class, "agent:")
+	name, isAgent := strings.CutPrefix(class, "agent:")
+	if isAgent {
 		if name == "" || strings.ContainsAny(name, "/\\\t\n ") {
 			return fmt.Errorf("invalid agent %q", name)
 		}
-		if model != "" && model != ModelClassBig && model != ModelClassSmall {
-			return fmt.Errorf("agent model must be %q or %q", ModelClassBig, ModelClassSmall)
-		}
 	}
-	if !strings.HasPrefix(class, "agent:") && class != ModelClassBig && class != ModelClassSmall {
+	if !isAgent && class != ModelClassBig && class != ModelClassSmall {
 		return fmt.Errorf("model class must be %q or %q", ModelClassBig, ModelClassSmall)
 	}
-	if model != "" && !strings.HasPrefix(class, "agent:") {
+	if model != "" && !(isAgent && (model == ModelClassBig || model == ModelClassSmall)) {
 		if err := validateModelSelector(model); err != nil {
 			return err
 		}
@@ -184,16 +181,12 @@ func (s *Service) saveModelConfigLocked() error {
 	return saveModelConfig(s.modelSelectionPath, s.modelSelection)
 }
 
-// ModelSelection returns the operator's chosen big and small models (empty means
-// "use the profile/default").
+// SetAgentModel assigns a class alias or a concrete provider/model to an agent.
 func (s *Service) SetAgentModel(agent, model string) error {
-	agent = strings.TrimSpace(agent)
-	if agent == "" || strings.ContainsAny(agent, "/\\\t\n ") {
-		return fmt.Errorf("invalid agent %q", agent)
-	}
-	return s.SetModel("agent:"+agent, model)
+	return s.SetModel("agent:"+strings.TrimSpace(agent), model)
 }
 
+// ModelSelection returns the shared class models and agent overrides.
 func (s *Service) ModelSelection() ModelSelection {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -204,8 +197,8 @@ func (s *Service) ModelSelection() ModelSelection {
 }
 
 // fantasyModelLocked resolves the selector a Fantasy attempt runs with: the
-// task profile model, the agent's class model (models.json), the specialist
-// model (profiles.json), then -model. A "big" or "small" alias stands for that
+// task profile model, the agent override or its class model (models.json),
+// the specialist model (profiles.json), then -model. A class alias stands for that
 // class's model and resolves to nothing while the class is unset, so an alias
 // never reaches a provider. Caller holds mu.
 func (s *Service) fantasyModelLocked(agent string, profile *Profile) string {
@@ -239,8 +232,8 @@ func (s *Service) fantasyModelLocked(agent string, profile *Profile) string {
 // validateModelSelector reports whether a model is a well-formed provider/model
 // selector naming a known provider.
 func validateModelSelector(model string) error {
-	provider, _, ok := strings.Cut(model, "/")
-	if !ok || provider == "" {
+	provider, id, ok := strings.Cut(model, "/")
+	if !ok || provider == "" || strings.TrimSpace(id) == "" {
 		return fmt.Errorf("model must be provider/model, got %q", model)
 	}
 	if !providers.Known(provider) {

@@ -109,7 +109,7 @@ func TestBoardFooterShowsOnlyValidSelectedTaskActions(t *testing.T) {
 				if size[0] < 120 {
 					continue
 				}
-				for _, essential := range []string{"? help", "/ request"} {
+				for _, essential := range []string{"? help", "i input"} {
 					if !strings.Contains(footer, essential) {
 						t.Fatalf("footer missing essential %q: %q", essential, footer)
 					}

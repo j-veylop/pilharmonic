@@ -285,7 +285,7 @@ func (m model) landingContent(width int) string {
 		"",
 		faintStyle.Render(strings.Repeat("─", ruleWidth)),
 		sectionStyle.Render("GET STARTED"),
-		pinkStyle().Render("/")+mutedStyle.Render("  submit a request"),
+		pinkStyle().Render("i")+mutedStyle.Render("  submit a request"),
 		cyanStyle().Render("@tester")+mutedStyle.Render("  pick an executor"),
 		blueStyle().Render("/model")+mutedStyle.Render("  choose a model"),
 		"",

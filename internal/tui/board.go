@@ -46,8 +46,7 @@ func init() {
 			}
 			return nil
 		}},
-		{"/", "request", "Focus the request box: Enter routes and starts, Ctrl-s holds the task for setup", "Tasks", focusRequest},
-		{"i", "input", "Focus the request box (Esc leaves it; it stays visible)", "Tasks", focusRequest},
+		{"i", "input", "Focus the request box: Enter routes and starts, Ctrl-s holds the task for setup; Esc leaves it visible", "Tasks", focusRequest},
 		{"o", "setup", "Set executor, profile and isolation of a held task", "Tasks", onTask(func(m *model, t orchestrator.Task) tea.Cmd {
 			if configurable(t, "Set up a task only while it is held: queued and not started.", &m.notice.text) {
 				m.setup = setupState{target: t.ID}

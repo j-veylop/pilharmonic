@@ -56,6 +56,14 @@ var (
 
 var accentDeep = lipgloss.AdaptiveColor{Light: "#5B40EC", Dark: colorAccentDeep}
 
+// Resolve the spinner palette before caching its pre-rendered frames.
+func spinnerColors() (rose, pink lipgloss.Color) {
+	if lipgloss.HasDarkBackground() {
+		return "#D94F9C", "#FF9DD8"
+	}
+	return "#AA2874", "#C23592"
+}
+
 // editorCursorStyle is Crush's block cursor: Dolly pink, bold, one cell.
 var editorCursorStyle = lipgloss.NewStyle().Background(pink).Foreground(lipgloss.Color("#201F26"))
 

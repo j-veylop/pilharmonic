@@ -287,11 +287,12 @@ func renderFrames(settings Settings, cycling int) *frameCache {
 		width += lipgloss.Width(settings.Label)
 	}
 	framesN := prerenderedFrames
-	offset := 0
+	rampSize := max(1, width*3)
 	if settings.CycleColors {
-		framesN = max(1, width*2)
+		framesN = max(2, width*2)
+		rampSize = framesN/2 + 1
 	}
-	ramp := gradientRamp(max(1, width*3), settings.GradColorA, settings.GradColorB)
+	ramp := gradientRamp(rampSize, settings.GradColorA, settings.GradColorB)
 	seed := seedOf(settingsHash(settings))
 	rng := rand.New(rand.NewPCG(seed, ^seed))
 	cache := &frameCache{
@@ -307,14 +308,17 @@ func renderFrames(settings Settings, cycling int) *frameCache {
 		cache.initial[f] = make([]string, max(0, width))
 		cache.frames[f] = make([]string, max(0, width))
 		for i := range cache.frames[f] {
-			c := ramp[(i+offset)%len(ramp)]
+			index := i % len(ramp)
+			if settings.CycleColors {
+				// Mirror the ramp so the frame wrap takes one ordinary color step.
+				phase := (i + f) % framesN
+				index = min(phase, framesN-phase)
+			}
+			c := ramp[index]
 			cache.initial[f][i] = lipgloss.NewStyle().Foreground(c).Render(string(initialChar))
 			if i < cycling {
 				cache.frames[f][i] = lipgloss.NewStyle().Foreground(c).Render(string(scrambleRunes[rng.IntN(len(scrambleRunes))]))
 			}
-		}
-		if settings.CycleColors {
-			offset++
 		}
 	}
 	return cache

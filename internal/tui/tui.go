@@ -247,9 +247,10 @@ type Options struct {
 
 // Run starts the terminal interface. The service owns task execution.
 func Run(service *orchestrator.Service, workspace string, opts Options) error {
+	theme := ApplyTheme(opts.Theme)
 	initial := newModel(service, workspace)
 	initial.icons = opts.Icons
-	initial.theme = ApplyTheme(opts.Theme)
+	initial.theme = theme
 	output := newTerminalOutput(os.Stdout)
 	initial.clipboard = output
 	_, err := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(output)).Run()
@@ -288,11 +289,12 @@ func animTick() tea.Cmd {
 // newChatAnim is the multi-character turn spinner Crush shows in the
 // transcript while an assistant message is being produced.
 func newChatAnim() *anim.Anim {
+	rose, pink := spinnerColors()
 	return anim.New(anim.Settings{
 		ID:          "assistant",
 		Size:        15,
-		GradColorA:  accent,
-		GradColorB:  cyan,
+		GradColorA:  rose,
+		GradColorB:  pink,
 		CycleColors: true,
 		SuffixColor: muted,
 	})
@@ -301,7 +303,8 @@ func newChatAnim() *anim.Anim {
 // setAnimColors re-renders the chat animation after a theme change.
 func (m *model) setAnimColors() {
 	if m.chatAnim != nil {
-		m.chatAnim.SetColors(ink, accent, cyan, muted)
+		rose, pink := spinnerColors()
+		m.chatAnim.SetColors(ink, rose, pink, muted)
 	}
 }
 

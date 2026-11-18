@@ -6,7 +6,30 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
+
+func TestCyclingGradientWrapsWithoutAColorJump(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+
+	start, end := lipgloss.Color("#d94f9c"), lipgloss.Color("#ff9dd8")
+	frames := renderFrames(Settings{CycleColors: true, GradColorA: start, GradColorB: end}, 15).initial
+	paint := func(c lipgloss.Color) string { return lipgloss.NewStyle().Foreground(c).Render(".") }
+	if frames[0][0] != paint(start) || frames[len(frames)/2][0] != paint(end) {
+		t.Fatal("cycle did not visit both gradient endpoints")
+	}
+	last, first := frames[len(frames)-1], frames[0]
+	if last[0] != first[1] || last[0] == first[0] {
+		t.Fatal("cycle did not return to the start color one step at a time")
+	}
+	for i := 1; i < len(last); i++ {
+		if last[i] != first[i-1] {
+			t.Fatalf("color at cell %d broke the one-cell shift across the loop", i)
+		}
+	}
+}
 
 func TestRenderIsDeterministicPerSettings(t *testing.T) {
 	settings := Settings{ID: "tool", Size: 4, Label: "read", LabelColor: lipgloss.Color("#ffffff"), GradColorA: lipgloss.Color("#ff0000"), GradColorB: lipgloss.Color("#0000ff")}

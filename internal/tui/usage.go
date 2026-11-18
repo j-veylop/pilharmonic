@@ -87,6 +87,24 @@ func taskUsageLine(usage orchestrator.TaskUsage) string {
 	return usageVariants(usage.TokenUsage, 0, false)[0] + " · cost unknown"
 }
 
+// taskListUsage is the richest task usage segment that fits in available
+// cells, or "" when the task recorded nothing. The list row drops the detail
+// before it wraps or crowds out the rest of the row.
+func taskListUsage(usage orchestrator.TaskUsage, available int) string {
+	if usage.IsZero() || available <= 0 {
+		return ""
+	}
+	for _, variant := range usageVariants(usage.TokenUsage, usage.CostUSD, usage.Priced) {
+		if variant == "" {
+			break
+		}
+		if lipgloss.Width(variant) <= available {
+			return variant
+		}
+	}
+	return ""
+}
+
 // priceLine describes the price in force now for the model a task last used,
 // which is what matters when deciding whether to run more work.
 func priceLine(selector string, now time.Time) (string, bool) {

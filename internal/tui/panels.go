@@ -198,6 +198,7 @@ func (m model) selectedPosition() (position, total int, ok bool) {
 // silent agent looks different from a busy one.
 func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
 	now := time.Now()
+	sep := mutedStyle.Render("  ·  ")
 	parts := []string{mutedStyle.Render(executorLabel(task)) + "  " + workspaceBadgeFor(task).render()}
 	if count := len(subtaskRows(m.tasks, task.ID)); count > 0 {
 		parts = append(parts, mutedStyle.Render(fmt.Sprintf("%d subtask(s)", count)))
@@ -220,6 +221,12 @@ func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
 	if model := taskModel(task); model != "" {
 		parts = append(parts, mutedStyle.Render(model))
 	}
+	if usage := task.Usage(); !usage.IsZero() {
+		available := width - 2 - lipgloss.Width(strings.Join(parts, sep)) - lipgloss.Width(sep)
+		if segment := taskListUsage(usage, available); segment != "" {
+			parts = append(parts, mutedStyle.Render(segment))
+		}
+	}
 	if added, removed, ok := m.diffStat(task); ok && added+removed > 0 {
 		parts = append(parts, lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("+%d", added))+
 			mutedStyle.Render(" ")+lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("−%d", removed)))
@@ -235,7 +242,7 @@ func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
 			parts = append(parts, faintStyle.Render("no activity "+shortDuration(now.Sub(task.UpdatedAt))))
 		}
 	}
-	return fit("  "+strings.Join(parts, mutedStyle.Render("  ·  ")), width, 1)
+	return fit("  "+strings.Join(parts, sep), width, 1)
 }
 
 // executorLabel shows the executor and, when chosen, its profile.

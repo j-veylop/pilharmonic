@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -213,35 +212,14 @@ func (m model) attentionCount() int { return len(m.attentionTasks()) }
 // drops its selection row while typing so the input is the only active thing.
 func (m model) inputFocused() bool { return m.router.open || m.input.kind != "" }
 
-// headerRow is the wordmark and, right-aligned, the task counters and session
-// total, joined by the diagonal filler Crush uses. The session total is dropped
-// before a counter loses its wording.
+// headerRow is the wordmark and the rate badge. Task state and usage belong on
+// the rows that carry it, so the header stays a flat brand line.
 func (m model) headerRow(width int) string {
 	header := wordmark()
 	if badge := m.headerRateBadge(time.Now()); badge != "" {
 		header += "  " + badge
 	}
-	available := max(1, width-lipgloss.Width(header)-1)
-	options := m.headerCountOptions()
-	summary, usage := options[len(options)-1], ""
-fit:
-	for _, option := range options {
-		for _, variant := range m.headerUsageVariants() {
-			if lipgloss.Width(option)+lipgloss.Width(variant) <= available {
-				summary, usage = option, variant
-				break fit
-			}
-		}
-	}
-	if usage != "" {
-		usage = mutedStyle.Render(usage)
-	}
-	right := summary + usage
-	fill := width - lipgloss.Width(header) - lipgloss.Width(right) - 2
-	if fill < 3 {
-		return fit(header+right, width, 1)
-	}
-	return fit(header+" "+lipgloss.NewStyle().Foreground(accent).Render(strings.Repeat("╱", fill))+" "+right, width, 1)
+	return fit(header, width, 1)
 }
 
 // headerRateBadge names the discount window in force for the provider of a
@@ -305,62 +283,6 @@ func (m model) modelSummary(width int) string {
 		return ""
 	}
 	return row
-}
-
-// headerUsageVariants lists the session total, richest first and ending with
-// an empty variant. An untouched session has no segment at all.
-func (m model) headerUsageVariants() []string {
-	if m.usage.TotalTokens == 0 {
-		return []string{""}
-	}
-	variants := usageVariants(m.usage.Tokens(), m.usage.CostUSD, m.usage.Priced)
-	for i, variant := range variants {
-		if variant != "" {
-			variants[i] = "  Σ " + variant
-		}
-	}
-	return variants
-}
-
-// headerCountOptions lists the counter formats, richest first. Running is the
-// displayed state, so a parent waiting for subagents is not counted; queued is
-// the process status. The last form keeps only the attention count.
-func (m model) headerCountOptions() []string {
-	running, queued := 0, 0
-	for _, task := range m.tasks {
-		if task.Status == orchestrator.Queued {
-			queued++
-		}
-		if _, label, _ := m.taskState(task); label == "RUNNING" {
-			running++
-		}
-	}
-	attention := m.attentionCount()
-	actionText := "need action"
-	if attention == 1 {
-		actionText = "needs action"
-	}
-	tasks := fmt.Sprintf("%d tasks", len(m.tasks))
-	dot := faintStyle.Render(" • ")
-	format := func(runningText, queuedText, attentionText string) string {
-		parts := []string{mutedStyle.Render(tasks)}
-		if runningText != "" {
-			parts = append(parts, lipgloss.NewStyle().Foreground(statusRunning).Render(runningText))
-		}
-		if queuedText != "" {
-			parts = append(parts, lipgloss.NewStyle().Foreground(statusWaiting).Render(queuedText))
-		}
-		if attentionText != "" {
-			parts = append(parts, accentStyle.Render(attentionText))
-		}
-		return strings.Join(parts, dot)
-	}
-	return []string{
-		format(fmt.Sprintf("● %d running", running), fmt.Sprintf("◷ %d queued", queued), fmt.Sprintf("◆ %d %s", attention, actionText)),
-		format(fmt.Sprintf("● %d run", running), fmt.Sprintf("◷ %d wait", queued), fmt.Sprintf("◆ %d action", attention)),
-		format(fmt.Sprintf("●%d", running), fmt.Sprintf("◷%d", queued), fmt.Sprintf("◆%d", attention)),
-		format("", "", fmt.Sprintf("◆%d", attention)),
-	}
 }
 
 // boardHints is the hint line for one task: its actions first, then the

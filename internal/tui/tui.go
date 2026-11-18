@@ -206,7 +206,8 @@ type activityState struct {
 // routerState is the request box. Its draft survives esc.
 type routerState struct {
 	editor.Editor
-	open bool
+	open    bool
+	history requestHistory
 }
 
 // noticeState is the notice line above the footer. text expires; service is a
@@ -440,7 +441,7 @@ func (m *model) routerResult(msg routerResultMsg) {
 		return
 	}
 	m.refreshTasks()
-	m.router = routerState{open: m.router.open}
+	m.router = routerState{open: m.router.open, history: m.router.history.reset()}
 	m.attachments = nil
 	m.selectTask(msg.task.ID)
 	m.clampScroll()

@@ -260,6 +260,19 @@ func (e *Editor) moveVertical(delta, width int) {
 	e.Cursor = editorOffsetWithinLine(e.Text, lines, target, offset)
 }
 
+// OnFirstLine and OnLastLine report whether the cursor sits on the first or
+// last wrapped line, where a vertical move has nowhere further to go.
+func (e Editor) OnFirstLine(width int) bool {
+	e.clamp()
+	return editorCursorLine(wrapEditor(e.Text, width), e.Cursor) == 0
+}
+
+func (e Editor) OnLastLine(width int) bool {
+	e.clamp()
+	lines := wrapEditor(e.Text, width)
+	return editorCursorLine(lines, e.Cursor) == len(lines)-1
+}
+
 func (e *Editor) ensureVisible(width, height int) {
 	e.clamp()
 	lines := wrapEditor(e.Text, width)

@@ -166,3 +166,30 @@ func TestRequestBoxKeepsItsDraftOverEscAndShowsTheBoard(t *testing.T) {
 		t.Fatalf("esc and reopen lost the draft: %q at %d", m.router.Text, m.router.Cursor)
 	}
 }
+
+func TestRouterHistoryRecallsSubmittedRequests(t *testing.T) {
+	configureTestProvider(t)
+	s := newTestService(t)
+	s.RegisterRunner("general", routerRunner{})
+	m := model{service: s, workspace: t.TempDir(), tasks: s.ListTasks(), router: routerState{open: true}, width: 120, height: 35}
+	for _, text := range []string{"first request", "second request"} {
+		m = key(m, runeKey(text))
+		m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	m = key(m, runeKey("unsent"))
+	up, down := tea.KeyMsg{Type: tea.KeyUp}, tea.KeyMsg{Type: tea.KeyDown}
+	for _, want := range []string{"second request", "first request", "first request"} {
+		if m = key(m, up); m.router.Text != want {
+			t.Fatalf("up recalled %q, want %q", m.router.Text, want)
+		}
+	}
+	for _, want := range []string{"second request", "unsent", "unsent"} {
+		if m = key(m, down); m.router.Text != want {
+			t.Fatalf("down recalled %q, want %q", m.router.Text, want)
+		}
+	}
+	m.router.Editor = editor.Editor{Text: "a\nb", Cursor: 3}
+	if m = key(m, up); m.router.Text != "a\nb" || m.router.Cursor != 1 {
+		t.Fatalf("up on a later line must move the cursor, got %q at %d", m.router.Text, m.router.Cursor)
+	}
+}

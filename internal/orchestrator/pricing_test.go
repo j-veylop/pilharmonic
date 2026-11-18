@@ -77,24 +77,27 @@ func TestProviderRateNamesTheWindowForAnyModel(t *testing.T) {
 	}
 	// Naming the provider window must not invent a price for a model the
 	// curated table does not list.
-	if _, ok := PriceFor("deepseek/deepseek-flash", offPeak); ok {
+	if _, ok := PriceFor("deepseek/deepseek-unlisted", offPeak); ok {
 		t.Errorf("unpriced DeepSeek model gained a curated cost")
 	}
 }
 
-// TestPriceForDeepSeekDiscountedRates checks both DeepSeek models apply their
+// TestPriceForDeepSeekDiscountedRates checks every DeepSeek model applies its
 // own off-peak pair rather than one shared discount: deepseek-chat is half
-// price, deepseek-reasoner is 75% off input and half price on output.
+// price, deepseek-reasoner is 75% off input and half price on output, and the
+// current flash and v4-pro models are half price across every bucket.
 func TestPriceForDeepSeekDiscountedRates(t *testing.T) {
 	peak := time.Date(2025, 9, 1, 2, 0, 0, 0, time.UTC)
 	offPeak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		model                       string
-		peakInput, peakOutput       float64
-		offPeakInput, offPeakOutput float64
+		model                                 string
+		peakInput, peakOutput, peakCache      float64
+		offPeakInput, offPeakOutput, offCache float64
 	}{
-		{"deepseek/deepseek-chat", 0.28, 0.42, 0.14, 0.21},
-		{"deepseek/deepseek-reasoner", 0.28, 0.42, 0.07, 0.21},
+		{"deepseek/deepseek-flash", 0.30, 1.20, 0.006, 0.15, 0.60, 0.003},
+		{"deepseek/deepseek-v4-pro", 1.32, 3.96, 0.044, 0.66, 1.98, 0.022},
+		{"deepseek/deepseek-chat", 0.28, 0.42, 0.028, 0.14, 0.21, 0.014},
+		{"deepseek/deepseek-reasoner", 0.28, 0.42, 0.028, 0.07, 0.21, 0.014},
 	}
 	for _, tc := range cases {
 		price, ok := PriceFor(tc.model, peak)
@@ -122,6 +125,12 @@ func TestPriceForDeepSeekDiscountedRates(t *testing.T) {
 		if got := price.OutputRate(offPeak); got != tc.offPeakOutput {
 			t.Errorf("%s off-peak output rate = %v, want %v", tc.model, got, tc.offPeakOutput)
 		}
+		if got := price.CacheReadRate(peak); got != tc.peakCache {
+			t.Errorf("%s peak cache-read rate = %v, want %v", tc.model, got, tc.peakCache)
+		}
+		if got := price.CacheReadRate(offPeak); got != tc.offCache {
+			t.Errorf("%s off-peak cache-read rate = %v, want %v", tc.model, got, tc.offCache)
+		}
 		// A full million of each half costs exactly the published pair, which is
 		// the unit the table is written in.
 		full := TokenUsage{InputTokens: millionTokens, OutputTokens: millionTokens}
@@ -130,6 +139,40 @@ func TestPriceForDeepSeekDiscountedRates(t *testing.T) {
 		}
 		if got, want := price.Cost(full, offPeak), tc.offPeakInput+tc.offPeakOutput; !floatMatches(got, want) {
 			t.Errorf("%s off-peak cost of 1M/1M = %v, want %v", tc.model, got, want)
+		}
+	}
+}
+
+// TestSubscriptionModelsUseAPIPrices covers the ChatGPT subscription catalog:
+// subscription usage is not billed per token, so its estimate assumes the API
+// list price of the same Codex model.
+func TestSubscriptionModelsUseAPIPrices(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		model      string
+		input, out float64
+		cache      float64
+	}{
+		{"openai-subscription/gpt-5-codex", 1.25, 10, 0.125},
+		{"openai-subscription/gpt-5.1-codex", 1.25, 10, 0.125},
+		{"openai-subscription/gpt-5.1-codex-max", 1.25, 10, 0.125},
+		{"openai-subscription/gpt-5.1-codex-mini", 0.25, 2, 0.025},
+		{"openai-subscription/gpt-5.2-codex", 1.75, 14, 0.175},
+	}
+	for _, tc := range cases {
+		price, ok := PriceFor(tc.model, now)
+		if !ok {
+			t.Fatalf("%s has no curated price", tc.model)
+		}
+		if price.Rate(now) != "" {
+			t.Errorf("%s is time-of-day priced", tc.model)
+		}
+		usage := TokenUsage{
+			InputTokens: millionTokens, OutputTokens: millionTokens,
+			CacheReadTokens: millionTokens,
+		}
+		if got, want := price.Cost(usage, now), tc.input+tc.out+tc.cache; !floatMatches(got, want) {
+			t.Errorf("%s cost of 1M of each bucket = %v, want %v", tc.model, got, want)
 		}
 	}
 }
@@ -182,6 +225,7 @@ func TestPriceForSelectors(t *testing.T) {
 		{"deepseek", "", false},
 		{"provider/", "", false},
 		{"nosuch/model", "", false},
+		{"deepseek/deepseek-unlisted", "", false},
 		{"openai/gpt-4", "", false},
 		{"openrouter/deepseek-chat", "", false},
 		{"openai/gpt-4.1-2024-08-06", "", false},

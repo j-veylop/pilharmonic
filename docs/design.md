@@ -178,7 +178,9 @@ apply at that moment). Prompt tokens are uncached input plus cache reads and
 writes; cache reads and writes are recorded separately from the provider's
 counters and priced at their own rates, and a request-wide tier is selected from
 the whole prompt. The component costs and the total are fixed at recording time,
-so a later rate change cannot rewrite history. Unpriced models report tokens
+so a later rate change cannot rewrite history. ChatGPT subscription usage is
+priced at the API list price of the same model as an estimate, since the
+subscription itself is not billed per token. Unpriced models report tokens
 without a cost. Task rows abbreviate prompt, output and cache-read tokens with
 `↑`, `↓` and `⚡` glyphs and omit the executor, which routing usually sets to
 `general`; task details keep both. The session total covers attempts started by

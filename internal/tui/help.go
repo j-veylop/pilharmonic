@@ -13,7 +13,10 @@ import (
 // helpTopic is one page of the help overlay. Rows are structured so they wrap
 // to any frame width.
 type helpTopic struct {
-	title    string
+	title string
+	// short labels the topic strip when the full titles do not fit. It stays
+	// recognizable so the menu never degrades to bare topic numbers.
+	short    string
 	intro    []string
 	sections []helpSection
 	note     []string
@@ -47,6 +50,7 @@ func (s helpSection) keys() []helpRow {
 var helpTopics = []helpTopic{
 	{
 		title: "Concepts",
+		short: "Con",
 		sections: []helpSection{{rows: []helpRow{
 			{"Request", "Work typed into the request box (/). One compiled-in authorization step decides acceptance and records its audit evidence."},
 			{"Task", "Accepted work with its own mandate, executor, status and history."},
@@ -63,6 +67,7 @@ var helpTopics = []helpTopic{
 	},
 	{
 		title: "Navigation",
+		short: "Nav",
 		sections: []helpSection{{topic: "Navigation", rows: []helpRow{
 			{"h / l", "Focus tasks / details"},
 			{"j / k", "Move down / up; counts: 5j, 3k; selects a call in focused ACTIVITY"},
@@ -74,14 +79,17 @@ var helpTopics = []helpTopic{
 	},
 	{
 		title:    "Tasks",
+		short:    "Task",
 		sections: []helpSection{{topic: "Tasks"}},
 	},
 	{
 		title:    "Details",
+		short:    "Det",
 		sections: []helpSection{{topic: "Details"}},
 	},
 	{
 		title: "Commands",
+		short: "Cmd",
 		intro: []string{
 			"Type these into the REQUEST box; they are never submitted as a request. Arguments follow the command name, as in /login <provider> or /model [big|small]. Attached files are read once at submission and appended to the request as text.",
 			"Use /model <agent> to choose big, small, or a custom model from a configured provider.",
@@ -104,6 +112,7 @@ var helpTopics = []helpTopic{
 	},
 	{
 		title: "Editing",
+		short: "Edi",
 		intro: []string{
 			"The request box always stays docked above the footer hints; i focuses it and Esc leaves it without hiding the draft. Every composer reuses the same box, and the draft wraps inside it and grows to six rows.",
 		},
@@ -128,6 +137,7 @@ var helpTopics = []helpTopic{
 	},
 	{
 		title: "General",
+		short: "Gen",
 		sections: []helpSection{{topic: "General", rows: []helpRow{
 			{"?", "Open / close this help (not while typing)"},
 			{"F1", "Open / close this help from any screen"},
@@ -289,18 +299,22 @@ func helpBodyWidth(mw int) int {
 	return max(1, mw-4-helpBodyIndent-helpScrollGutter)
 }
 
-// helpTabs draws the topic strip with titles when they fit, positions when
-// they do not, and nothing when even those overflow; the title row still names
-// the topic.
+// helpTabs draws the topic strip with full titles when they fit, compact
+// labels when they do not, and positions when even those overflow; the title
+// row still names the topic. Labels are kept when at all possible because a
+// strip of bare numbers does not say what each topic is.
 func helpTabs(width, page int) string {
-	titles, numbers := make([]string, len(helpTopics)), make([]string, len(helpTopics))
+	titles, shorts, numbers := make([]string, len(helpTopics)), make([]string, len(helpTopics)), make([]string, len(helpTopics))
 	for i, topic := range helpTopics {
-		titles[i], numbers[i] = topic.title, strconv.Itoa(i+1)
+		titles[i], shorts[i], numbers[i] = topic.title, topic.short, strconv.Itoa(i+1)
 	}
-	for _, labels := range [][]string{titles, numbers} {
+	for _, labels := range [][]string{titles, shorts, numbers} {
 		row := ""
 		for i, label := range labels {
-			row += selectionButton(label, i == page) + " "
+			if i > 0 {
+				row += " "
+			}
+			row += selectionButton(label, i == page)
 		}
 		if lipgloss.Width(row) <= width {
 			return row
@@ -378,7 +392,7 @@ func (m model) helpModal(w, h int) (mw, mh int, content []string) {
 		content = append(content, strings.Repeat(" ", helpBodyIndent)+padHelp(line, bodyWidth)+
 			" "+helpScrollBar(row, bodyRows, start, total))
 	}
-	return mw, mh, append(content, "", fitHints(inner, "esc close", "h/l topics", "j/k scroll"))
+	return mw, mh, append(content, "", fitHints(inner, "esc close", "←/→ topics", "↑/↓ scroll"))
 }
 
 func (m model) helpView(background string, w, h int) string {

@@ -21,18 +21,38 @@ func TestHelpTabsHaveNoSelectionArrow(t *testing.T) {
 }
 
 func TestHelpTabsUseSelectionButtons(t *testing.T) {
-	for _, width := range []int{30, 100} {
+	// A narrow frame falls back to positions, a medium one keeps compact
+	// labels, and a wide one shows every full topic title.
+	cases := []struct {
+		width int
+		label func(helpTopic, int) string
+	}{
+		{30, func(_ helpTopic, i int) string { return string(rune('1' + i)) }},
+		{50, func(topic helpTopic, _ int) string { return topic.short }},
+		{100, func(topic helpTopic, _ int) string { return topic.title }},
+	}
+	for _, tc := range cases {
 		for page := range helpTopics {
 			labels := make([]string, len(helpTopics))
 			for i, topic := range helpTopics {
-				label := topic.title
-				if width == 30 {
-					label = string(rune('1' + i))
-				}
-				labels[i] = selectionButton(label, i == page) + " "
+				labels[i] = selectionButton(tc.label(topic, i), i == page)
 			}
-			if got, want := helpTabs(width, page), strings.Join(labels, ""); got != want {
-				t.Fatalf("width %d page %d: got %q, want %q", width, page, got, want)
+			if got, want := helpTabs(tc.width, page), strings.Join(labels, " "); got != want {
+				t.Fatalf("width %d page %d: got %q, want %q", tc.width, page, got, want)
+			}
+		}
+	}
+}
+
+// The overlay is capped at helpMaxWidth, so the strip must fit its full titles
+// there; otherwise even a wide terminal would only show positions.
+func TestHelpTabsNameEveryTopicInTheOverlay(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		mw, _, _ := helpFrame(size[0], size[1])
+		row := ansi.Strip(helpTabs(mw-4, 0))
+		for _, topic := range helpTopics {
+			if !strings.Contains(row, topic.title) {
+				t.Fatalf("%v: topic strip %q is missing %q", size, row, topic.title)
 			}
 		}
 	}

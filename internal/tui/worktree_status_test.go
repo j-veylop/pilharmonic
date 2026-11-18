@@ -44,14 +44,20 @@ func TestWorkspaceBadgeDistinguishesWorkspaceAndMergeState(t *testing.T) {
 			board := ansi.Strip(model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}}.View() +
 				model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}, tab: infoTab, detailFocus: true}.View() +
 				model{width: 120, height: 35, tasks: []orchestrator.Task{tc.task}, detailFocus: true}.View())
-			for _, want := range append([]string{tc.glyph + " " + tc.label}, tc.detail...) {
+			if !strings.Contains(board, tc.glyph) {
+				t.Fatalf("board missing workspace glyph %q: %s", tc.glyph, board)
+			}
+			if strings.Contains(board, tc.glyph+" "+tc.label) {
+				t.Fatalf("board still spells out the badge %q: %s", tc.glyph+" "+tc.label, board)
+			}
+			for _, want := range tc.detail {
 				if !strings.Contains(board, want) {
 					t.Fatalf("board missing %q: %s", want, board)
 				}
 			}
 			recent := ansi.Strip(model{router: routerState{open: true}, width: 120, height: 35, tasks: []orchestrator.Task{tc.task}}.View())
-			if !strings.Contains(recent, tc.glyph+" "+tc.label) {
-				t.Fatalf("recent task missing workspace badge: %s", recent)
+			if !strings.Contains(recent, tc.glyph) {
+				t.Fatalf("recent task missing workspace glyph: %s", recent)
 			}
 		})
 	}

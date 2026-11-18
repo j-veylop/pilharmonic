@@ -259,6 +259,70 @@ func shortModel(selector string) string {
 	return selector
 }
 
+// providerGlyphs give each provider prefix a recognizable mark so a row can
+// name the provider without spelling it out.
+var providerGlyphs = map[string]string{
+	"openai":              "⬡",
+	"openai-subscription": "⬡",
+	"deepseek":            "🐳",
+	"anthropic":           "✳",
+	"google":              "✦",
+	"xai":                 "✕",
+	"meta-llama":          "∞",
+	"mistral":             "▲",
+	"qwen":                "✧",
+	"groq":                "◆",
+	"openrouter":          "⇄",
+	"hyper":               "◈",
+	"bedrock":             "☁",
+}
+
+// modelGlyph marks a model's character from its ID: a lightning bolt for a
+// fast model, a half circle for a reasoning one, and so on. Unknown names get
+// no glyph rather than an arbitrary one.
+func modelGlyph(model string) string {
+	name := strings.ToLower(model)
+	switch {
+	case strings.Contains(name, "flash"), strings.Contains(name, "instant"):
+		return "⚡"
+	case strings.Contains(name, "codex"):
+		return "⌘"
+	case strings.Contains(name, "reason"), strings.Contains(name, "think"), strings.HasSuffix(name, "r1"):
+		return "◐"
+	case strings.Contains(name, "mini"), strings.Contains(name, "small"):
+		return "▽"
+	case strings.Contains(name, "pro"), strings.Contains(name, "max"), strings.Contains(name, "ultra"):
+		return "▲"
+	case strings.Contains(name, "sonnet"):
+		return "♪"
+	case strings.Contains(name, "haiku"):
+		return "❀"
+	case strings.Contains(name, "opus"):
+		return "♛"
+	case strings.Contains(name, "llama"):
+		return "🦙"
+	}
+	return ""
+}
+
+// modelBadge is the compact provider and model mark for a task row, such as
+// "🐳 deepseek-flash ⚡".
+func modelBadge(selector string) string {
+	provider, model, ok := strings.Cut(selector, "/")
+	if !ok {
+		return strings.TrimSpace(modelGlyph(selector) + " " + selector)
+	}
+	parts := make([]string, 0, 3)
+	if glyph := providerGlyphs[strings.ToLower(provider)]; glyph != "" {
+		parts = append(parts, glyph)
+	}
+	parts = append(parts, model)
+	if glyph := modelGlyph(model); glyph != "" {
+		parts = append(parts, glyph)
+	}
+	return strings.Join(parts, " ")
+}
+
 // modelSummary names the big and small models where the board can show them.
 // The small model is dropped before the big one when space runs out.
 func (m model) modelSummary(width int) string {

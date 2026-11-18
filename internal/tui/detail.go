@@ -270,12 +270,11 @@ func (m model) detailPanel(width, height int) string {
 	return surfacePanel(strings.Join(lines, "\n"), width, height)
 }
 
-// landingContent is the empty board: identity, examples and the first keys.
-// Like Crush's landing page it sits at the left margin and reads top to bottom.
+// landingContent is the empty board: tagline, examples and the first keys.
+// The header already carries the wordmark. Like Crush's landing page it sits at the left margin and reads top to bottom.
 func (m model) landingContent(width int) string {
 	ruleWidth := max(1, min(40, width))
 	lines := []string{
-		wordmark(),
 		mutedStyle.Render("Local agents with recorded mandates and attempts"),
 	}
 	if models := m.modelSummary(width); models != "" {

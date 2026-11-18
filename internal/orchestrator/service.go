@@ -42,6 +42,10 @@ type Service struct {
 	skillConfigPath     string
 	disabledSkills      map[string]bool
 	agentDisabledSkills map[string]map[string]bool
+	// checkPath and checks hold the recognized language toolchains and the
+	// operator's opt-out list, shared with every FantasyRunner.
+	checkPath string
+	checks    *checkSettings
 	// routeProfile is the profile the router assigns and the default for tasks
 	// created without an explicit choice.
 	routeProfile   string
@@ -109,6 +113,8 @@ func Open(path string) (*Service, error) {
 		credentialsPath:     credentialsPathFor(path),
 		modelSelectionPath:  modelSelectionPathFor(path),
 		skillConfigPath:     skillConfigPathFor(path),
+		checkPath:           checkConfigPathFor(path),
+		checks:              newCheckSettings(map[string]bool{}),
 		disabledSkills:      map[string]bool{},
 		agentDisabledSkills: map[string]map[string]bool{},
 	}
@@ -125,7 +131,10 @@ func Open(path string) (*Service, error) {
 	if s.modelSelection, legacyClasses, err = loadModelConfig(s.modelSelectionPath); err != nil {
 		return nil, err
 	}
-	s.runners[DefaultRouteAgent] = FantasyRunner{ModelFactory: s.fantasyModelFactory}
+	if s.checks, err = loadCheckConfig(s.checkPath); err != nil {
+		return nil, err
+	}
+	s.runners[DefaultRouteAgent] = FantasyRunner{ModelFactory: s.fantasyModelFactory, checks: s.checks}
 	if err = s.loadState(); err != nil {
 		return nil, err
 	}

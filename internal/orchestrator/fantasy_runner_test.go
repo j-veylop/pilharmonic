@@ -20,6 +20,7 @@ type fakeFantasyModel struct {
 	mu      sync.Mutex
 	scripts [][]fantasy.StreamPart
 	calls   int
+	prompts []fantasy.Prompt
 }
 
 func (m *fakeFantasyModel) Generate(context.Context, fantasy.Call) (*fantasy.Response, error) {
@@ -29,13 +30,14 @@ func (m *fakeFantasyModel) Generate(context.Context, fantasy.Call) (*fantasy.Res
 	}, nil
 }
 
-func (m *fakeFantasyModel) Stream(context.Context, fantasy.Call) (fantasy.StreamResponse, error) {
+func (m *fakeFantasyModel) Stream(_ context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
 	m.mu.Lock()
 	var parts []fantasy.StreamPart
 	if m.calls < len(m.scripts) {
 		parts = m.scripts[m.calls]
 	}
 	m.calls++
+	m.prompts = append(m.prompts, call.Prompt)
 	m.mu.Unlock()
 	return func(yield func(fantasy.StreamPart) bool) {
 		for _, part := range parts {
@@ -230,5 +232,37 @@ func TestFantasyToolCallSummaryIsBounded(t *testing.T) {
 	}
 	if got := toolCallSummary("bash", ""); got != "bash" {
 		t.Fatalf("empty input summary: %q", got)
+	}
+}
+
+func TestFantasyRunnerFeedsVerificationFailuresBack(t *testing.T) {
+	workspace := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/verify\n\ngo 1.22\n"), 0o644))
+	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{
+		{
+			{Type: fantasy.StreamPartTypeTextStart, ID: "t1"},
+			{Type: fantasy.StreamPartTypeTextDelta, ID: "t1", Delta: "writing"},
+			{Type: fantasy.StreamPartTypeTextEnd, ID: "t1"},
+			{Type: fantasy.StreamPartTypeToolCall, ID: "call-1", ToolCallName: "write", ToolCallInput: `{"path":"lib.go","content":"package verify\nfunc Add(a int) int{ return a }\n"}`},
+			{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls},
+		},
+		textDelta("fixed"),
+		textDelta("done"),
+	}}
+	runner := FantasyRunner{ModelFactory: fakeFactory(model, "fake/model")}
+	sink := &fantasyTestSink{}
+	must(t, runner.Run(context.Background(), Task{Prompt: "do work", model: "fake/model", Workspace: workspace}, sink))
+	feedback := ""
+	for _, prompt := range model.prompts {
+		for _, message := range prompt {
+			for _, part := range message.Content {
+				if text, ok := part.(fantasy.TextPart); ok && strings.Contains(text.Text, "Automatic verification") {
+					feedback = text.Text
+				}
+			}
+		}
+	}
+	if !strings.Contains(feedback, "Go format") {
+		t.Fatalf("verification feedback missing from the follow-up prompts: %q", feedback)
 	}
 }

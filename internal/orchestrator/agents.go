@@ -197,12 +197,12 @@ type builtinSpecialistRole struct {
 // builtinSpecialistRoles defines the bundled specialists: the role name,
 // description, compiled instructions and least-privilege tool palette.
 var builtinSpecialistRoles = []builtinSpecialistRole{
-	{"debugger", "Reproduce a failure and isolate its cause.", debuggerPrompt, []string{"read", "bash", "grep", "find", "ls"}},
-	{"explorer", "Trace code paths and explain how the repository works.", explorerPrompt, []string{"read", "grep", "find", "ls"}},
-	{"implementer", "Implement a scoped change and verify its behavior.", implementerPrompt, []string{"read", "edit", "write", "grep", "find", "ls", "bash"}},
-	{"gitter", "Inspect Git history and handle scoped branch, commit, and merge work.", gitterPrompt, []string{"read", "bash", "edit", "write", "grep", "find", "ls"}},
-	{"reviewer", "Review changes for bugs and missing tests.", reviewerPrompt, []string{"read", "grep", "find", "ls"}},
-	{"tester", "Design and run focused regression tests.", testerPrompt, []string{"read", "grep", "find", "ls", "bash"}},
+	{"debugger", "Reproduce a failure and isolate its cause.", debuggerPrompt, []string{"read", "bash", "grep", "rg", "glob", "find", "ls", "diagnostics"}},
+	{"explorer", "Trace code paths and explain how the repository works.", explorerPrompt, []string{"read", "grep", "rg", "glob", "find", "ls"}},
+	{"implementer", "Implement a scoped change and verify its behavior.", implementerPrompt, []string{"read", "edit", "write", "multiedit", "grep", "rg", "glob", "find", "ls", "bash", "diagnostics"}},
+	{"gitter", "Inspect Git history and handle scoped branch, commit, and merge work.", gitterPrompt, []string{"read", "bash", "edit", "write", "multiedit", "grep", "rg", "glob", "find", "ls", "diagnostics"}},
+	{"reviewer", "Review changes for bugs and missing tests.", reviewerPrompt, []string{"read", "grep", "rg", "glob", "find", "ls"}},
+	{"tester", "Design and run focused regression tests.", testerPrompt, []string{"read", "grep", "rg", "glob", "find", "ls", "bash", "diagnostics"}},
 }
 
 // LoadBuiltinSpecialists fills unused executor names after loading the
@@ -216,7 +216,7 @@ func (s *Service) LoadBuiltinSpecialists() {
 		if _, exists := s.runners[role.name]; exists {
 			continue
 		}
-		s.runners[role.name] = FantasyRunner{instructions: strings.TrimSpace(role.instructions), defaultTools: append([]string(nil), role.tools...), ModelFactory: s.fantasyModelFactory}
+		s.runners[role.name] = FantasyRunner{instructions: strings.TrimSpace(role.instructions), defaultTools: append([]string(nil), role.tools...), ModelFactory: s.fantasyModelFactory, checks: s.checks}
 		s.agentDescriptions[role.name] = role.description
 	}
 }

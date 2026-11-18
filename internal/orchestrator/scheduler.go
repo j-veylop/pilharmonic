@@ -301,10 +301,11 @@ func retainAttemptOutputs(task *Task, keep int) int {
 	dropped := 0
 	for i := 0; i < limit; i++ {
 		attempt := &task.Attempts[i]
-		if attempt.Output == "" || attempt.OutputTruncated {
+		if (attempt.Output == "" && attempt.Turns == nil) || attempt.OutputTruncated {
 			continue
 		}
 		attempt.Output = ""
+		attempt.Turns = nil
 		attempt.OutputTruncated = true
 		dropped++
 	}

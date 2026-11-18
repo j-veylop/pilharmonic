@@ -27,6 +27,8 @@ type credentialCall struct {
 // fakeLoginService is a credential-aware stand-in for the orchestrator. The
 // embedded nil Service panics on any method a test does not expect.
 type fakeLoginService struct {
+	languageChecks []orchestrator.LanguageCheckInfo
+	checksSetCalls []string
 	Service
 	tasks         []orchestrator.Task
 	creds         []orchestrator.ProviderCredential
@@ -67,6 +69,20 @@ func (f *fakeLoginService) PersistenceError() error { return nil }
 func (f *fakeLoginService) StartupWarning() string  { return "" }
 
 func (f *fakeLoginService) ListSkills() []orchestrator.SkillInfo { return f.skills }
+
+func (f *fakeLoginService) ListLanguageChecks(string) []orchestrator.LanguageCheckInfo {
+	return f.languageChecks
+}
+
+func (f *fakeLoginService) SetLanguageCheckEnabled(id string, enabled bool) error {
+	f.checksSetCalls = append(f.checksSetCalls, fmt.Sprintf("%s=%t", id, enabled))
+	for i := range f.languageChecks {
+		if f.languageChecks[i].ID == id {
+			f.languageChecks[i].Enabled = enabled
+		}
+	}
+	return nil
+}
 
 func (f *fakeLoginService) SetSkillEnabled(name string, enabled bool) error {
 	f.skillSetCalls = append(f.skillSetCalls, fmt.Sprintf("%s=%t", name, enabled))

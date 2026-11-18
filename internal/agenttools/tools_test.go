@@ -42,7 +42,7 @@ func TestToolsCoverThePalette(t *testing.T) {
 	for _, tool := range tools {
 		got = append(got, tool.Info().Name)
 	}
-	if strings.Join(got, ",") != "read,bash,write,edit,grep,find,ls" {
+	if strings.Join(got, ",") != "read,bash,write,edit,multiedit,grep,rg,glob,find,ls,diagnostics" {
 		t.Fatalf("unexpected tools: %v", got)
 	}
 	subset := Tools(t.TempDir(), []string{"read", "unknown-tool"}, nil)
@@ -229,5 +229,67 @@ func TestBashToolHonorsContext(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("cancellation ignored: %s", elapsed)
+	}
+}
+
+func TestGlobAndRgFindWorkspaceFiles(t *testing.T) {
+	workspace := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(workspace, "pkg", "deep"), 0o755))
+	must(t, os.WriteFile(filepath.Join(workspace, "pkg", "deep", "main.go"), []byte("package deep\n\nfunc Run() {}\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("hello world\n"), 0o644))
+
+	globbed := runTool(t, workspace, "glob", `{"pattern":"**/*.go"}`)
+	if globbed.IsError || !strings.Contains(globbed.Content, "pkg/deep/main.go") {
+		t.Fatalf("glob missed the nested file: %+v", globbed)
+	}
+
+	hit := runTool(t, workspace, "rg", `{"pattern":"func Run","glob":"*.go"}`)
+	if hit.IsError || !strings.Contains(hit.Content, "pkg/deep/main.go:3:") {
+		t.Fatalf("rg missed the match: %+v", hit)
+	}
+	if miss := runTool(t, workspace, "rg", `{"pattern":"absent-token"}`); miss.IsError || !strings.Contains(miss.Content, "no matches") {
+		t.Fatalf("empty rg should be an answer: %+v", miss)
+	}
+}
+
+func TestMultieditAppliesOrderedEdits(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "a.txt")
+	must(t, os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0o644))
+
+	result := runTool(t, workspace, "multiedit", `{"edits":[
+		{"path":"a.txt","old_text":"alpha","new_text":"ALPHA"},
+		{"path":"a.txt","old_text":"gamma","new_text":"GAMMA"}
+	]}`)
+	if result.IsError {
+		t.Fatalf("multiedit: %+v", result)
+	}
+	data, err := os.ReadFile(path)
+	must(t, err)
+	if string(data) != "ALPHA\nbeta\nGAMMA\n" {
+		t.Fatalf("edits not applied in order: %q", data)
+	}
+}
+
+func TestEditFallsBackToWhitespaceTolerantMatch(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "a.go")
+	must(t, os.WriteFile(path, []byte("func run() {\n\tif true {\n\t\twork()\n\t}\n}\n"), 0o644))
+
+	result := runTool(t, workspace, "edit", `{"path":"a.go","old_text":"    if true {\n        work()\n    }","new_text":"    if ready {\n        work()\n    }"}`)
+	if result.IsError {
+		t.Fatalf("tolerant edit: %+v", result)
+	}
+	data, err := os.ReadFile(path)
+	must(t, err)
+	if !strings.Contains(string(data), "\tif ready {\n\t\twork()\n\t}") {
+		t.Fatalf("edit did not keep file indentation: %q", data)
+	}
+}
+
+func TestDiagnosticsWithoutGoModuleIsAnAnswer(t *testing.T) {
+	result := runTool(t, t.TempDir(), "diagnostics", `{}`)
+	if result.IsError || !strings.Contains(result.Content, "no Go module") {
+		t.Fatalf("diagnostics outside a module: %+v", result)
 	}
 }

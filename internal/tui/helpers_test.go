@@ -23,7 +23,7 @@ func key(m model, msg tea.KeyMsg) model {
 	m = next.(model)
 	for i := 0; cmd != nil && i < 8; i++ {
 		switch result := cmd().(type) {
-		case actionResultMsg, composerResultMsg, routerResultMsg, cleanupResultMsg, isolationResultMsg, selectionCopiedMsg, fetchModelsMsg, skillToggleMsg:
+		case actionResultMsg, composerResultMsg, routerResultMsg, cleanupResultMsg, isolationResultMsg, selectionCopiedMsg, fetchModelsMsg, skillToggleMsg, lspToggleMsg:
 			next, cmd = m.Update(result)
 			m = next.(model)
 		default:

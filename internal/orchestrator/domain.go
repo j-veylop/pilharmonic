@@ -53,6 +53,19 @@ type Thread struct {
 	Decisions []Decision `json:"decisions"`
 }
 
+// Turn is one durable message from an attempt's tool conversation. Role is
+// "assistant" or "tool". An assistant turn may carry text, a tool call, or
+// both; a tool turn carries the call's result.
+type Turn struct {
+	Role       string `json:"role"`
+	Text       string `json:"text,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
+	Input      string `json:"input,omitempty"`
+	Output     string `json:"output,omitempty"`
+	IsError    bool   `json:"is_error,omitempty"`
+}
+
 // Attempt records one execution separately from the task mandate.
 type Attempt struct {
 	ID              string    `json:"id"`
@@ -65,7 +78,12 @@ type Attempt struct {
 	FinishedAt      time.Time `json:"finished_at,omitempty"`
 	OutputTruncated bool      `json:"output_truncated,omitempty"`
 	Output          string    `json:"output,omitempty"`
-	Error           string    `json:"error,omitempty"`
+	// Turns is the structured tool conversation this attempt ran: assistant
+	// text and tool calls with their results. The next attempt replays it so a
+	// follow-up or retry keeps what earlier tool calls discovered, not just the
+	// prose tail.
+	Turns []Turn `json:"turns,omitempty"`
+	Error string `json:"error,omitempty"`
 	// Usage is nil when the adapter reported none, rather than implying the
 	// attempt cost nothing.
 	Usage *AttemptUsage `json:"usage,omitempty"`
@@ -166,6 +184,7 @@ func clone(t Task) Task {
 	t.Attempts = append([]Attempt(nil), t.Attempts...)
 	for i := range t.Attempts {
 		t.Attempts[i].Tools = append([]string(nil), t.Attempts[i].Tools...)
+		t.Attempts[i].Turns = append([]Turn(nil), t.Attempts[i].Turns...)
 		if t.Attempts[i].Usage != nil {
 			usage := *t.Attempts[i].Usage
 			t.Attempts[i].Usage = &usage

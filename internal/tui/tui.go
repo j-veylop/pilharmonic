@@ -52,6 +52,12 @@ type skillToggleMsg struct {
 	err     error
 }
 
+type lspToggleMsg struct {
+	id      string
+	enabled bool
+	err     error
+}
+
 // actionResultMsg reports a mutating service call by its notice or error.
 type actionResultMsg struct {
 	notice string
@@ -90,6 +96,8 @@ type Service interface {
 	ListAgentSkills(agent string) []orchestrator.SkillInfo
 	SetAgentSkillEnabled(agent, name string, enabled bool) error
 	SetSkillEnabled(name string, enabled bool) error
+	ListLanguageChecks(workspace string) []orchestrator.LanguageCheckInfo
+	SetLanguageCheckEnabled(id string, enabled bool) error
 	SubmitRequest(text, workspace string) (orchestrator.Task, error)
 	Start(ctx context.Context, id string) error
 	Retry(id string) error
@@ -175,6 +183,7 @@ type model struct {
 	login         loginState
 	models        modelMenuState
 	skills        skillMenuState
+	lsps          lspMenuState
 }
 
 // detailTab is the detail pane's OUTPUT, INFO or ACTIVITY view.
@@ -357,6 +366,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffStats[msg.id] = diffStatEntry{key: msg.key, added: msg.added, removed: msg.removed, at: time.Now(), failed: msg.err != nil}
 	case skillToggleMsg:
 		m.finishSkillToggle(msg)
+	case lspToggleMsg:
+		m.finishLSPToggle(msg)
 	case actionResultMsg:
 		m.finish(msg)
 	case composerResultMsg:
@@ -510,6 +521,8 @@ func (m model) keyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.modelMenuKey(key)
 	case m.skills.open:
 		return m.skillMenuKey(key)
+	case m.lsps.open:
+		return m.lspMenuKey(key)
 	case m.setup.target != "":
 		return m.setupKey(key)
 	case m.router.open:

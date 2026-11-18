@@ -32,6 +32,9 @@ type FantasyRunner struct {
 	// skills lists operator-installed instruction packs. Their metadata travels
 	// in the system prompt and their bodies are read through the skill tool.
 	skills skills.Catalog
+	// checks is the service's shared language-check opt-out list. Nil enables
+	// every recognized stack, which keeps standalone runners useful in tests.
+	checks *checkSettings
 }
 
 // SupportsProfile accepts the parameters this adapter can translate. Tool names
@@ -136,7 +139,7 @@ func (f FantasyRunner) Run(ctx context.Context, t Task, out io.Writer) error {
 // text, reasoning and tool activity are forwarded to out as they happen; a
 // structured failure is reported before the run returns an error.
 func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follow <-chan Trigger, ack func(string, bool, string)) error {
-	prompt := composeInput(t, false)
+	prompt, history := composeConversation(t)
 	if len(prompt) > maxPromptBytes {
 		return fmt.Errorf("prompt exceeds 100 KiB argument limit (%d bytes)", len(prompt))
 	}
@@ -151,15 +154,22 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 	}
 	agent := fantasy.NewAgent(model,
 		fantasy.WithSystemPrompt(f.systemPrompt(t.ProfileSpec)),
-		fantasy.WithTools(agenttools.ToolsWithSkills(t.Workspace, f.toolPalette(t.ProfileSpec), t.runnerEnvironment(), f.skills)...),
+		fantasy.WithTools(agenttools.ToolsWithOptions(t.Workspace, f.toolPalette(t.ProfileSpec), t.runnerEnvironment(), f.skills, agenttools.Options{
+			Diagnostics: func(ctx context.Context, workspace string, files []string) string {
+				return diagnosticsForWorkspace(ctx, workspace, files, f.checks)
+			},
+		})...),
 	)
 	stream := &fantasyStream{transcript: transcript{out: out}, reasoning: map[string]int{}, inFlight: map[string]ToolActivity{}}
 	stream.recorder, _ = out.(ToolActivityRecorder)
-	defer func() { _ = stream.closeThinking() }()
+	defer func() {
+		_ = stream.closeThinking()
+		_ = stream.flushText()
+	}()
 	if err := adapterReport(out, "progress", "Fantasy accepted the initial prompt"); err != nil {
 		return err
 	}
-	var history []fantasy.Message
+	verifyRounds := 0
 	for prompt != "" {
 		result, err := agent.Stream(ctx, stream.call(prompt, history))
 		if err != nil {
@@ -171,6 +181,9 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		for _, step := range result.Steps {
 			history = append(history, step.Messages...)
 		}
+		if err := stream.flushText(); err != nil {
+			return err
+		}
 		// Fantasy totals one Stream call across its steps and retries, so
 		// recording this total per call counts each token once.
 		if err := adapterUsage(out, selector, TokenUsage{InputTokens: result.TotalUsage.InputTokens, OutputTokens: result.TotalUsage.OutputTokens}); err != nil {
@@ -180,6 +193,18 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 			return reportFailure(out, stream.failure)
 		}
 		prompt = ""
+		// After a file-changing step, run the workspace's formatter,
+		// diagnostics and affected tests, and feed any failure back as the next
+		// user message so the agent can fix it in the same conversation.
+		if verifyRounds < maxVerifyRounds && len(stream.changed) > 0 {
+			if report := verificationReport(ctx, t.Workspace, stream.takeChanges(), f.checks); report != "" {
+				prompt = report
+				verifyRounds++
+			}
+		}
+		if prompt != "" {
+			continue
+		}
 		select {
 		case trigger, ok := <-follow:
 			if ok {
@@ -216,6 +241,19 @@ type fantasyStream struct {
 	inFlight map[string]ToolActivity
 	sawText  bool
 	failure  error
+	// text accumulates assistant prose until a tool call or the end of the
+	// stream, so one durable turn holds one assistant message.
+	text strings.Builder
+	// changed lists workspace files touched by this attempt, for automatic
+	// verification after the step.
+	changed []string
+}
+
+// takeChanges returns the files edited since the last check and clears them.
+func (s *fantasyStream) takeChanges() []string {
+	changes := s.changed
+	s.changed = nil
+	return changes
 }
 
 func (s *fantasyStream) call(prompt string, history []fantasy.Message) fantasy.AgentStreamCall {
@@ -223,8 +261,10 @@ func (s *fantasyStream) call(prompt string, history []fantasy.Message) fantasy.A
 		Prompt:   prompt,
 		Messages: history,
 		OnTextDelta: func(_ string, text string) error {
-			s.sawText = s.sawText || strings.TrimSpace(text) != ""
-			return s.prose(agenttools.Sanitize(text))
+			clean := agenttools.Sanitize(text)
+			s.sawText = s.sawText || strings.TrimSpace(clean) != ""
+			s.text.WriteString(clean)
+			return s.prose(clean)
 		},
 		OnReasoningStart: func(id string, _ fantasy.ReasoningContent) error { return s.thinkingStart(s.reasoningIndex(id)) },
 		OnReasoningDelta: func(id, delta string) error {
@@ -269,10 +309,30 @@ func (s *fantasyStream) record(activity ToolActivity) error {
 	return s.recorder.RecordToolActivity(activity)
 }
 
+// flushText records the assistant prose accumulated since the last tool call.
+func (s *fantasyStream) flushText() error {
+	text := strings.TrimSpace(s.text.String())
+	s.text.Reset()
+	if text == "" {
+		return nil
+	}
+	return recordTurn(s.out, Turn{Role: "assistant", Text: text})
+}
+
 func (s *fantasyStream) toolCall(call fantasy.ToolCallContent) error {
+	if err := s.flushText(); err != nil {
+		return err
+	}
+	name := agenttools.Sanitize(call.ToolName)
+	if verifiedTool(name) {
+		s.changed = append(s.changed, editedPaths(name, call.Input)...)
+	}
+	if err := recordTurn(s.out, Turn{Role: "assistant", ToolCallID: call.ToolCallID, ToolName: name, Input: call.Input}); err != nil {
+		return err
+	}
 	activity := ToolActivity{
 		ID:        call.ToolCallID,
-		Name:      agenttools.Sanitize(call.ToolName),
+		Name:      name,
 		Args:      json.RawMessage(call.Input),
 		Status:    ActivityRunning,
 		StartedAt: time.Now().UTC(),
@@ -295,6 +355,9 @@ func (s *fantasyStream) toolResult(result fantasy.ToolResultContent) error {
 	text, failed := toolResultContent(result.Result)
 	if activity.Name == "" {
 		activity.Name = agenttools.Sanitize(result.ToolName)
+	}
+	if err := recordTurn(s.out, Turn{Role: "tool", ToolCallID: result.ToolCallID, ToolName: activity.Name, Output: agenttools.Sanitize(text), IsError: failed}); err != nil {
+		return err
 	}
 	activity.Status = ActivityFinished
 	summary := activity.Name

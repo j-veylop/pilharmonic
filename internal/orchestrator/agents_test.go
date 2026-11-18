@@ -92,12 +92,12 @@ func TestBuiltinSpecialistsUseLeastPrivilegeTools(t *testing.T) {
 	s := newTestService(t)
 	s.LoadBuiltinSpecialists()
 	for name, want := range map[string]string{
-		"reviewer":    "read,grep,find,ls",
-		"explorer":    "read,grep,find,ls",
-		"tester":      "read,grep,find,ls,bash",
-		"implementer": "read,edit,write,grep,find,ls,bash",
-		"debugger":    "read,bash,grep,find,ls",
-		"gitter":      "read,bash,edit,write,grep,find,ls",
+		"reviewer":    "read,grep,rg,glob,find,ls",
+		"explorer":    "read,grep,rg,glob,find,ls",
+		"tester":      "read,grep,rg,glob,find,ls,bash,diagnostics",
+		"implementer": "read,edit,write,multiedit,grep,rg,glob,find,ls,bash,diagnostics",
+		"debugger":    "read,bash,grep,rg,glob,find,ls,diagnostics",
+		"gitter":      "read,bash,edit,write,multiedit,grep,rg,glob,find,ls,diagnostics",
 	} {
 		runner, ok := s.runners[name].(FantasyRunner)
 		if !ok || runner.instructions == "" || s.agentDescriptions[name] == "" {

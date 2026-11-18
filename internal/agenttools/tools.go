@@ -32,7 +32,7 @@ const (
 
 // names is the complete palette, in display order. A profile or a role's
 // default palette narrows it; nothing outside the list is available.
-var names = []string{"read", "bash", "write", "edit", "grep", "find", "ls"}
+var names = []string{"read", "bash", "write", "edit", "multiedit", "grep", "rg", "glob", "find", "ls", "diagnostics"}
 
 // Names returns the complete tool palette.
 func Names() []string { return append([]string(nil), names...) }
@@ -51,6 +51,18 @@ func Tools(workspace string, palette []string, env []string) []fantasy.AgentTool
 // authority, so the skill tool is available regardless of the workspace
 // palette.
 func ToolsWithSkills(workspace string, palette []string, env []string, catalog skills.Catalog) []fantasy.AgentTool {
+	return ToolsWithOptions(workspace, palette, env, catalog, Options{})
+}
+
+// Options carries host-provided behavior into the tool set. Diagnostics, when
+// set, runs the host's enabled language checks instead of the built-in Go
+// fallback.
+type Options struct {
+	Diagnostics func(ctx context.Context, workspace string, files []string) string
+}
+
+// ToolsWithOptions is ToolsWithSkills plus host hooks.
+func ToolsWithOptions(workspace string, palette []string, env []string, catalog skills.Catalog, options Options) []fantasy.AgentTool {
 	selected := make(map[string]bool, len(palette))
 	if len(palette) == 0 {
 		palette = names
@@ -72,12 +84,20 @@ func ToolsWithSkills(workspace string, palette []string, env []string, catalog s
 			tools = append(tools, writeTool(workspace))
 		case "edit":
 			tools = append(tools, editTool(workspace))
+		case "multiedit":
+			tools = append(tools, multiEditTool(workspace))
 		case "grep":
 			tools = append(tools, grepTool(workspace, env))
+		case "rg":
+			tools = append(tools, rgTool(workspace))
+		case "glob":
+			tools = append(tools, globTool(workspace))
 		case "find":
 			tools = append(tools, findTool(workspace, env))
 		case "ls":
 			tools = append(tools, lsTool(workspace, env))
+		case "diagnostics":
+			tools = append(tools, diagnosticsTool(workspace, options.Diagnostics))
 		}
 	}
 	if catalog.Len() > 0 {
@@ -238,29 +258,50 @@ func writeTool(workspace string) fantasy.AgentTool {
 }
 
 func editTool(workspace string) fantasy.AgentTool {
-	return fantasy.NewAgentTool("edit", "Replace the first occurrence of exact text in a workspace file.",
+	return fantasy.NewAgentTool("edit", "Replace the first occurrence of text in a workspace file. Exact text is preferred; an indentation or trailing-whitespace mismatch falls back to a whitespace-tolerant match.",
 		func(_ context.Context, in editToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			path, err := workspacePath(workspace, in.Path)
+			exact, err := applyEdit(workspace, in.Path, in.OldText, in.NewText)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-			if in.OldText == "" {
-				return fantasy.NewTextErrorResponse("old_text is required"), nil
+			match := "exact"
+			if !exact {
+				match = "whitespace-tolerant"
 			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return fantasy.NewTextErrorResponse(err.Error()), nil
-			}
-			if !strings.Contains(string(data), in.OldText) {
-				return fantasy.NewTextErrorResponse("old_text not found in " + in.Path), nil
-			}
-			updated := strings.Replace(string(data), in.OldText, in.NewText, 1)
-			if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-				return fantasy.NewTextErrorResponse(err.Error()), nil
-			}
-			return fantasy.NewTextResponse(fmt.Sprintf("replaced 1 occurrence in %s (%d bytes removed, %d bytes added)",
-				in.Path, len(in.OldText), len(in.NewText))), nil
+			return fantasy.NewTextResponse(fmt.Sprintf("replaced 1 occurrence in %s (%s match, %d bytes removed, %d bytes added)",
+				in.Path, match, len(in.OldText), len(in.NewText))), nil
 		})
+}
+
+// applyEdit replaces oldText with newText in one file. It returns whether an
+// exact match was used. When exact text is absent it retries with the
+// whitespace-tolerant matcher.
+func applyEdit(workspace, path, oldText, newText string) (bool, error) {
+	full, err := workspacePath(workspace, path)
+	if err != nil {
+		return false, err
+	}
+	if oldText == "" {
+		return false, errors.New("old_text is required")
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return false, err
+	}
+	content := string(data)
+	exact := true
+	updated := content
+	if strings.Contains(content, oldText) {
+		updated = strings.Replace(content, oldText, newText, 1)
+	} else if next, ok := replaceWithWhitespaceTolerance(content, oldText, newText); ok {
+		updated, exact = next, false
+	} else {
+		return false, errors.New("old_text not found in " + path)
+	}
+	if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
+		return false, err
+	}
+	return exact, nil
 }
 
 func grepTool(workspace string, env []string) fantasy.AgentTool {

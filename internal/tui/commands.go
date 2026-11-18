@@ -14,7 +14,7 @@ import (
 
 // slashCommandsHelp is shown alongside an unknown command, so the operator
 // always sees the whole vocabulary.
-const slashCommandsHelp = "/login — pick a provider (or /login <provider>; /login openai subscription for ChatGPT), /logout <provider>, /providers, /model [big|small], /skills, /attach <path>, /detach <path|all>, /theme [auto|dark|light], /help"
+const slashCommandsHelp = "/login — pick a provider (or /login <provider>; /login openai subscription for ChatGPT), /logout <provider>, /providers, /model [big|small], /skills, /lsp, /attach <path>, /detach <path|all>, /theme [auto|dark|light], /help"
 
 // forcedLoginNotice is the standing message while no provider is configured.
 const forcedLoginNotice = "No provider configured — log in first"
@@ -90,6 +90,8 @@ func (m model) slashCommand(line string) model {
 		m.openModelMenu(arg)
 	case "/skills":
 		m.openSkillMenu()
+	case "/lsp":
+		m.openLSPMenu()
 	case "/logout":
 		if arg == "" {
 			m.notice.text = "Usage: /logout <provider>"

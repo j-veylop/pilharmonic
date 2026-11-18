@@ -831,11 +831,11 @@ func TestModelRateWindowNextToWordmark(t *testing.T) {
 	openaiService.overrides = orchestrator.ModelSelection{Big: "openai/gpt-5"}
 	openai := model{service: openaiService}
 
-	if got := ansi.Strip(deepseek.headerRateBadge(peak)); got != "deepseek ⚠ peak" {
-		t.Errorf("peak header badge = %q, want %q", got, "deepseek ⚠ peak")
+	if got, want := ansi.Strip(deepseek.headerRateBadge(peak)), "deepseek "+glyphWarning+" peak"; got != want {
+		t.Errorf("peak header badge = %q, want %q", got, want)
 	}
-	if got := ansi.Strip(deepseek.headerRateBadge(offPeak)); got != "deepseek ✓ off-peak" {
-		t.Errorf("off-peak header badge = %q, want %q", got, "deepseek ✓ off-peak")
+	if got, want := ansi.Strip(deepseek.headerRateBadge(offPeak)), "deepseek "+glyphCheck+" off-peak"; got != want {
+		t.Errorf("off-peak header badge = %q, want %q", got, want)
 	}
 	if got := openai.headerRateBadge(offPeak); got != "" {
 		t.Errorf("all-day provider showed a header badge: %q", got)
@@ -843,7 +843,7 @@ func TestModelRateWindowNextToWordmark(t *testing.T) {
 	flashService := deepSeekMenuService()
 	flashService.overrides = orchestrator.ModelSelection{Small: "deepseek/deepseek-flash"}
 	flash := model{service: flashService}
-	if got := ansi.Strip(flash.headerRateBadge(offPeak)); got != "deepseek ✓ off-peak" {
+	if got, want := ansi.Strip(flash.headerRateBadge(offPeak)), "deepseek "+glyphCheck+" off-peak"; got != want {
 		t.Errorf("unpriced DeepSeek model lost its header badge: %q", got)
 	}
 	openaiUnlisted := model{service: &fakeLoginService{overrides: orchestrator.ModelSelection{Small: "openai/gpt-unlisted"}}}
@@ -854,7 +854,7 @@ func TestModelRateWindowNextToWordmark(t *testing.T) {
 		Big:    "openai/gpt-5",
 		Agents: map[string]string{"general": "deepseek/deepseek-chat"},
 	}}}
-	if got := ansi.Strip(agentOnly.headerRateBadge(offPeak)); got != "deepseek ✓ off-peak" {
+	if got, want := ansi.Strip(agentOnly.headerRateBadge(offPeak)), "deepseek "+glyphCheck+" off-peak"; got != want {
 		t.Errorf("agent-selected provider lost its header badge: %q", got)
 	}
 
@@ -863,9 +863,9 @@ func TestModelRateWindowNextToWordmark(t *testing.T) {
 	if after := modelRateLabel("deepseek/deepseek-chat", time.Now()); after != label {
 		t.Skipf("pricing window changed during the test: %s then %s", label, after)
 	}
-	icon := "⚠"
+	icon := glyphWarning
 	if label == orchestrator.RateOffPeak {
-		icon = "✓"
+		icon = glyphCheck
 	}
 	if !strings.HasPrefix(header, ansi.Strip(wordmark())+"  deepseek "+icon+" "+label) {
 		t.Fatalf("badge is not next to the wordmark: %q", header)

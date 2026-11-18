@@ -184,17 +184,18 @@ subscription itself is not billed per token. Unpriced models report tokens
 without a cost. Task rows abbreviate prompt, output and cache-read tokens with
 `↑`, `↓` and `↺` glyphs, separated by single spaces, and omit the executor,
 which routing usually sets to `general`; task details keep both. Workspace and
-merge state is a glyph on the board, with the label left to task details. A
-provider glyph and a model-character glyph sit beside the model ID when the ID
-has no character glyph of its own; a recognizable model shows only the marks,
-so the row does not repeat the name. The subtask count is always present,
+merge state is a glyph on the board, with the label left to task details.
+Provider and model-character glyphs are Nerd Font icons and sit beside the
+model ID when the ID has no character glyph of its own; a recognizable model
+shows only the marks, so the row does not repeat the name. The subtask count is always present,
 including zero. The session total covers attempts started by
 this process; the board instead totals each main-view task with its descendants,
 so delegated work is part of the visible usage and cost while it runs. Peak hours are
 01:00–04:00 and 06:00–10:00 UTC on weekdays, excluding Chinese public
 holidays; every other hour, including weekends and holidays, is off-peak.
 While a DeepSeek model is selected, a badge beside the wordmark names peak or
-off-peak in force, marked `⚠` at peak and `✓` off-peak. That badge is the only
+off-peak in force, marked with a warning glyph at peak and a check glyph
+off-peak. That badge is the only
 place the window is named; the model menu and task details do not repeat it.
 The window belongs to the provider, so an unpriced DeepSeek model carries the
 badge without claiming a cost.

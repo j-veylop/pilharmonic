@@ -114,7 +114,7 @@ func TestMainTaskMetaLineShowsProviderAndModelGlyphs(t *testing.T) {
 		Attempts: []orchestrator.Attempt{{ID: "a", RequestedModel: "deepseek/deepseek-flash"}},
 	}
 	plain := ansi.Strip((model{tasks: []orchestrator.Task{task}}).mainTaskMetaLine(task, 120))
-	for _, want := range []string{"🐳", "⚡", "⋔ 0"} {
+	for _, want := range []string{providerGlyphs["deepseek"], modelGlyph("deepseek-flash"), "⋔ 0"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("meta line lost %q: %q", want, plain)
 		}
@@ -125,11 +125,11 @@ func TestMainTaskMetaLineShowsProviderAndModelGlyphs(t *testing.T) {
 }
 
 func TestModelBadgeKeepsUnknownModelNames(t *testing.T) {
-	if got := modelBadge("openai/gpt-6.1-terra"); got != "⬡ gpt-6.1-terra" {
-		t.Fatalf("unknown model badge = %q", got)
+	if got, want := modelBadge("openai/gpt-6.1-terra"), providerGlyphs["openai"]+" gpt-6.1-terra"; got != want {
+		t.Fatalf("unknown model badge = %q, want %q", got, want)
 	}
-	if got := modelBadge("deepseek/deepseek-flash"); got != "🐳 ⚡" {
-		t.Fatalf("known model badge = %q", got)
+	if got, want := modelBadge("deepseek/deepseek-flash"), providerGlyphs["deepseek"]+" "+modelGlyph("deepseek-flash"); got != want {
+		t.Fatalf("known model badge = %q, want %q", got, want)
 	}
 }
 
@@ -144,7 +144,7 @@ func TestMainTaskMetaLineMarksStaleRun(t *testing.T) {
 		UpdatedAt: now.Add(-21 * time.Minute),
 	}
 	plain := ansi.Strip((model{tasks: []orchestrator.Task{task}}).mainTaskMetaLine(task, 120))
-	if !strings.Contains(plain, "⚠ 00:25:00") {
+	if !strings.Contains(plain, glyphWarning+" 00:25:00") {
 		t.Fatalf("stale run not marked: %q", plain)
 	}
 }

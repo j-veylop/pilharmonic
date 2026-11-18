@@ -289,6 +289,7 @@ const (
 	glyphWorktree   = "\ue725" // nf-oct-git_branch
 	glyphMerged     = "\ue727" // nf-oct-git_merge
 	glyphCheck      = "\uf00c" // nf-fa-check
+	glyphWarning    = "\uf071" // nf-fa-exclamation_triangle
 	glyphConflict   = "\uf071" // nf-fa-exclamation_triangle
 	glyphMergeError = "\uf00d" // nf-fa-times
 	glyphReview     = "\uf06e" // nf-fa-eye

@@ -215,7 +215,7 @@ func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
 	if hasElapsed {
 		text := formatElapsed(elapsed)
 		if stale {
-			parts = append(parts, warningStyle.Render("⚠ "+text))
+			parts = append(parts, warningStyle.Render(glyphWarning+" "+text))
 		} else {
 			parts = append(parts, mutedStyle.Render(text))
 		}

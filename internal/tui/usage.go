@@ -96,6 +96,41 @@ func taskUsageLine(usage orchestrator.TaskUsage) string {
 	return usageVariants(usage.TokenUsage, 0, false)[0] + " · cost unknown"
 }
 
+// taskUsageWithSubtasks totals a task's own recorded usage and that of every
+// descendant. The main view renders only top-level rows, so a row's cost must
+// include the delegated work it stands for.
+func taskUsageWithSubtasks(task orchestrator.Task, tasks []orchestrator.Task) orchestrator.TaskUsage {
+	total := task.Usage()
+	for _, row := range subtaskRows(tasks, task.ID) {
+		total = addTaskUsage(total, row.task.Usage())
+	}
+	return total
+}
+
+// addTaskUsage folds one task's total into a tree total. A task with no
+// recorded usage contributes nothing and cannot price or unprice the tree.
+func addTaskUsage(total, next orchestrator.TaskUsage) orchestrator.TaskUsage {
+	if next.IsZero() {
+		return total
+	}
+	if total.IsZero() {
+		return next
+	}
+	total.InputTokens += next.InputTokens
+	total.OutputTokens += next.OutputTokens
+	total.CacheReadTokens += next.CacheReadTokens
+	total.CacheWriteTokens += next.CacheWriteTokens
+	total.CostUSD += next.CostUSD
+	total.Priced = total.Priced && next.Priced
+	if next.Model != "" {
+		total.Model = next.Model
+	}
+	if next.Rate != "" {
+		total.Rate = next.Rate
+	}
+	return total
+}
+
 // taskListUsage is the richest task usage segment that fits in available
 // cells, or "" when the task recorded nothing. The list row drops the detail
 // before it wraps or crowds out the rest of the row.

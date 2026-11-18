@@ -157,3 +157,60 @@ func TestTaskListUsageDropsDetailBeforeCost(t *testing.T) {
 		t.Fatalf("unpriced usage showed a cost: %q", got)
 	}
 }
+
+// A main-view row stands for its whole tree, so its tokens and cost include
+// every descendant, including while the work is still running.
+func TestMainViewTaskUsageIncludesSubtasks(t *testing.T) {
+	now := time.Now()
+	attempt := func(id string, input, output int64, cost float64) []orchestrator.Attempt {
+		return []orchestrator.Attempt{{
+			ID: id, Status: orchestrator.Running, StartedAt: now,
+			Usage: &orchestrator.AttemptUsage{
+				Model: "openai/gpt-4.1", InputTokens: input, OutputTokens: output,
+				CostUSD: cost, Priced: true,
+			},
+		}}
+	}
+	tasks := []orchestrator.Task{
+		{ID: "parent", Title: "parent", Status: orchestrator.Running, UpdatedAt: now, Attempts: attempt("p", 1000, 500, 0.004)},
+		{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Running, UpdatedAt: now, Attempts: attempt("c", 2000, 500, 0.002)},
+		{ID: "grandchild", ParentID: "child", Depth: 2, Title: "grandchild", Status: orchestrator.Running, UpdatedAt: now, Attempts: attempt("g", 1000, 500, 0.001)},
+	}
+	usage := taskUsageWithSubtasks(tasks[0], tasks)
+	if usage.InputTokens != 4000 || usage.OutputTokens != 1500 {
+		t.Fatalf("tree tokens = %+v", usage.TokenUsage)
+	}
+	if got := formatCost(usage.CostUSD); got != "$0.0070" {
+		t.Fatalf("tree cost = %s, want $0.0070", got)
+	}
+
+	m := model{width: 120, height: 40, tasks: tasks}
+	board := ansi.Strip(m.View())
+	if !strings.Contains(board, "$0.0070") {
+		t.Fatalf("main view row missing aggregated cost: %q", board)
+	}
+}
+
+// One unpriced descendant keeps the tree total from claiming a cost.
+func TestMainViewTaskUsageStaysUnpricedWithAnUnpricedSubtask(t *testing.T) {
+	now := time.Now()
+	tasks := []orchestrator.Task{
+		{ID: "parent", Title: "parent", Status: orchestrator.Running, UpdatedAt: now, Attempts: []orchestrator.Attempt{{
+			ID: "p", StartedAt: now,
+			Usage: &orchestrator.AttemptUsage{Model: "openai/gpt-4.1", InputTokens: 1000, OutputTokens: 500, CostUSD: 0.004, Priced: true},
+		}}},
+		{ID: "child", ParentID: "parent", Depth: 1, Title: "child", Status: orchestrator.Running, UpdatedAt: now, Attempts: []orchestrator.Attempt{{
+			ID: "c", StartedAt: now,
+			Usage: &orchestrator.AttemptUsage{Model: "nosuch/model", InputTokens: 2000, OutputTokens: 500},
+		}}},
+	}
+	usage := taskUsageWithSubtasks(tasks[0], tasks)
+	if usage.Priced {
+		t.Fatalf("tree total claimed a price: %+v", usage)
+	}
+	m := model{width: 120, height: 40, tasks: tasks}
+	board := ansi.Strip(m.View())
+	if strings.Contains(board, "$") {
+		t.Fatalf("main view row claimed a cost for unpriced work: %q", board)
+	}
+}

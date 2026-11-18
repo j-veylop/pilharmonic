@@ -33,6 +33,30 @@ func TestDeepSeekOffPeakBoundaries(t *testing.T) {
 	}
 }
 
+// TestProviderRateNamesTheWindowBeforeAModelIsChosen covers the model menu's
+// provider step: the window comes from the provider, while all-day and unknown
+// providers have none.
+func TestProviderRateNamesTheWindowBeforeAModelIsChosen(t *testing.T) {
+	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
+	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		provider string
+		at       time.Time
+		want     string
+	}{
+		{"deepseek", peak, RatePeak},
+		{"DeepSeek", offPeak, RateOffPeak},
+		{" deepseek ", offPeak, RateOffPeak},
+		{"openai", offPeak, ""},
+		{"openrouter", offPeak, ""},
+		{"", offPeak, ""},
+	} {
+		if got := ProviderRate(tc.provider, tc.at); got != tc.want {
+			t.Errorf("%q at %s: rate %q, want %q", tc.provider, tc.at.Format("15:04"), got, tc.want)
+		}
+	}
+}
+
 // TestPriceForDeepSeekDiscountedRates checks both DeepSeek models apply their
 // own off-peak pair rather than one shared discount: deepseek-chat is half
 // price, deepseek-reasoner is 75% off input and half price on output.

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
@@ -219,6 +220,11 @@ func (m model) headerRow(width int) string {
 	header := wordmark()
 	available := max(1, width-lipgloss.Width(header)-1)
 	options := m.headerCountOptions()
+	if badge := m.headerRateBadge(time.Now()); badge != "" {
+		for i, option := range options {
+			options[i] = badge + faintStyle.Render(" • ") + option
+		}
+	}
 	summary, usage := options[len(options)-1], ""
 fit:
 	for _, option := range options {
@@ -238,6 +244,28 @@ fit:
 		return fit(header+right, width, 1)
 	}
 	return fit(header+" "+lipgloss.NewStyle().Foreground(accent).Render(strings.Repeat("╱", fill))+" "+right, width, 1)
+}
+
+// headerRateBadge names the discount window in force for the provider of a
+// selected model, so peak and off-peak stay visible after the model menu
+// closes. All-day providers carry no badge.
+func (m model) headerRateBadge(now time.Time) string {
+	if m.service == nil {
+		return ""
+	}
+	selection := m.service.ModelSelection()
+	selectors := []string{selection.Big, selection.Small}
+	for _, selector := range selection.Agents {
+		selectors = append(selectors, selector)
+	}
+	for _, selector := range selectors {
+		if modelRateLabel(selector, now) == "" {
+			continue
+		}
+		provider, _, _ := strings.Cut(selector, "/")
+		return mutedStyle.Render(provider) + " " + modelRateTag(selector, now)
+	}
+	return ""
 }
 
 // shortModel keeps the model ID without its provider prefix, which the pill

@@ -175,7 +175,9 @@ The policy shapes output only and grants no authority.
 
 Token usage is execution metadata, priced when recorded (time-of-day rates
 apply at that moment). Unpriced models report tokens without a cost. The
-session total covers attempts started by this process.
+session total covers attempts started by this process. While a time-of-day
+priced model is selected, the header names peak or off-peak in force, and the
+model menu shows the same window before a model is chosen.
 
 ## Workspaces and integration
 

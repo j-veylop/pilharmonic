@@ -66,13 +66,36 @@ func (m model) modelMenuTitle() string {
 		if m.models.agent != "" {
 			target = m.models.agent
 		}
-		return "Select a provider for " + target
+		title := "Select a provider for " + target
+		if provider := m.highlightedProvider(); provider != "" {
+			title = providerRateTitle(title, provider)
+		}
+		return title
 	case modelStepModel:
-		return "Select a model (" + m.models.provider + ")"
+		return providerRateTitle("Select a model ("+m.models.provider+")", m.models.provider)
 	case modelStepCustom:
-		return "Enter a model ID (" + m.models.provider + ")"
+		return providerRateTitle("Enter a model ID ("+m.models.provider+")", m.models.provider)
 	}
 	return "Select a model class or agent"
+}
+
+// providerRateTitle adds the discount window in force for a time-of-day
+// provider, so the top of the menu names peak or off-peak before a model is
+// picked.
+func providerRateTitle(title, provider string) string {
+	if label := orchestrator.ProviderRate(provider, time.Now()); label != "" {
+		title += " · " + provider + " " + label + " now"
+	}
+	return title
+}
+
+// highlightedProvider is the provider row under the menu cursor.
+func (m model) highlightedProvider() string {
+	choices := m.modelChoices()
+	if len(choices) == 0 {
+		return ""
+	}
+	return choices[max(0, min(len(choices)-1, m.models.index))]
 }
 func (m *model) openModelMenu(target string) {
 	m.models = modelMenuState{menu: true}

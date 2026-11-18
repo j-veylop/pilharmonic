@@ -17,7 +17,7 @@ import (
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/openai"
-	"pilharmonic/internal/instance"
+	"github.com/j-veylop/pilharmonic/internal/instance"
 )
 
 const Subscription = "openai-subscription"

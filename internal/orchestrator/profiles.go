@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"pilharmonic/internal/agenttools"
+	"github.com/j-veylop/pilharmonic/internal/agenttools"
 )
 
 const (

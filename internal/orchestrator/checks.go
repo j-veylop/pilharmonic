@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"pilharmonic/internal/instance"
+	"github.com/j-veylop/pilharmonic/internal/instance"
 )
 
 // languageCheckInfo describes one recognized language toolchain and whether the

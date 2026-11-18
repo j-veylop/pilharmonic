@@ -11,8 +11,8 @@ import (
 
 	"charm.land/fantasy"
 
-	"pilharmonic/internal/agenttools"
-	"pilharmonic/internal/skills"
+	"github.com/j-veylop/pilharmonic/internal/agenttools"
+	"github.com/j-veylop/pilharmonic/internal/skills"
 )
 
 // FantasyRunner executes a task in-process through the fantasy agent loop,

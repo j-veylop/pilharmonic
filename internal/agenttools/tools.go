@@ -18,7 +18,7 @@ import (
 
 	"charm.land/fantasy"
 
-	"pilharmonic/internal/skills"
+	"github.com/j-veylop/pilharmonic/internal/skills"
 )
 
 const (

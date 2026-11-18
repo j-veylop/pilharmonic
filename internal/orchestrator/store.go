@@ -12,7 +12,7 @@ import (
 	"slices"
 	"time"
 
-	"pilharmonic/internal/instance"
+	"github.com/j-veylop/pilharmonic/internal/instance"
 )
 
 var (

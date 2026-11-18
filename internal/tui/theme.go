@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"pilharmonic/internal/tui/editor"
+	"github.com/j-veylop/pilharmonic/internal/tui/editor"
 )
 
 // The interface uses one compact, adaptive palette. Keep colour decisions here

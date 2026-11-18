@@ -1,4 +1,4 @@
-module pilharmonic
+module github.com/j-veylop/pilharmonic
 
 go 1.27.3
 

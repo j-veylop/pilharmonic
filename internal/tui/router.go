@@ -6,8 +6,8 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"pilharmonic/internal/orchestrator"
-	"pilharmonic/internal/tui/editor"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/tui/editor"
 )
 
 // attentionStages need a person. They are separate from process status: a

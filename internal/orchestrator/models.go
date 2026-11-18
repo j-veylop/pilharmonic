@@ -13,8 +13,8 @@ import (
 
 	"charm.land/fantasy"
 
-	"pilharmonic/internal/instance"
-	"pilharmonic/internal/providers"
+	"github.com/j-veylop/pilharmonic/internal/instance"
+	"github.com/j-veylop/pilharmonic/internal/providers"
 )
 
 // Model class labels: the operator's "big" (planning, heavy changes) and

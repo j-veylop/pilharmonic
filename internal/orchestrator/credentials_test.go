@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"pilharmonic/internal/providers"
+	"github.com/j-veylop/pilharmonic/internal/providers"
 )
 
 func TestProviderCredentialRoundTrip(t *testing.T) {

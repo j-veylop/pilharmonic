@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"pilharmonic/internal/worktree"
+	"github.com/j-veylop/pilharmonic/internal/worktree"
 )
 
 // DeleteTask permanently removes an inactive task, its history, its dedicated

@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"pilharmonic/internal/worktree"
+	"github.com/j-veylop/pilharmonic/internal/worktree"
 )
 
 // migrateStartupState upgrades legacy durable state before recovery interprets

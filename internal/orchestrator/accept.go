@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"pilharmonic/internal/worktree"
+	"github.com/j-veylop/pilharmonic/internal/worktree"
 )
 
 // SetDefaultIsolation controls whether mandates that explicitly request

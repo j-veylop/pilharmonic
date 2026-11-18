@@ -135,24 +135,28 @@ func TestSessionUsageResetsOnRestart(t *testing.T) {
 }
 
 func TestFantasyRunnerRecordsUsagePerStreamCall(t *testing.T) {
-	finish := func(input, output int64) fantasy.StreamPart {
+	finish := func(input, output, cacheRead, cacheWrite int64) fantasy.StreamPart {
 		return fantasy.StreamPart{
 			Type:         fantasy.StreamPartTypeFinish,
 			FinishReason: fantasy.FinishReasonStop,
-			Usage:        fantasy.Usage{InputTokens: input, OutputTokens: output, TotalTokens: input + output},
+			Usage: fantasy.Usage{
+				InputTokens: input, OutputTokens: output,
+				CacheReadTokens: cacheRead, CacheCreationTokens: cacheWrite,
+				TotalTokens: input + output + cacheRead + cacheWrite,
+			},
 		}
 	}
-	step := func(text string, input, output int64) []fantasy.StreamPart {
+	step := func(text string, input, output, cacheRead, cacheWrite int64) []fantasy.StreamPart {
 		return []fantasy.StreamPart{
 			{Type: fantasy.StreamPartTypeTextStart, ID: "text-1"},
 			{Type: fantasy.StreamPartTypeTextDelta, ID: "text-1", Delta: text},
 			{Type: fantasy.StreamPartTypeTextEnd, ID: "text-1"},
-			finish(input, output),
+			finish(input, output, cacheRead, cacheWrite),
 		}
 	}
 	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{
-		step("first", 100, 40),
-		step("second", 50, 20),
+		step("first", 100, 40, 30, 10),
+		step("second", 50, 20, 5, 0),
 	}}
 	runner := FantasyRunner{}
 	runner.ModelFactory = fakeFactory(model, "deepseek/deepseek-chat")
@@ -168,7 +172,10 @@ func TestFantasyRunnerRecordsUsagePerStreamCall(t *testing.T) {
 	if len(sink.calls) != 2 {
 		t.Fatalf("usage calls = %+v", sink.calls)
 	}
-	for i, want := range []TokenUsage{{100, 40}, {50, 20}} {
+	for i, want := range []TokenUsage{
+		{InputTokens: 100, OutputTokens: 40, CacheReadTokens: 30, CacheWriteTokens: 10},
+		{InputTokens: 50, OutputTokens: 20, CacheReadTokens: 5},
+	} {
 		if sink.calls[i].model != "deepseek/deepseek-chat" || sink.calls[i].usage != want {
 			t.Fatalf("call %d = %+v, want %+v", i, sink.calls[i], want)
 		}
@@ -1006,5 +1013,54 @@ func TestUsageSurvivesFailedAndCanceledAttempts(t *testing.T) {
 		if session.InputTokens != 1000 || session.OutputTokens != 500 || !floatMatches(session.CostUSD, wantCost) || !session.Priced || session.Tasks != 1 {
 			t.Fatalf("%s: session usage = %+v", want, session)
 		}
+	}
+}
+
+func TestRecordUsageCountsCacheTokensAndCost(t *testing.T) {
+	s := newTestService(t)
+	call := TokenUsage{
+		InputTokens: 1000, OutputTokens: 500,
+		CacheReadTokens: 2000, CacheWriteTokens: 300,
+	}
+	s.RegisterRunner("general", sessionUsageRunner("openai/gpt-4.1", call))
+	task := createTask(t, s, "cache", "do work", t.TempDir())
+	must(t, s.Start(context.Background(), task.ID))
+	done := await(t, s, task.ID, Completed)
+
+	attempt := done.Attempts[0].Usage
+	if attempt == nil || attempt.InputTokens != 1000 || attempt.OutputTokens != 500 ||
+		attempt.CacheReadTokens != 2000 || attempt.CacheWriteTokens != 300 {
+		t.Fatalf("attempt cache usage = %+v", attempt)
+	}
+	price, ok := PriceFor("openai/gpt-4.1", time.Now())
+	if !ok {
+		t.Fatal("gpt-4.1 price missing")
+	}
+	want := price.CostBreakdown(call, time.Now())
+	if !floatMatches(attempt.CostUSD, want.Total) ||
+		!floatMatches(attempt.InputCostUSD, want.Input) ||
+		!floatMatches(attempt.OutputCostUSD, want.Output) ||
+		!floatMatches(attempt.CacheReadCostUSD, want.CacheRead) ||
+		!floatMatches(attempt.CacheWriteCostUSD, want.CacheWrite) {
+		t.Fatalf("attempt costs = %+v, want %+v", attempt, want)
+	}
+
+	total := done.Usage()
+	if total.PromptTokens() != 3300 || total.TotalTokens() != 3800 ||
+		total.CacheReadTokens != 2000 || total.CacheWriteTokens != 300 {
+		t.Fatalf("task usage = %+v, want prompt 3300 and total 3800", total)
+	}
+
+	session := s.SessionUsage()
+	if session.PromptTokens != 3300 || session.TotalTokens != 3800 ||
+		session.CacheReadTokens != 2000 || session.CacheWriteTokens != 300 {
+		t.Fatalf("session tokens = %+v", session)
+	}
+	if wantRate := 2000.0 / 3300.0; !floatMatches(session.CacheHitRate, wantRate) {
+		t.Fatalf("cache hit rate = %v, want %v", session.CacheHitRate, wantRate)
+	}
+	if len(session.Models) != 1 || session.Models[0].CacheReadTokens != 2000 ||
+		session.Models[0].CacheWriteTokens != 300 {
+		t.Fatalf("session model cache usage = %+v", session.Models)
 	}
 }

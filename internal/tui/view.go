@@ -313,7 +313,7 @@ func (m model) headerUsageVariants() []string {
 	if m.usage.TotalTokens == 0 {
 		return []string{""}
 	}
-	variants := usageVariants(m.usage.InputTokens, m.usage.OutputTokens, m.usage.CostUSD, m.usage.Priced)
+	variants := usageVariants(m.usage.Tokens(), m.usage.CostUSD, m.usage.Priced)
 	for i, variant := range variants {
 		if variant != "" {
 			variants[i] = "  Σ " + variant

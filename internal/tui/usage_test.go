@@ -118,3 +118,22 @@ func TestHistoryAttemptsShowRecordedUsage(t *testing.T) {
 		t.Fatalf("narrow attempt row did not shorten to the cost: %q", row)
 	}
 }
+
+func TestUsageVariantsShowCacheBuckets(t *testing.T) {
+	tokens := orchestrator.TokenUsage{
+		InputTokens: 1000, OutputTokens: 500,
+		CacheReadTokens: 3000, CacheWriteTokens: 200,
+	}
+	variants := usageVariants(tokens, 0.01, true)
+	if len(variants) < 2 {
+		t.Fatalf("missing variants: %v", variants)
+	}
+	for _, want := range []string{"4.2k in", "3k cached (71%)", "200 written", "500 out", "$0.01"} {
+		if !strings.Contains(variants[0], want) {
+			t.Fatalf("detailed variant missing %q: %q", want, variants[0])
+		}
+	}
+	if !strings.Contains(variants[1], "4.2k/500 · 3k cached") {
+		t.Fatalf("compact variant missing cache: %q", variants[1])
+	}
+}

@@ -174,8 +174,13 @@ The policy shapes output only and grants no authority.
   guarded by the service mutex, never held across subprocess or network calls.
 
 Token usage is execution metadata, priced when recorded (time-of-day rates
-apply at that moment). Unpriced models report tokens without a cost. The
-session total covers attempts started by this process. Peak hours are
+apply at that moment). Prompt tokens are uncached input plus cache reads and
+writes; cache reads and writes are recorded separately from the provider's
+counters and priced at their own rates, and a request-wide tier is selected from
+the whole prompt. The component costs and the total are fixed at recording time,
+so a later rate change cannot rewrite history. Unpriced models report tokens
+without a cost. The session total covers attempts started by this process and
+also reports its cache tokens and the latest call's cache-hit share. Peak hours are
 01:00–04:00 and 06:00–10:00 UTC on weekdays, excluding Chinese public
 holidays; every other hour, including weekends and holidays, is off-peak.
 While a DeepSeek model is selected, a badge beside the wordmark names peak or

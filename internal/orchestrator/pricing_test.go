@@ -206,3 +206,38 @@ func TestPriceForSelectors(t *testing.T) {
 		}
 	}
 }
+
+func TestModelPriceCostBreakdownCoversCacheAndTiers(t *testing.T) {
+	price := ModelPrice{
+		InputPerMTok: 2, OutputPerMTok: 8,
+		CacheReadPerMTok: 0.5, CacheWritePerMTok: 1,
+	}
+	usage := TokenUsage{
+		InputTokens: millionTokens, OutputTokens: millionTokens,
+		CacheReadTokens: millionTokens, CacheWriteTokens: millionTokens,
+	}
+	cost := price.CostBreakdown(usage, time.Now())
+	if !floatMatches(cost.Input, 2) || !floatMatches(cost.Output, 8) ||
+		!floatMatches(cost.CacheRead, 0.5) || !floatMatches(cost.CacheWrite, 1) ||
+		!floatMatches(cost.Total, 11.5) {
+		t.Fatalf("cost breakdown = %+v, want 2/8/0.5/1 and 11.5", cost)
+	}
+
+	// The request's whole prompt selects a tier, including cache buckets.
+	price.Tiers = []PriceTier{{
+		InputTokensAbove: 3*millionTokens - 1,
+		InputPerMTok:     4, OutputPerMTok: 16,
+		CacheReadPerMTok: 1, CacheWritePerMTok: 2,
+	}}
+	cost = price.CostBreakdown(usage, time.Now())
+	if !floatMatches(cost.Input, 4) || !floatMatches(cost.Output, 16) ||
+		!floatMatches(cost.CacheRead, 1) || !floatMatches(cost.CacheWrite, 2) ||
+		!floatMatches(cost.Total, 23) {
+		t.Fatalf("tiered cost breakdown = %+v, want the tier rates and 23", cost)
+	}
+	// A smaller request stays on the base rates.
+	small := TokenUsage{InputTokens: millionTokens, OutputTokens: millionTokens}
+	if cost := price.CostBreakdown(small, time.Now()); !floatMatches(cost.Total, 10) {
+		t.Fatalf("small request cost = %v, want base 10", cost)
+	}
+}

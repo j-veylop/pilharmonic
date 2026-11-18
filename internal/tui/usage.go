@@ -46,11 +46,33 @@ func formatPrice(usd float64) string {
 	return "$" + strings.TrimSuffix(trimmed, ".")
 }
 
+// formatCacheHit writes a cache-read share as a whole percentage.
+func formatCacheHit(rate float64) string {
+	return strconv.FormatFloat(rate*100, 'f', 0, 64) + "%"
+}
+
 // usageVariants lists a usage segment richest first, ending with "" so a
-// caller can drop it. A cost appears only when every token was priced.
-func usageVariants(input, output int64, cost float64, priced bool) []string {
-	detailed := formatTokens(input) + " in · " + formatTokens(output) + " out"
-	compact := formatTokens(input) + "/" + formatTokens(output)
+// caller can drop it. Prompt input is the whole request, including cache reads
+// and writes; the detailed form names those buckets, and the compact form keeps
+// the cached amount when there was one. A cost appears only when every token
+// was priced.
+func usageVariants(tokens orchestrator.TokenUsage, cost float64, priced bool) []string {
+	prompt := tokens.PromptTokens()
+	detailed := formatTokens(prompt) + " in"
+	if tokens.CacheReadTokens > 0 {
+		detailed += " · " + formatTokens(tokens.CacheReadTokens) + " cached"
+		if prompt > 0 {
+			detailed += " (" + formatCacheHit(float64(tokens.CacheReadTokens)/float64(prompt)) + ")"
+		}
+	}
+	if tokens.CacheWriteTokens > 0 {
+		detailed += " · " + formatTokens(tokens.CacheWriteTokens) + " written"
+	}
+	detailed += " · " + formatTokens(tokens.OutputTokens) + " out"
+	compact := formatTokens(prompt) + "/" + formatTokens(tokens.OutputTokens)
+	if tokens.CacheReadTokens > 0 {
+		compact += " · " + formatTokens(tokens.CacheReadTokens) + " cached"
+	}
 	if !priced {
 		return []string{detailed, compact, ""}
 	}
@@ -60,9 +82,9 @@ func usageVariants(input, output int64, cost float64, priced bool) []string {
 
 func taskUsageLine(usage orchestrator.TaskUsage) string {
 	if usage.Priced {
-		return usageVariants(usage.InputTokens, usage.OutputTokens, usage.CostUSD, true)[0]
+		return usageVariants(usage.TokenUsage, usage.CostUSD, true)[0]
 	}
-	return usageVariants(usage.InputTokens, usage.OutputTokens, 0, false)[0] + " · cost unknown"
+	return usageVariants(usage.TokenUsage, 0, false)[0] + " · cost unknown"
 }
 
 // priceLine describes the price in force now for the model a task last used,
@@ -72,8 +94,11 @@ func priceLine(selector string, now time.Time) (string, bool) {
 	if !known {
 		return "", false
 	}
-	return "Price: " + formatPrice(price.InputRate(now)) + "/M in · " +
-		formatPrice(price.OutputRate(now)) + "/M out", true
+	line := "Price: " + formatPrice(price.InputRate(now)) + "/M in"
+	if rate := price.CacheReadRate(now); rate > 0 {
+		line += " · " + formatPrice(rate) + "/M cached"
+	}
+	return line + " · " + formatPrice(price.OutputRate(now)) + "/M out", true
 }
 
 // attemptUsageSuffix is the richest usage variant that fits on an attempt's
@@ -82,7 +107,7 @@ func attemptUsageSuffix(usage *orchestrator.AttemptUsage, available int) string 
 	if usage == nil || usage.Usage().IsZero() {
 		return ""
 	}
-	for _, variant := range usageVariants(usage.InputTokens, usage.OutputTokens, usage.CostUSD, usage.Priced) {
+	for _, variant := range usageVariants(usage.Usage(), usage.CostUSD, usage.Priced) {
 		if variant == "" {
 			break
 		}

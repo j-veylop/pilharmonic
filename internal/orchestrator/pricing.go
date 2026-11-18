@@ -21,35 +21,80 @@ const (
 const millionTokens = 1_000_000
 
 // ModelPrice is the operator-visible price of one model selector in US dollars
-// per 1M tokens. OffPeakInputPerMTok and OffPeakOutputPerMTok are the
-// discounted prices for a provider that publishes a daily off-peak window;
-// TimeOfDay marks which models have one.
+// per 1M tokens. CacheReadPerMTok prices prompt tokens served from the provider's
+// prompt cache, and CacheWritePerMTok prices tokens written to it. The OffPeak
+// pairs are the discounted prices for a provider that publishes a daily off-peak
+// window; TimeOfDay marks which models have one.
 type ModelPrice struct {
-	Model                string  `json:"model"`
-	InputPerMTok         float64 `json:"input_per_mtok"`
-	OutputPerMTok        float64 `json:"output_per_mtok"`
-	OffPeakInputPerMTok  float64 `json:"off_peak_input_per_mtok,omitempty"`
-	OffPeakOutputPerMTok float64 `json:"off_peak_output_per_mtok,omitempty"`
-	TimeOfDay            bool    `json:"time_of_day,omitempty"`
+	Model                    string  `json:"model"`
+	InputPerMTok             float64 `json:"input_per_mtok"`
+	OutputPerMTok            float64 `json:"output_per_mtok"`
+	CacheReadPerMTok         float64 `json:"cache_read_per_mtok,omitempty"`
+	CacheWritePerMTok        float64 `json:"cache_write_per_mtok,omitempty"`
+	OffPeakInputPerMTok      float64 `json:"off_peak_input_per_mtok,omitempty"`
+	OffPeakOutputPerMTok     float64 `json:"off_peak_output_per_mtok,omitempty"`
+	OffPeakCacheReadPerMTok  float64 `json:"off_peak_cache_read_per_mtok,omitempty"`
+	OffPeakCacheWritePerMTok float64 `json:"off_peak_cache_write_per_mtok,omitempty"`
+	TimeOfDay                bool    `json:"time_of_day,omitempty"`
+	// Tiers are request-wide price changes. The highest InputTokensAbove below
+	// the request's prompt tokens prices the whole request. An empty list uses
+	// the base rates above.
+	Tiers []PriceTier `json:"tiers,omitempty"`
+}
+
+// PriceTier is one request-wide price tier. InputTokensAbove is the exclusive
+// threshold; a request with more prompt tokens than the threshold may use the
+// tier. The OffPeak fields apply only to a time-of-day model.
+type PriceTier struct {
+	InputTokensAbove         int64   `json:"input_tokens_above"`
+	InputPerMTok             float64 `json:"input_per_mtok"`
+	OutputPerMTok            float64 `json:"output_per_mtok"`
+	CacheReadPerMTok         float64 `json:"cache_read_per_mtok"`
+	CacheWritePerMTok        float64 `json:"cache_write_per_mtok"`
+	OffPeakInputPerMTok      float64 `json:"off_peak_input_per_mtok,omitempty"`
+	OffPeakOutputPerMTok     float64 `json:"off_peak_output_per_mtok,omitempty"`
+	OffPeakCacheReadPerMTok  float64 `json:"off_peak_cache_read_per_mtok,omitempty"`
+	OffPeakCacheWritePerMTok float64 `json:"off_peak_cache_write_per_mtok,omitempty"`
+}
+
+// UsageCost is the estimated cost of one provider call, split by token bucket.
+// Total is the sum of the four components.
+type UsageCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cache_read"`
+	CacheWrite float64 `json:"cache_write"`
+	Total      float64 `json:"total"`
 }
 
 // modelPrices is a curated snapshot of published prices in US dollars per 1M
 // tokens. It is advisory bookkeeping for the operator, not billing: providers
-// change prices, cached input is billed differently, and a model that is not
-// listed (or a reseller such as OpenRouter, whose price depends on the upstream
-// provider) reports tokens without a cost. DeepSeek discounts its off-peak
-// window, so those models carry the discounted pair as well.
+// change prices, and a model that is not listed (or a reseller such as
+// OpenRouter, whose price depends on the upstream provider) reports tokens
+// without a cost. DeepSeek discounts its off-peak window, so those models carry
+// the discounted input, output and cache-read rates as well.
 var modelPrices = map[string]ModelPrice{
-	// OpenAI list prices.
-	"openai/gpt-5":        {InputPerMTok: 1.25, OutputPerMTok: 10},
-	"openai/gpt-5-mini":   {InputPerMTok: 0.25, OutputPerMTok: 2},
-	"openai/gpt-4.1":      {InputPerMTok: 2, OutputPerMTok: 8},
-	"openai/gpt-4.1-mini": {InputPerMTok: 0.4, OutputPerMTok: 1.6},
+	// OpenAI list prices. Cached input is billed at the published cache-read
+	// rate; OpenAI does not charge a separate cache-write rate.
+	"openai/gpt-5":        {InputPerMTok: 1.25, OutputPerMTok: 10, CacheReadPerMTok: 0.125},
+	"openai/gpt-5-mini":   {InputPerMTok: 0.25, OutputPerMTok: 2, CacheReadPerMTok: 0.025},
+	"openai/gpt-4.1":      {InputPerMTok: 2, OutputPerMTok: 8, CacheReadPerMTok: 0.5},
+	"openai/gpt-4.1-mini": {InputPerMTok: 0.4, OutputPerMTok: 1.6, CacheReadPerMTok: 0.1},
 
 	// DeepSeek list prices plus its off-peak discount: deepseek-chat is half
-	// price, deepseek-reasoner is 75% off input and half price on output.
-	"deepseek/deepseek-chat":     {InputPerMTok: 0.28, OutputPerMTok: 0.42, OffPeakInputPerMTok: 0.14, OffPeakOutputPerMTok: 0.21, TimeOfDay: true},
-	"deepseek/deepseek-reasoner": {InputPerMTok: 0.28, OutputPerMTok: 0.42, OffPeakInputPerMTok: 0.07, OffPeakOutputPerMTok: 0.21, TimeOfDay: true},
+	// price, deepseek-reasoner is 75% off input and half price on output. A
+	// cache hit is billed at the published cache-read rate; cache misses are
+	// already in the uncached input bucket.
+	"deepseek/deepseek-chat": {
+		InputPerMTok: 0.28, OutputPerMTok: 0.42, CacheReadPerMTok: 0.028,
+		OffPeakInputPerMTok: 0.14, OffPeakOutputPerMTok: 0.21, OffPeakCacheReadPerMTok: 0.014,
+		TimeOfDay: true,
+	},
+	"deepseek/deepseek-reasoner": {
+		InputPerMTok: 0.28, OutputPerMTok: 0.42, CacheReadPerMTok: 0.028,
+		OffPeakInputPerMTok: 0.07, OffPeakOutputPerMTok: 0.21, OffPeakCacheReadPerMTok: 0.014,
+		TimeOfDay: true,
+	},
 }
 
 // PriceFor reports the curated price of a model selector and whether it is
@@ -152,24 +197,73 @@ func (p ModelPrice) Rate(t time.Time) string {
 	return RatePeak
 }
 
-// InputRate is the price per 1M input tokens in force at t.
-func (p ModelPrice) InputRate(t time.Time) float64 {
-	if p.TimeOfDay && deepseekOffPeak(t) {
-		return p.OffPeakInputPerMTok
-	}
-	return p.InputPerMTok
+// priceRates is one effective per-million rate table after tier selection and
+// any time-of-day discount.
+type priceRates struct {
+	input, output, cacheRead, cacheWrite float64
 }
 
-// OutputRate is the price per 1M output tokens in force at t.
-func (p ModelPrice) OutputRate(t time.Time) float64 {
-	if p.TimeOfDay && deepseekOffPeak(t) {
-		return p.OffPeakOutputPerMTok
+// ratesFor resolves the rates that price one request. Tier selection uses the
+// whole request input, including cache reads and writes, and then the
+// time-of-day window applies to the selected tier.
+func (p ModelPrice) ratesFor(promptTokens int64, t time.Time) priceRates {
+	offPeak := p.TimeOfDay && deepseekOffPeak(t)
+	rates := priceRates{
+		input: p.InputPerMTok, output: p.OutputPerMTok,
+		cacheRead: p.CacheReadPerMTok, cacheWrite: p.CacheWritePerMTok,
 	}
-	return p.OutputPerMTok
+	if offPeak {
+		rates = priceRates{
+			input: p.OffPeakInputPerMTok, output: p.OffPeakOutputPerMTok,
+			cacheRead: p.OffPeakCacheReadPerMTok, cacheWrite: p.OffPeakCacheWritePerMTok,
+		}
+	}
+	matched := int64(-1)
+	for _, tier := range p.Tiers {
+		if promptTokens > tier.InputTokensAbove && tier.InputTokensAbove > matched {
+			matched = tier.InputTokensAbove
+			rates = priceRates{
+				input: tier.InputPerMTok, output: tier.OutputPerMTok,
+				cacheRead: tier.CacheReadPerMTok, cacheWrite: tier.CacheWritePerMTok,
+			}
+			if offPeak {
+				rates = priceRates{
+					input: tier.OffPeakInputPerMTok, output: tier.OffPeakOutputPerMTok,
+					cacheRead: tier.OffPeakCacheReadPerMTok, cacheWrite: tier.OffPeakCacheWritePerMTok,
+				}
+			}
+		}
+	}
+	return rates
 }
 
-// Cost estimates the price of one token count at the rate in force at t.
+// InputRate is the base price per 1M uncached input tokens in force at t.
+func (p ModelPrice) InputRate(t time.Time) float64 { return p.ratesFor(0, t).input }
+
+// OutputRate is the base price per 1M output tokens in force at t.
+func (p ModelPrice) OutputRate(t time.Time) float64 { return p.ratesFor(0, t).output }
+
+// CacheReadRate is the base price per 1M prompt-cache read tokens in force at t.
+func (p ModelPrice) CacheReadRate(t time.Time) float64 { return p.ratesFor(0, t).cacheRead }
+
+// CacheWriteRate is the base price per 1M prompt-cache write tokens in force at t.
+func (p ModelPrice) CacheWriteRate(t time.Time) float64 { return p.ratesFor(0, t).cacheWrite }
+
+// Cost estimates the total price of one token count at the rate in force at t.
 func (p ModelPrice) Cost(usage TokenUsage, t time.Time) float64 {
-	return float64(usage.InputTokens)/millionTokens*p.InputRate(t) +
-		float64(usage.OutputTokens)/millionTokens*p.OutputRate(t)
+	return p.CostBreakdown(usage, t).Total
+}
+
+// CostBreakdown estimates each token bucket of one provider call. The request's
+// prompt size selects any request-wide tier; time-of-day pricing then applies.
+func (p ModelPrice) CostBreakdown(usage TokenUsage, t time.Time) UsageCost {
+	rates := p.ratesFor(usage.PromptTokens(), t)
+	cost := UsageCost{
+		Input:      float64(usage.InputTokens) / millionTokens * rates.input,
+		Output:     float64(usage.OutputTokens) / millionTokens * rates.output,
+		CacheRead:  float64(usage.CacheReadTokens) / millionTokens * rates.cacheRead,
+		CacheWrite: float64(usage.CacheWriteTokens) / millionTokens * rates.cacheWrite,
+	}
+	cost.Total = cost.Input + cost.Output + cost.CacheRead + cost.CacheWrite
+	return cost
 }

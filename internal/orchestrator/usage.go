@@ -8,17 +8,30 @@ import (
 	"time"
 )
 
-// TokenUsage is a token count reported by a model provider. Only the input and
-// output counters are recorded: they are the two the orchestrator prices, and
-// provider-specific counters (reasoning, cache reads) are not inferred from
-// them.
+// TokenUsage is a token count reported by a model provider. InputTokens is the
+// uncached input bucket; cache reads and writes are separate counters, as
+// providers report them. Reasoning tokens are already included in output and are
+// not counted again.
 type TokenUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
 }
 
 // IsZero reports whether the provider reported no tokens at all.
-func (u TokenUsage) IsZero() bool { return u.InputTokens == 0 && u.OutputTokens == 0 }
+func (u TokenUsage) IsZero() bool {
+	return u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0
+}
+
+// PromptTokens is the whole request input: uncached, cache-read and cache-write
+// tokens. It is the count request-wide price tiers and context usage use.
+func (u TokenUsage) PromptTokens() int64 {
+	return u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens
+}
+
+// TotalTokens is every token the provider billed for the call.
+func (u TokenUsage) TotalTokens() int64 { return u.PromptTokens() + u.OutputTokens }
 
 // AttemptUsage is the token usage recorded for one attempt, together with the
 // cost estimated when the provider reported it. The cost is fixed at recording
@@ -29,13 +42,21 @@ func (u TokenUsage) IsZero() bool { return u.InputTokens == 0 && u.OutputTokens 
 type AttemptUsage struct {
 	// Model is the selector the adapter reported usage for, so a later reader
 	// can price the tokens without trusting the attempt's own selector.
-	Model        string    `json:"model,omitempty"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-	CostUSD      float64   `json:"cost_usd,omitempty"`
-	Priced       bool      `json:"priced,omitempty"`
-	Rate         string    `json:"rate,omitempty"`
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	Model            string  `json:"model,omitempty"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64   `json:"cache_write_tokens,omitempty"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`
+	// The component costs are fixed when the call is recorded, like CostUSD, so
+	// a later rate change cannot rewrite the estimate.
+	InputCostUSD      float64   `json:"input_cost_usd,omitempty"`
+	OutputCostUSD     float64   `json:"output_cost_usd,omitempty"`
+	CacheReadCostUSD  float64   `json:"cache_read_cost_usd,omitempty"`
+	CacheWriteCostUSD float64   `json:"cache_write_cost_usd,omitempty"`
+	Priced            bool      `json:"priced,omitempty"`
+	Rate              string    `json:"rate,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at,omitempty"`
 }
 
 // modelSelector is the selector this usage belongs to, falling back to the
@@ -49,7 +70,21 @@ func (u AttemptUsage) modelSelector(requested string) string {
 
 // Usage is the attempt's token count without its cost.
 func (u AttemptUsage) Usage() TokenUsage {
-	return TokenUsage{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}
+	return TokenUsage{
+		InputTokens:      u.InputTokens,
+		OutputTokens:     u.OutputTokens,
+		CacheReadTokens:  u.CacheReadTokens,
+		CacheWriteTokens: u.CacheWriteTokens,
+	}
+}
+
+// addCost folds one provider call's cost breakdown into the attempt total.
+func (u *AttemptUsage) addCost(cost UsageCost) {
+	u.CostUSD += cost.Total
+	u.InputCostUSD += cost.Input
+	u.OutputCostUSD += cost.Output
+	u.CacheReadCostUSD += cost.CacheRead
+	u.CacheWriteCostUSD += cost.CacheWrite
 }
 
 // addUsage folds one priced token count into the attempt total. A rate change
@@ -58,6 +93,8 @@ func (u AttemptUsage) Usage() TokenUsage {
 func (u *AttemptUsage) addUsage(usage TokenUsage, rate string) {
 	u.InputTokens += usage.InputTokens
 	u.OutputTokens += usage.OutputTokens
+	u.CacheReadTokens += usage.CacheReadTokens
+	u.CacheWriteTokens += usage.CacheWriteTokens
 	switch {
 	case u.Rate == "":
 		u.Rate = rate
@@ -116,7 +153,7 @@ func (w outputWriter) RecordUsage(model string, usage TokenUsage) error {
 		attempt.Usage.addUsage(usage, rate)
 		attempt.Usage.Priced = attempt.Usage.Priced && priced
 		if priced {
-			attempt.Usage.CostUSD += price.Cost(usage, now)
+			attempt.Usage.addCost(price.CostBreakdown(usage, now))
 		}
 		attempt.Usage.UpdatedAt = now
 		t.UpdatedAt = now
@@ -160,6 +197,8 @@ func (t Task) Usage() TaskUsage {
 		}
 		total.InputTokens += attempt.Usage.InputTokens
 		total.OutputTokens += attempt.Usage.OutputTokens
+		total.CacheReadTokens += attempt.Usage.CacheReadTokens
+		total.CacheWriteTokens += attempt.Usage.CacheWriteTokens
 		total.CostUSD += attempt.Usage.CostUSD
 		total.Priced = total.Priced && attempt.Usage.Priced
 		total.Model = attempt.Usage.modelSelector(attempt.RequestedModel)
@@ -183,14 +222,16 @@ func (t *Task) currentAttemptModel() string {
 // ModelUsage is the usage one model selector contributed to a session, with the
 // price in force at the time the total was read.
 type ModelUsage struct {
-	Model        string     `json:"model"`
-	InputTokens  int64      `json:"input_tokens"`
-	OutputTokens int64      `json:"output_tokens"`
-	CostUSD      float64    `json:"cost_usd"`
-	Priced       bool       `json:"priced"`
-	CurrentRate  string     `json:"current_rate,omitempty"`
-	Price        ModelPrice `json:"price"`
-	PriceKnown   bool       `json:"price_known"`
+	Model            string     `json:"model"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	CacheReadTokens  int64      `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64      `json:"cache_write_tokens,omitempty"`
+	CostUSD          float64    `json:"cost_usd"`
+	Priced           bool       `json:"priced"`
+	CurrentRate      string     `json:"current_rate,omitempty"`
+	Price            ModelPrice `json:"price"`
+	PriceKnown       bool       `json:"price_known"`
 }
 
 // SessionUsage is the token usage and estimated cost of the running
@@ -198,19 +239,37 @@ type ModelUsage struct {
 // children. Restarting the process starts a new session; earlier attempts keep
 // their own recorded usage in durable history but are not counted here.
 type SessionUsage struct {
-	StartedAt            time.Time    `json:"started_at"`
-	InputTokens          int64        `json:"input_tokens"`
-	OutputTokens         int64        `json:"output_tokens"`
-	TotalTokens          int64        `json:"total_tokens"`
-	CostUSD              float64      `json:"cost_usd"`
-	Priced               bool         `json:"priced"`
-	SubagentInputTokens  int64        `json:"subagent_input_tokens"`
-	SubagentOutputTokens int64        `json:"subagent_output_tokens"`
-	SubagentCostUSD      float64      `json:"subagent_cost_usd"`
-	Tasks                int          `json:"tasks"`
-	SubagentTasks        int          `json:"subagent_tasks"`
-	Unpriced             []string     `json:"unpriced,omitempty"`
-	Models               []ModelUsage `json:"models,omitempty"`
+	StartedAt        time.Time `json:"started_at"`
+	InputTokens      int64     `json:"input_tokens"`
+	OutputTokens     int64     `json:"output_tokens"`
+	CacheReadTokens  int64     `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64     `json:"cache_write_tokens,omitempty"`
+	PromptTokens     int64     `json:"prompt_tokens"`
+	TotalTokens      int64     `json:"total_tokens"`
+	CostUSD          float64   `json:"cost_usd"`
+	// CacheHitRate is the latest recorded call's cache-read share of its prompt,
+	// or zero when no call reported cache activity.
+	CacheHitRate             float64      `json:"cache_hit_rate,omitempty"`
+	Priced                   bool         `json:"priced"`
+	SubagentInputTokens      int64        `json:"subagent_input_tokens"`
+	SubagentOutputTokens     int64        `json:"subagent_output_tokens"`
+	SubagentCacheReadTokens  int64        `json:"subagent_cache_read_tokens,omitempty"`
+	SubagentCacheWriteTokens int64        `json:"subagent_cache_write_tokens,omitempty"`
+	SubagentCostUSD          float64      `json:"subagent_cost_usd"`
+	Tasks                    int          `json:"tasks"`
+	SubagentTasks            int          `json:"subagent_tasks"`
+	Unpriced                 []string     `json:"unpriced,omitempty"`
+	Models                   []ModelUsage `json:"models,omitempty"`
+}
+
+// Tokens returns the session totals as one token count for display helpers.
+func (u SessionUsage) Tokens() TokenUsage {
+	return TokenUsage{
+		InputTokens:      u.InputTokens,
+		OutputTokens:     u.OutputTokens,
+		CacheReadTokens:  u.CacheReadTokens,
+		CacheWriteTokens: u.CacheWriteTokens,
+	}
 }
 
 // SessionUsage returns this process's token usage and estimated cost.
@@ -229,6 +288,8 @@ func (s *Service) sessionUsageLocked() SessionUsage {
 	usage := SessionUsage{StartedAt: s.sessionStartedAt, Priced: true}
 	byModel := map[string]*ModelUsage{}
 	unpriced := map[string]bool{}
+	var latestAt time.Time
+	var latestUsage TokenUsage
 	for _, task := range s.data.Tasks {
 		counted := false
 		for _, attempt := range task.Attempts {
@@ -251,18 +312,35 @@ func (s *Service) sessionUsageLocked() SessionUsage {
 			}
 			entry.InputTokens += attempt.Usage.InputTokens
 			entry.OutputTokens += attempt.Usage.OutputTokens
+			entry.CacheReadTokens += attempt.Usage.CacheReadTokens
+			entry.CacheWriteTokens += attempt.Usage.CacheWriteTokens
 			entry.CostUSD += attempt.Usage.CostUSD
 			entry.Priced = entry.Priced && attempt.Usage.Priced
 			usage.InputTokens += attempt.Usage.InputTokens
 			usage.OutputTokens += attempt.Usage.OutputTokens
+			usage.CacheReadTokens += attempt.Usage.CacheReadTokens
+			usage.CacheWriteTokens += attempt.Usage.CacheWriteTokens
 			usage.CostUSD += attempt.Usage.CostUSD
 			usage.Priced = usage.Priced && attempt.Usage.Priced
 			if !attempt.Usage.Priced {
 				unpriced[model] = true
 			}
+			when := attempt.Usage.UpdatedAt
+			if when.IsZero() {
+				when = attempt.FinishedAt
+			}
+			if when.IsZero() {
+				when = attempt.StartedAt
+			}
+			if !when.Before(latestAt) {
+				latestAt = when
+				latestUsage = attempt.Usage.Usage()
+			}
 			if task.ParentID != "" {
 				usage.SubagentInputTokens += attempt.Usage.InputTokens
 				usage.SubagentOutputTokens += attempt.Usage.OutputTokens
+				usage.SubagentCacheReadTokens += attempt.Usage.CacheReadTokens
+				usage.SubagentCacheWriteTokens += attempt.Usage.CacheWriteTokens
 				usage.SubagentCostUSD += attempt.Usage.CostUSD
 			}
 		}
@@ -273,7 +351,11 @@ func (s *Service) sessionUsageLocked() SessionUsage {
 			}
 		}
 	}
-	usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	usage.PromptTokens = usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+	usage.TotalTokens = usage.PromptTokens + usage.OutputTokens
+	if prompt := latestUsage.PromptTokens(); prompt > 0 && latestUsage.CacheReadTokens > 0 {
+		usage.CacheHitRate = float64(latestUsage.CacheReadTokens) / float64(prompt)
+	}
 	usage.Models = make([]ModelUsage, 0, len(byModel))
 	for _, entry := range byModel {
 		usage.Models = append(usage.Models, *entry)

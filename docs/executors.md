@@ -19,7 +19,7 @@ It exposes eleven workspace tools (`read`, `bash`, `edit`, `multiedit`, `write`,
 
 Each attempt also records a bounded structured conversation: assistant text, tool calls and tool results. The next attempt replays those messages, trimmed to a byte budget, so a follow-up or retry keeps what earlier tool calls discovered instead of only replaying the prose tail. After a file-changing step the adapter runs the detected stack's formatter, diagnostics and affected tests, and injects any failure as the next message in the same conversation, at most twice per attempt. Recognized stacks are Go, Node/TypeScript, Rust and Python, detected by marker file and limited to changed files; a missing tool binary is skipped. The operator enables or disables each recognized stack in the `/lsp` dialog; the opt-out list persists in `lsps.json` beside the state file.
 
-Reasoning deltas become display-only `[thinking]`/`[/thinking]` markers; an open block is closed before prose or tool activity. The adapter reports progress on accepting the prompt, `waiting` on provider retry, and `failed` on an error, content filter, or empty response. Usage is each stream call's `TotalUsage`.
+Reasoning deltas become display-only `[thinking]`/`[/thinking]` markers; an open block is closed before prose or tool activity. The adapter reports progress on accepting the prompt, `waiting` on provider retry, and `failed` on an error, content filter, or empty response. Usage is each stream call's `TotalUsage`, including its cache-read and cache-creation counters.
 
 ## Command adapters
 

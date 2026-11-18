@@ -200,7 +200,12 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		}
 		// Fantasy totals one Stream call across its steps and retries, so
 		// recording this total per call counts each token once.
-		if err := adapterUsage(out, selector, TokenUsage{InputTokens: result.TotalUsage.InputTokens, OutputTokens: result.TotalUsage.OutputTokens}); err != nil {
+		if err := adapterUsage(out, selector, TokenUsage{
+			InputTokens:      result.TotalUsage.InputTokens,
+			OutputTokens:     result.TotalUsage.OutputTokens,
+			CacheReadTokens:  result.TotalUsage.CacheReadTokens,
+			CacheWriteTokens: result.TotalUsage.CacheCreationTokens,
+		}); err != nil {
 			return err
 		}
 		if stream.failure != nil {

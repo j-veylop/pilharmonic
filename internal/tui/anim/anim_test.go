@@ -1,6 +1,8 @@
 package anim
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -38,9 +40,9 @@ func TestMultiStopGradientLoopsThroughEveryHue(t *testing.T) {
 
 	blue, pink, violet := lipgloss.Color("#00a4ff"), lipgloss.Color("#ff60ff"), lipgloss.Color("#8b75ff")
 	frames := renderFrames(Settings{CycleColors: true, GradColors: []lipgloss.TerminalColor{blue, pink, violet}}, 15).initial
-	paint := func(c lipgloss.Color) string { return lipgloss.NewStyle().Foreground(c).Render(".") }
 	first := frames[0]
-	if first[0] != paint(blue) || first[10] != paint(pink) || frames[20][0] != paint(violet) {
+	// Stops are sampled with float math, so allow a step of rounding per channel.
+	if !nearColor(first[0], "#00a4ff") || !nearColor(first[10], "#ff60ff") || !nearColor(frames[20][0], "#8b75ff") {
 		t.Fatal("loop did not visit blue, pink and violet in order")
 	}
 	last := frames[len(frames)-1]
@@ -48,17 +50,6 @@ func TestMultiStopGradientLoopsThroughEveryHue(t *testing.T) {
 		if last[i] != first[i-1] {
 			t.Fatalf("color at cell %d broke the one-cell shift across the loop", i)
 		}
-	}
-}
-
-func TestRenderIsDeterministicPerSettings(t *testing.T) {
-	settings := Settings{ID: "tool", Size: 4, Label: "read", LabelColor: lipgloss.Color("#ffffff"), GradColorA: lipgloss.Color("#ff0000"), GradColorB: lipgloss.Color("#0000ff")}
-	first, second := New(settings), New(settings)
-	if ansi.Strip(first.Render()) != ansi.Strip(second.Render()) {
-		t.Fatalf("same settings rendered differently: %q vs %q", first.Render(), second.Render())
-	}
-	if first.Width() != 4+1+len("read")+3 {
-		t.Fatalf("width = %d", first.Width())
 	}
 }
 
@@ -92,6 +83,30 @@ func TestAnimatedSpinnerKeepsCellWidth(t *testing.T) {
 	}
 }
 
+// nearColor reports whether a rendered cell's truecolor foreground is within two
+// 8-bit steps of hex on every channel.
+func nearColor(cell, hex string) bool {
+	m := sgrRGB.FindStringSubmatch(cell)
+	if m == nil {
+		return false
+	}
+	var want, got [3]int
+	if _, err := fmt.Sscanf(hex, "#%02x%02x%02x", &want[0], &want[1], &want[2]); err != nil {
+		return false
+	}
+	for i := range got {
+		if _, err := fmt.Sscan(m[i+1], &got[i]); err != nil {
+			return false
+		}
+		if d := got[i] - want[i]; d > 2 || d < -2 {
+			return false
+		}
+	}
+	return true
+}
+
+var sgrRGB = regexp.MustCompile(`38;2;(\d+);(\d+);(\d+)m`)
+
 func TestSuffixShowsAndHidesEllipsis(t *testing.T) {
 	spinner := New(Settings{ID: "suffix", Size: 1, Label: "run", NoScramble: true, LabelColor: lipgloss.Color("#ffffff"), SuffixColor: lipgloss.Color("#888888")})
 	spinner.Advance()
@@ -122,6 +137,9 @@ func TestCacheAndRebuildPreserveDeterminism(t *testing.T) {
 	}
 	if ansi.Strip(first.Render()) != ansi.Strip(second.Render()) {
 		t.Fatalf("cache changed the frames: %q vs %q", first.Render(), second.Render())
+	}
+	if first.Width() != 4+1+len("work")+3 {
+		t.Fatalf("width = %d", first.Width())
 	}
 	before := ansi.Strip(first.Render())
 	first.SetColors(lipgloss.Color("#ffff00"), lipgloss.Color("#00ff00"), lipgloss.Color("#0000ff"), lipgloss.Color("#aabbcc"))

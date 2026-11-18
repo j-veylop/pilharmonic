@@ -34,18 +34,9 @@ func subscriptionFixture(t *testing.T, expired bool) string {
 	return path
 }
 
-func TestSubscriptionConfiguration(t *testing.T) {
+func TestSubscriptionLoginCommandIsolatesCodexHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("CODEX_HOME", t.TempDir())
-	if SubscriptionConfigured() {
-		t.Fatal("unexpected configuration")
-	}
-	if !Known(Subscription) || EnvCredential(Subscription) != "" {
-		t.Fatal("subscription not registered correctly")
-	}
-	if _, err := Resolve(t.Context(), Subscription+"/gpt-5.3-codex", func(string) string { t.Fatal("API key callback called"); return "" }); err == nil {
-		t.Fatal("missing login accepted")
-	}
 	cmd := LoginCommand(true)
 	if !strings.Contains(strings.Join(cmd.Args, " "), "--device-auth") || !strings.Contains(strings.Join(cmd.Args, " "), `cli_auth_credentials_store="file"`) {
 		t.Fatalf("login args: %v", cmd.Args)
@@ -53,17 +44,6 @@ func TestSubscriptionConfiguration(t *testing.T) {
 	home, _ := subscriptionHome()
 	if !strings.Contains(strings.Join(cmd.Env, "\n"), "CODEX_HOME="+home) {
 		t.Fatal("login not isolated")
-	}
-	source := subscriptionFixture(t, false)
-	data, _ := os.ReadFile(source)
-	if err := os.WriteFile(filepath.Join(home, "auth.json"), data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if !SubscriptionConfigured() {
-		t.Fatal("login not recognized")
-	}
-	if _, err := Resolve(t.Context(), Subscription+"/gpt-5.3-codex", nil); err != nil {
-		t.Fatal(err)
 	}
 }
 

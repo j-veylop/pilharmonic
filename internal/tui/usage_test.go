@@ -128,12 +128,12 @@ func TestUsageVariantsShowCacheBuckets(t *testing.T) {
 	if len(variants) < 2 {
 		t.Fatalf("missing variants: %v", variants)
 	}
-	for _, want := range []string{"↑4.2k", "⚡3k(71%)", "✎200", "↓500", "$0.01"} {
+	for _, want := range []string{"↑4.2k", "↺3k(71%)", "✎200", "↓500", "$0.01"} {
 		if !strings.Contains(variants[0], want) {
 			t.Fatalf("detailed variant missing %q: %q", want, variants[0])
 		}
 	}
-	if !strings.Contains(variants[1], "↑4.2k/↓500 ⚡3k") {
+	if !strings.Contains(variants[1], "↑4.2k/↓500 ↺3k") {
 		t.Fatalf("compact variant missing cache: %q", variants[1])
 	}
 }

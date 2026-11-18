@@ -56,7 +56,7 @@ func formatCacheHit(rate float64) string {
 const (
 	glyphTokensIn      = "↑"
 	glyphTokensOut     = "↓"
-	glyphTokensCached  = "⚡"
+	glyphTokensCached  = "↺"
 	glyphTokensWritten = "✎"
 )
 

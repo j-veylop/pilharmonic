@@ -305,22 +305,30 @@ func modelGlyph(model string) string {
 	return ""
 }
 
-// modelBadge is the compact provider and model mark for a task row, such as
-// "🐳 deepseek-flash ⚡".
+// modelBadge is the compact provider and model mark for a task row. A model
+// with its own glyph keeps only the marks, such as "🐳 ⚡" for deepseek-flash;
+// naming the model beside them would repeat what the glyphs already say. A
+// model without a character glyph keeps its ID so the row stays meaningful.
 func modelBadge(selector string) string {
 	provider, model, ok := strings.Cut(selector, "/")
 	if !ok {
-		return strings.TrimSpace(modelGlyph(selector) + " " + selector)
+		model = selector
 	}
-	parts := make([]string, 0, 3)
-	if glyph := providerGlyphs[strings.ToLower(provider)]; glyph != "" {
-		parts = append(parts, glyph)
+	providerMark := ""
+	if ok {
+		providerMark = providerGlyphs[strings.ToLower(provider)]
 	}
-	parts = append(parts, model)
 	if glyph := modelGlyph(model); glyph != "" {
-		parts = append(parts, glyph)
+		parts := []string{}
+		if providerMark != "" {
+			parts = append(parts, providerMark)
+		}
+		return strings.Join(append(parts, glyph), " ")
 	}
-	return strings.Join(parts, " ")
+	if providerMark != "" {
+		return providerMark + " " + model
+	}
+	return model
 }
 
 // modelSummary names the big and small models where the board can show them.

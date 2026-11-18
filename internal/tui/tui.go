@@ -289,12 +289,10 @@ func animTick() tea.Cmd {
 // newChatAnim is the multi-character turn spinner Crush shows in the
 // transcript while an assistant message is being produced.
 func newChatAnim() *anim.Anim {
-	rose, pink := spinnerColors()
 	return anim.New(anim.Settings{
 		ID:          "assistant",
 		Size:        15,
-		GradColorA:  rose,
-		GradColorB:  pink,
+		GradColors:  spinnerColors(),
 		CycleColors: true,
 		SuffixColor: muted,
 	})
@@ -303,8 +301,7 @@ func newChatAnim() *anim.Anim {
 // setAnimColors re-renders the chat animation after a theme change.
 func (m *model) setAnimColors() {
 	if m.chatAnim != nil {
-		rose, pink := spinnerColors()
-		m.chatAnim.SetColors(ink, rose, pink, muted)
+		m.chatAnim.SetPalette(ink, muted, spinnerColors())
 	}
 }
 

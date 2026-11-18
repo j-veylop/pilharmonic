@@ -37,12 +37,15 @@ func FrameInterval() time.Duration { return time.Second / fps }
 
 // Settings configures one spinner.
 type Settings struct {
-	ID          string
-	Size        int
-	Label       string
-	LabelColor  lipgloss.TerminalColor
-	GradColorA  lipgloss.TerminalColor
-	GradColorB  lipgloss.TerminalColor
+	ID         string
+	Size       int
+	Label      string
+	LabelColor lipgloss.TerminalColor
+	GradColorA lipgloss.TerminalColor
+	GradColorB lipgloss.TerminalColor
+	// GradColors, when it holds at least two colors, replaces GradColorA and
+	// GradColorB with a closed loop through every stop and back to the first.
+	GradColors  []lipgloss.TerminalColor
 	CycleColors bool
 	NoScramble  bool
 	// Suffix returns a dynamic suffix such as elapsed time. It hides the
@@ -86,6 +89,11 @@ func New(settings Settings) *Anim {
 	}
 	if settings.SuffixColor == nil {
 		settings.SuffixColor = settings.LabelColor
+	}
+	if len(settings.GradColors) == 2 {
+		// A two-stop loop is just the plain gradient, so keep the older fields.
+		settings.GradColorA, settings.GradColorB = settings.GradColors[0], settings.GradColors[1]
+		settings.GradColors = nil
 	}
 	a := &Anim{settings: settings}
 	a.cycling = settings.Size
@@ -143,12 +151,26 @@ func (a *Anim) SetLabel(label string) {
 // SetColors rebuilds the gradient, label and suffix colours while keeping the
 // current step and entrance schedule, so a theme swap does not restart flight.
 func (a *Anim) SetColors(labelColor, gradA, gradB, suffixColor lipgloss.TerminalColor) {
+	a.SetPalette(labelColor, suffixColor, []lipgloss.TerminalColor{gradA, gradB})
+}
+
+// SetPalette rebuilds the gradient loop, label and suffix colours while keeping
+// the current step and entrance schedule, so a theme swap does not restart
+// flight. Two or more stops loop closed through every colour in order.
+func (a *Anim) SetPalette(labelColor, suffixColor lipgloss.TerminalColor, grads []lipgloss.TerminalColor) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.settings.LabelColor = labelColor
-	a.settings.GradColorA = gradA
-	a.settings.GradColorB = gradB
 	a.settings.SuffixColor = suffixColor
+	if len(grads) >= 3 {
+		a.settings.GradColors = grads
+	} else if len(grads) == 2 {
+		a.settings.GradColorA, a.settings.GradColorB = grads[0], grads[1]
+		a.settings.GradColors = nil
+	} else if len(grads) == 1 {
+		a.settings.GradColorA, a.settings.GradColorB = grads[0], grads[0]
+		a.settings.GradColors = nil
+	}
 	key := settingsHash(a.settings)
 	cached := loadCache(key)
 	if cached == nil {
@@ -266,6 +288,9 @@ var frameCacheMap sync.Map
 func settingsHash(s Settings) string {
 	h := fnv.New64a()
 	_, _ = fmt.Fprintf(h, "%d-%s-%v-%v-%v-%t", s.Size, s.Label, s.LabelColor, s.GradColorA, s.GradColorB, s.CycleColors)
+	if len(s.GradColors) >= 2 {
+		_, _ = fmt.Fprintf(h, "-%v", s.GradColors)
+	}
 	return fmt.Sprintf("%x", h.Sum64())
 }
 
@@ -288,11 +313,22 @@ func renderFrames(settings Settings, cycling int) *frameCache {
 	}
 	framesN := prerenderedFrames
 	rampSize := max(1, width*3)
+	multiStop := len(settings.GradColors) >= 2
 	if settings.CycleColors {
 		framesN = max(2, width*2)
 		rampSize = framesN/2 + 1
+		if multiStop {
+			// One frame per color step around the closed loop keeps the wrap
+			// invisible.
+			rampSize = framesN
+		}
 	}
-	ramp := gradientRamp(rampSize, settings.GradColorA, settings.GradColorB)
+	var ramp []lipgloss.TerminalColor
+	if multiStop {
+		ramp = loopRamp(rampSize, settings.GradColors)
+	} else {
+		ramp = gradientRamp(rampSize, settings.GradColorA, settings.GradColorB)
+	}
 	seed := seedOf(settingsHash(settings))
 	rng := rand.New(rand.NewPCG(seed, ^seed))
 	cache := &frameCache{
@@ -309,10 +345,13 @@ func renderFrames(settings Settings, cycling int) *frameCache {
 		cache.frames[f] = make([]string, max(0, width))
 		for i := range cache.frames[f] {
 			index := i % len(ramp)
-			if settings.CycleColors {
+			if settings.CycleColors && !multiStop {
 				// Mirror the ramp so the frame wrap takes one ordinary color step.
 				phase := (i + f) % framesN
 				index = min(phase, framesN-phase)
+			} else if settings.CycleColors {
+				// Rotate around the closed multi-stop loop one step per frame.
+				index = (i + f) % len(ramp)
 			}
 			c := ramp[index]
 			cache.initial[f][i] = lipgloss.NewStyle().Foreground(c).Render(string(initialChar))
@@ -361,14 +400,32 @@ func gradientRamp(size int, a, b lipgloss.TerminalColor) []lipgloss.TerminalColo
 		return []lipgloss.TerminalColor{a, b}
 	}
 	ramp := make([]lipgloss.TerminalColor, size)
-	ar, ag, ab, _ := a.RGBA()
-	br, bg, bb, _ := b.RGBA()
 	for i := range ramp {
-		t := float64(i) / float64(size-1)
-		ramp[i] = lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
-			uint8(float64(ar>>8)*(1-t)+float64(br>>8)*t),
-			uint8(float64(ag>>8)*(1-t)+float64(bg>>8)*t),
-			uint8(float64(ab>>8)*(1-t)+float64(bb>>8)*t)))
+		ramp[i] = blendColor(a, b, float64(i)/float64(size-1))
 	}
 	return ramp
+}
+
+// loopRamp samples a closed path through every stop, so the final entry sits
+// one step before the first and a rotating index wraps without a color jump.
+func loopRamp(size int, stops []lipgloss.TerminalColor) []lipgloss.TerminalColor {
+	if size < 2 {
+		return []lipgloss.TerminalColor{stops[0]}
+	}
+	ramp := make([]lipgloss.TerminalColor, size)
+	for i := range ramp {
+		pos := float64(i) / float64(size) * float64(len(stops))
+		index := int(pos)
+		ramp[i] = blendColor(stops[index%len(stops)], stops[(index+1)%len(stops)], pos-float64(index))
+	}
+	return ramp
+}
+
+func blendColor(a, b lipgloss.TerminalColor, t float64) lipgloss.TerminalColor {
+	ar, ag, ab, _ := a.RGBA()
+	br, bg, bb, _ := b.RGBA()
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
+		uint8(float64(ar>>8)*(1-t)+float64(br>>8)*t),
+		uint8(float64(ag>>8)*(1-t)+float64(bg>>8)*t),
+		uint8(float64(ab>>8)*(1-t)+float64(bb>>8)*t)))
 }

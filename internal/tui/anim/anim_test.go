@@ -31,6 +31,26 @@ func TestCyclingGradientWrapsWithoutAColorJump(t *testing.T) {
 	}
 }
 
+func TestMultiStopGradientLoopsThroughEveryHue(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+
+	blue, pink, violet := lipgloss.Color("#00a4ff"), lipgloss.Color("#ff60ff"), lipgloss.Color("#8b75ff")
+	frames := renderFrames(Settings{CycleColors: true, GradColors: []lipgloss.TerminalColor{blue, pink, violet}}, 15).initial
+	paint := func(c lipgloss.Color) string { return lipgloss.NewStyle().Foreground(c).Render(".") }
+	first := frames[0]
+	if first[0] != paint(blue) || first[10] != paint(pink) || frames[20][0] != paint(violet) {
+		t.Fatal("loop did not visit blue, pink and violet in order")
+	}
+	last := frames[len(frames)-1]
+	for i := 1; i < len(last); i++ {
+		if last[i] != first[i-1] {
+			t.Fatalf("color at cell %d broke the one-cell shift across the loop", i)
+		}
+	}
+}
+
 func TestRenderIsDeterministicPerSettings(t *testing.T) {
 	settings := Settings{ID: "tool", Size: 4, Label: "read", LabelColor: lipgloss.Color("#ffffff"), GradColorA: lipgloss.Color("#ff0000"), GradColorB: lipgloss.Color("#0000ff")}
 	first, second := New(settings), New(settings)

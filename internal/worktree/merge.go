@@ -452,9 +452,8 @@ func ReconcileDiscard(spec Spec) (bool, error) {
 }
 
 // Discard removes a worktree after repeating the ownership checks made
-// when it was prepared. Removal deliberately omits --force so Git refuses any
-// worktree that still holds uncommitted or untracked files.
-func Discard(ctx context.Context, spec Spec) error {
+// when it was prepared. Without force it refuses dirty or unmerged work.
+func Discard(ctx context.Context, spec Spec, force bool) error {
 	owner, tree, err := validateMergeWorkspace(ctx, spec)
 	if err != nil {
 		return err
@@ -463,7 +462,7 @@ func Discard(ctx context.Context, spec Spec) error {
 	if err != nil {
 		return err
 	}
-	if dirty != "" {
+	if dirty != "" && !force {
 		return errors.New("worktree has uncommitted changes; commit or remove them before discarding")
 	}
 	head, err := gitOutput(ctx, tree, "rev-parse", "--verify", "HEAD^{commit}")
@@ -474,10 +473,15 @@ func Discard(ctx context.Context, spec Spec) error {
 	if err != nil {
 		return err
 	}
-	if _, err = gitOutput(ctx, owner.Source, "merge-base", "--is-ancestor", head, sourceHead); err != nil {
+	if _, err = gitOutput(ctx, owner.Source, "merge-base", "--is-ancestor", head, sourceHead); err != nil && !force {
 		return errors.New("worktree commit is not merged into the source checkout; merge it before discarding")
 	}
-	if _, err = gitOutput(ctx, owner.Source, "worktree", "remove", "--", tree); err != nil {
+	args := []string{"worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, "--", tree)
+	if _, err = gitOutput(ctx, owner.Source, args...); err != nil {
 		return fmt.Errorf("remove worktree: %w", err)
 	}
 	return nil

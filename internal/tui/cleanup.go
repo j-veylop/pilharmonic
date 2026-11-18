@@ -16,6 +16,7 @@ const (
 	deleteCompleted cleanupKind = "D"
 	discardTask     cleanupKind = "x"
 	discardMerged   cleanupKind = "X"
+	forceDiscard    cleanupKind = "ctrl+x"
 )
 
 type cleanupRequest struct {
@@ -45,12 +46,12 @@ func (m *model) prepareCleanup(kind cleanupKind) {
 			m.notice.text = "No merged worktrees to discard."
 			return
 		}
-	case deleteTask, discardTask:
+	case deleteTask, discardTask, forceDiscard:
 		task, ok := m.selectedTask()
 		if !ok {
 			return
 		}
-		if request.kind == discardTask && (!task.Isolated || task.ExecutionWorkspace == "") {
+		if (request.kind == discardTask || request.kind == forceDiscard) && (!task.Isolated || task.ExecutionWorkspace == "") {
 			m.notice.text = "Selected task has no retained worktree."
 			return
 		}
@@ -92,6 +93,8 @@ func (r cleanupRequest) prompt() (title, answer, note string) {
 		return fmt.Sprintf("DELETE %d COMPLETED TASK(S) + HISTORY", len(r.ids)), "y delete", "Tasks with unfinished children are kept; worktrees are removed."
 	case discardTask:
 		return "DISCARD RETAINED WORKTREE  › " + singleLine(r.title), "y discard", "Refuses uncommitted or unmerged work; task history is kept."
+	case forceDiscard:
+		return "PERMANENTLY REMOVE WORKTREE  › " + singleLine(r.title), "y remove", "Permanently deletes all uncommitted and unmerged work. Task history is kept."
 	}
 	return fmt.Sprintf("DISCARD %d MERGED WORKTREE(S)", len(r.ids)), "y discard", "Skips uncommitted or unmerged work; task history is kept."
 }
@@ -103,6 +106,11 @@ func (r cleanupRequest) run(service Service) string {
 			return err.Error()
 		}
 		return "Task deleted with history and worktree."
+	case forceDiscard:
+		if err := service.ForceDiscardWorktree(r.ids[0]); err != nil {
+			return err.Error()
+		}
+		return "Worktree removed; task history kept."
 	case discardTask:
 		if err := service.DiscardWorktree(r.ids[0]); err != nil {
 			return err.Error()

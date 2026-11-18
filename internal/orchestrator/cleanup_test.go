@@ -312,6 +312,69 @@ func TestDiscardWorktreeRefusesDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestForceDiscardWorktreeRemovesUnmergedAndDirtyButKeepsHistory(t *testing.T) {
+	repo := committedRepo(t)
+	s := newTestService(t)
+	s.RegisterRunner("general", runnerFunc(func(_ context.Context, task Task, _ io.Writer) error {
+		return changeRunner(context.Background(), task, io.Discard)
+	}))
+	task := startIsolated(t, s, "forced", "do work", repo)
+	failed := await(t, s, task.ID, Completed)
+	if failed.WorktreeCommit == "" {
+		t.Fatal("work was not prepared")
+	}
+	must(t, os.WriteFile(filepath.Join(failed.ExecutionWorkspace, "dirty.txt"), []byte("discard me"), 0600))
+	must(t, s.ForceDiscardWorktree(task.ID))
+	got, ok := s.GetTask(task.ID)
+	if !ok || got.ExecutionWorkspace != "" || got.WorktreeCommit != failed.WorktreeCommit || got.ReviewCommit == "" {
+		t.Fatalf("task/history not retained: %+v", got)
+	}
+	if _, err := os.Stat(failed.ExecutionWorkspace); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("forced worktree remains: %v", err)
+	}
+}
+
+func TestForceDiscardBlockers(t *testing.T) {
+	s := newTestService(t)
+	task := createTask(t, s, "owner", "work", t.TempDir())
+	s.mu.Lock()
+	owner := s.taskLocked(task.ID)
+	owner.Isolated = true
+	owner.ExecutionWorkspace = "/retained"
+	owner.Status = Completed
+	s.mu.Unlock()
+	for _, tc := range []struct {
+		name string
+		set  func(*Task)
+	}{
+		{"running", func(t *Task) { t.Status = Running }},
+		{"integrating", func(t *Task) { t.integrating = true }},
+		{"scheduled", func(t *Task) { t.ScheduleRequested = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s.mu.Lock()
+			owner := s.taskLocked(task.ID)
+			before := *owner
+			tc.set(owner)
+			s.mu.Unlock()
+			if err := s.ForceDiscardWorktree(task.ID); err == nil {
+				t.Fatal("force discard accepted active worktree")
+			}
+			s.mu.Lock()
+			*s.taskLocked(task.ID) = before
+			s.mu.Unlock()
+		})
+	}
+	child := createTask(t, s, "child", "work", t.TempDir())
+	s.mu.Lock()
+	s.taskLocked(child.ID).ParentID = task.ID
+	s.taskLocked(child.ID).Workspace = "/retained"
+	s.mu.Unlock()
+	if err := s.ForceDiscardWorktree(task.ID); err == nil || !strings.Contains(err.Error(), "subagent") {
+		t.Fatalf("shared worktree: %v", err)
+	}
+}
+
 func TestDiscardWorktreeRefusesUnmergedWorktree(t *testing.T) {
 	var err error
 	repo := committedRepo(t)

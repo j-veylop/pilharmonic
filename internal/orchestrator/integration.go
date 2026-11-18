@@ -133,7 +133,7 @@ func (s *Service) resumeMergesLocked() {
 	}
 	for i := range s.data.Tasks {
 		owner := &s.data.Tasks[i]
-		if owner.integrating || s.hasInheritedWorkspaceLocked(*owner, true) {
+		if owner.integrating || owner.DiscardPending || owner.ExecutionWorkspace == "" || s.hasInheritedWorkspaceLocked(*owner, true) {
 			continue
 		}
 		if owner.ReviewStatus == ReviewApproved && owner.ReviewCommit != "" &&

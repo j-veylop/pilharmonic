@@ -222,8 +222,18 @@ const discardTimeout = 30 * time.Second
 // worktree must be clean and merged, so discarding never deletes uncommitted
 // changes or unintegrated commits. Git never runs while holding the mutex.
 func (s *Service) DiscardWorktree(id string) error {
+	return s.discardWorktree(id, false)
+}
+
+// ForceDiscardWorktree explicitly removes dirty or unmerged retained work while
+// preserving the task and its history. Local worktree changes are discarded.
+func (s *Service) ForceDiscardWorktree(id string) error {
+	return s.discardWorktree(id, true)
+}
+
+func (s *Service) discardWorktree(id string, force bool) error {
 	s.mu.Lock()
-	t, err := s.discardableTaskLocked(id)
+	t, err := s.discardableTaskLocked(id, force)
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -247,7 +257,7 @@ func (s *Service) DiscardWorktree(id string) error {
 	gone, reconcileErr := worktree.ReconcileDiscard(s.worktreeSpec(task))
 	if !gone && reconcileErr == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), discardTimeout)
-		err = worktree.Discard(ctx, s.worktreeSpec(task))
+		err = worktree.Discard(ctx, s.worktreeSpec(task), force)
 		cancel()
 		// A failed Git invocation may still have removed the directory.
 		gone, reconcileErr = worktree.ReconcileDiscard(s.worktreeSpec(task))
@@ -297,18 +307,18 @@ func (t *Task) finishDiscard(gone bool, kind, message string) {
 	t.Events = append(t.Events, Event{t.UpdatedAt, kind, message})
 }
 
-func (s *Service) discardableTaskLocked(id string) (*Task, error) {
+func (s *Service) discardableTaskLocked(id string, force bool) (*Task, error) {
 	if s.closing {
 		return nil, errShuttingDown
 	}
 	if t := s.taskLocked(id); t != nil {
-		return t, s.checkDiscardLocked(*t)
+		return t, s.checkDiscardLocked(*t, force)
 	}
 	return nil, errTaskNotFound
 }
 
 // checkDiscardLocked checks state shared by the single and bulk operations.
-func (s *Service) checkDiscardLocked(t Task) error {
+func (s *Service) checkDiscardLocked(t Task, force bool) error {
 	if !t.Isolated || t.ExecutionWorkspace == "" {
 		return errors.New("task has no retained isolated worktree")
 	}
@@ -324,7 +334,7 @@ func (s *Service) checkDiscardLocked(t Task) error {
 	if s.hasInheritedWorkspaceLocked(t, false) {
 		return errors.New("worktree is still referenced by a subagent; delete its tasks before discarding")
 	}
-	if t.MergeStatus != MergeMerged && t.MergeStatus != MergeUpToDate {
+	if !force && t.MergeStatus != MergeMerged && t.MergeStatus != MergeUpToDate {
 		return errors.New("worktree has not been merged; resolve the merge before discarding")
 	}
 	return nil
@@ -352,7 +362,7 @@ func (s *Service) WorktreeDiscardCandidates() []string {
 	defer s.mu.Unlock()
 	var ids []string
 	for _, t := range s.data.Tasks {
-		if s.checkDiscardLocked(t) == nil {
+		if s.checkDiscardLocked(t, false) == nil {
 			ids = append(ids, t.ID)
 		}
 	}

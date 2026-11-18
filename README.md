@@ -43,7 +43,7 @@ Login uses a dedicated file-backed Codex home at `<user config dir>/orchestrator
 | Navigate | `h`/`l` panes, `j`/`k` move (counts like `5j`), `gg`/`G`, `Ctrl-u`/`Ctrl-d`, `PgUp`/`PgDn`, **Enter** open details, `[`/`]` previous/next subtask, `!` next task needing action, `z` full width, `B` toggle the subtask sidebar, mouse wheel. |
 | Copy | Drag in the details pane; release copies via OSC 52. |
 | Report / review | `p` status report; `v` opens the prepared commit diff, `y` approves and merges, `n` rejects with a reason, `Esc` closes; **Ctrl-o** opens the review task workspace in `nvim`, **Ctrl-g** in `lazygit` while reviewing. |
-| Clean up | `x` discard clean integrated worktree, `d` delete task; `X`/`D` bulk. Confirm with `y`. |
+| Clean up | `x` discard clean integrated worktree, `Ctrl-x` force-remove a retained worktree, `d` delete task; `X`/`D` bulk. Confirm with `y`. |
 | Delegate | `b` create a child task from a running one. |
 | Login / models | `/login`, `/model [big\|small]`, `/theme [auto\|dark\|light]`. |
 
@@ -59,7 +59,7 @@ In a Git repository with a committed `HEAD`, a task runs in a detached worktree 
 
 A successful isolated run commits its changes for review unless the profile sets `no_integrate`. `v` then `y` merges the displayed commit into the source checkout (serialized); `v` then `n` rejects and keeps the worktree; `f` then `r` reworks it within the mandate. Uncommitted source changes are autostashed and reapplied. If they conflict with the merge, the merge is rolled back and recorded as failed with the source checkout restored, so commit or stash those changes and retry. Untracked files that a merge would overwrite block it.
 
-A parent waits to integrate while descendants use its worktree. Delete descendants before discarding a shared worktree.
+A parent waits to integrate while descendants use its worktree. Delete descendants before discarding a shared worktree. Force-removing a retained worktree permanently loses its uncommitted and unmerged changes, but keeps the task and history; running, integrating, scheduled and shared worktrees cannot be removed.
 
 Agents run with the host user's permissions. A running task can delegate with `b` or the `pilharmonic subagent` helper over a local control socket (defaults: depth 2, four children per parent; `-subagents=false` disables). A top-level `general` task is asked to answer simple work directly and split complex work into focused children; the guidance never widens the mandate.
 

@@ -113,6 +113,7 @@ func init() {
 		{"D", "delete completed", "Delete completed tasks + worktrees (confirm y)", "Tasks", func(m *model) tea.Cmd { m.prepareCleanup(deleteCompleted); return nil }},
 		{"x", "discard", "Discard selected merged worktree (confirm y)", "Tasks", func(m *model) tea.Cmd { m.prepareCleanup(discardTask); return nil }},
 		{"X", "discard merged", "Discard all merged worktrees (confirm y)", "Tasks", func(m *model) tea.Cmd { m.prepareCleanup(discardMerged); return nil }},
+		{"ctrl+x", "force remove", "Permanently remove selected retained worktree including dirty/unmerged work (confirm y)", "Tasks", onTask(func(m *model, t orchestrator.Task) tea.Cmd { m.prepareCleanup(forceDiscard); return nil })},
 		{"tab", "output/info/activity", "Next detail tab: OUTPUT, INFO, ACTIVITY", "Details", func(m *model) tea.Cmd { m.showTab((m.tab + 1) % 3); return nil }},
 		{"shift+tab", "previous tab", "Previous detail tab", "Details", func(m *model) tea.Cmd { m.showTab((m.tab + 2) % 3); return nil }},
 		{"t", "thinking", "Show / hide thinking blocks", "Details", func(m *model) tea.Cmd { m.thinking = !m.thinking; return nil }},

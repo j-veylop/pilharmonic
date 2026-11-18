@@ -12,29 +12,27 @@ import (
 	"pilharmonic/internal/tui/editor"
 )
 
-func TestHeaderSummarizesDisplayStatesAndAttention(t *testing.T) {
+func TestHeaderLeavesCountsAndUsageToTaskRows(t *testing.T) {
 	now := time.Now()
 	tasks := []orchestrator.Task{
-		{ID: "parent", Title: "parent", Status: orchestrator.Running},
-		{ID: "child", ParentID: "parent", Title: "child", Status: orchestrator.Running},
-		{ID: "queued", Title: "queued", Status: orchestrator.Queued},
-		{ID: "blocked", Title: "blocked", Status: orchestrator.Running,
-			Reports: []orchestrator.Report{{Kind: "blocked", Message: "need input", CreatedAt: now}}},
+		{ID: "done", Title: "work", Status: orchestrator.Completed, Agent: "general",
+			Attempts: []orchestrator.Attempt{{
+				ID: "attempt", StartedAt: now,
+				Usage: &orchestrator.AttemptUsage{Model: "openai/gpt-4.1", InputTokens: 12_300, OutputTokens: 4_500, CostUSD: 0.0043, Priced: true},
+			}}},
 	}
 	m := model{width: 120, height: 35, tasks: tasks}
-	plain := ansi.Strip(m.View())
-	for _, want := range []string{"4 tasks", "● 1 running", "◷ 1 queued", "◆ 1 needs action"} {
-		if !strings.Contains(plain, want) {
-			t.Fatalf("header missing %q: %q", want, plain)
+	header := ansi.Strip(m.headerRow(120))
+	for _, unwanted := range []string{"tasks", "running", "queued", "action", "Σ"} {
+		if strings.Contains(header, unwanted) {
+			t.Fatalf("header still carries %q: %q", unwanted, header)
 		}
 	}
-	if strings.Contains(plain, "● 2 running") {
-		t.Fatalf("parent waiting for a subagent was counted as running: %q", plain)
-	}
-
-	normal := model{width: 120, height: 35, tasks: []orchestrator.Task{{ID: "done", Status: orchestrator.Completed}}}
-	if plain := ansi.Strip(normal.View()); !strings.Contains(plain, "◆ 0 need action") {
-		t.Fatalf("header omits the zero action count: %q", plain)
+	board := ansi.Strip(m.View())
+	for _, want := range []string{"12.3k in", "4.5k out", "$0.0043"} {
+		if !strings.Contains(board, want) {
+			t.Fatalf("task row missing usage %q: %q", want, board)
+		}
 	}
 }
 

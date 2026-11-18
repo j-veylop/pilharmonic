@@ -85,11 +85,10 @@ type fetchModelsMsg struct {
 }
 
 // Service is the orchestrator surface the terminal drives. The board reads
-// snapshots, usage and standing conditions on its one refresh tick; slow calls
-// run as commands outside the update loop.
+// snapshots and standing conditions on its one refresh tick; slow calls run as
+// commands outside the update loop.
 type Service interface {
 	ListTasks() []orchestrator.Task
-	SessionUsage() orchestrator.SessionUsage
 	ListAgents() []orchestrator.AgentInfo
 	ListProfiles() []orchestrator.Profile
 	ListSkills() []orchestrator.SkillInfo
@@ -150,7 +149,6 @@ type model struct {
 	service       Service
 	workspace     string
 	tasks         []orchestrator.Task
-	usage         orchestrator.SessionUsage
 	diffStats     map[string]diffStatEntry
 	doneExpanded  bool
 	selected      int
@@ -275,7 +273,6 @@ func newModel(service Service, workspace string) model {
 		service:   service,
 		workspace: workspace,
 		tasks:     service.ListTasks(),
-		usage:     service.SessionUsage(),
 		router:    routerState{open: true},
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		chatAnim:  newChatAnim(),
@@ -562,7 +559,6 @@ func (m *model) refreshTasks() {
 		return
 	}
 	m.tasks = m.service.ListTasks()
-	m.usage = m.service.SessionUsage()
 	m.notice.service = serviceNotice(m.service)
 	m.pruneDiffStats()
 	m.selectTask(selected)

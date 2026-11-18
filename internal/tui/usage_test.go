@@ -137,3 +137,23 @@ func TestUsageVariantsShowCacheBuckets(t *testing.T) {
 		t.Fatalf("compact variant missing cache: %q", variants[1])
 	}
 }
+
+// A task row keeps the cost when the token detail no longer fits, and a task
+// with an unpriced model shows only tokens.
+func TestTaskListUsageDropsDetailBeforeCost(t *testing.T) {
+	usage := orchestrator.TaskUsage{
+		TokenUsage: orchestrator.TokenUsage{InputTokens: 12_300, OutputTokens: 4_500},
+		CostUSD:    0.0043,
+		Priced:     true,
+	}
+	if got := taskListUsage(usage, 80); got != "12.3k in · 4.5k out · $0.0043" {
+		t.Fatalf("full usage = %q", got)
+	}
+	if got := taskListUsage(usage, 7); got != "$0.0043" {
+		t.Fatalf("narrow usage = %q, want the cost", got)
+	}
+	usage.Priced = false
+	if got := taskListUsage(usage, 80); strings.Contains(got, "$") {
+		t.Fatalf("unpriced usage showed a cost: %q", got)
+	}
+}

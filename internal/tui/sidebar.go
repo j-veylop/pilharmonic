@@ -108,7 +108,14 @@ func taskMetaLine(task orchestrator.Task, width int) string {
 	if task.ParentID != "" {
 		label = task.Agent
 	}
-	return fit("  "+mutedStyle.Render(label)+"  "+workspaceBadgeFor(task).render(), width, 1)
+	sep := mutedStyle.Render("  ·  ")
+	line := "  " + mutedStyle.Render(label) + "  " + workspaceBadgeFor(task).render()
+	if usage := task.Usage(); !usage.IsZero() {
+		if segment := taskListUsage(usage, width-lipgloss.Width(line)-lipgloss.Width(sep)); segment != "" {
+			line += sep + mutedStyle.Render(segment)
+		}
+	}
+	return fit(line, width, 1)
 }
 
 // taskListRow pairs a task with its snapshot index.

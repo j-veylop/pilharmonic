@@ -148,6 +148,11 @@ type Task struct {
 	controlToken    string
 	controlGuidance string
 	model           string // the selector recorded on the running attempt
+	// sourceWorkspace is the operator's checkout when Workspace has been
+	// replaced by an isolated worktree. Project instructions are read from it
+	// so an agent cannot author the context a later attempt of the same task
+	// will read.
+	sourceWorkspace string
 }
 
 // stateVersion is written on every save. A file from a newer build fails

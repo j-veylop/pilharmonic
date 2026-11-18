@@ -222,3 +222,45 @@ func TestFantasyAttemptRunsTheRecordedModel(t *testing.T) {
 		t.Fatalf("adapter ran %q, attempt recorded %q", got, done.Attempts[0].RequestedModel)
 	}
 }
+
+func TestDelegatedChildInheritsParentModelUnlessPinned(t *testing.T) {
+	s := newTestService(t)
+	s.mu.Lock()
+	s.modelSelection[ModelClassBig] = "hyper/parent-big"
+	s.modelSelection[ModelClassSmall] = "hyper/child-small"
+	s.mu.Unlock()
+	parent := &Task{Agent: DefaultRouteAgent}
+	parentProfile := Profile{Name: "coordinator"}
+
+	if got := s.delegatedModelLocked(parent, parentProfile, "tester"); got != "hyper/parent-big" {
+		t.Fatalf("child inherited %q, want the parent's big model", got)
+	}
+	if got := s.delegatedModelLocked(parent, Profile{Name: "coordinator", Model: "hyper/parent-profile"}, "tester"); got != "hyper/parent-profile" {
+		t.Fatalf("child inherited %q, want the parent profile's model", got)
+	}
+
+	// A concrete models.json selection for the child wins over inheritance.
+	s.mu.Lock()
+	s.modelSelection["agent:tester"] = "hyper/pinned"
+	s.mu.Unlock()
+	if got := s.delegatedModelLocked(parent, parentProfile, "tester"); got != "" {
+		t.Fatalf("pinned models.json selector was overridden by %q", got)
+	}
+
+	// A concrete profiles.json specialist model is also a pin.
+	s.mu.Lock()
+	delete(s.modelSelection, "agent:tester")
+	s.agentModels["tester"] = "hyper/specialist"
+	s.mu.Unlock()
+	if got := s.delegatedModelLocked(parent, parentProfile, "tester"); got != "" {
+		t.Fatalf("pinned profiles.json selector was overridden by %q", got)
+	}
+
+	// A class alias is not a concrete pin, so the parent model still wins.
+	s.mu.Lock()
+	s.agentModels["tester"] = ModelClassSmall
+	s.mu.Unlock()
+	if got := s.delegatedModelLocked(parent, parentProfile, "tester"); got != "hyper/parent-big" {
+		t.Fatalf("class alias blocked inheritance: %q", got)
+	}
+}

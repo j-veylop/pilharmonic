@@ -76,6 +76,26 @@ Keyring-only credentials are not supported.
 External sources would need authenticated identities, stable request IDs,
 idempotent decisions and durable rejection records; none exist yet.
 
+## Attempt context
+
+A Fantasy system prompt is assembled stable-first and volatile last: tool
+guidance, workflow, verification and output policy, operator and profile
+instructions, the skill index, and per-attempt delegation guidance, followed by
+the environment block (execution workspace, platform, date, isolated-worktree
+note and a read-only Git snapshot bounded by a two-second timeout) and project
+context. Project instruction files are bounded (32 KiB each, 64 KiB total) and
+memoized by path, size and modification time. For an isolated task they are read
+from the source checkout, not the worktree: an agent must not author the
+instructions a later attempt reads. Output policy is operator-facing for a
+top-level task and tersely parent-facing for a delegated child.
+
+The live conversation sent to the provider is capped at 96 KiB. When a call
+would exceed it, the oldest exchanges are dropped and a user message states that
+earlier context was omitted; the original mandate and durable history are not
+rewritten. A run that ends with tool activity and no closing prose is recorded
+as a progress report rather than a failure, because its durable tool turns
+already hold the work.
+
 ## Profiles and models
 
 A profile (tools, model, instructions, integration, delegation) is orchestrator
@@ -115,6 +135,10 @@ specialist alias also sets its class; an alias whose class is unset is skipped,
 never sent to a provider. It fixes the selector on the attempt and the adapter
 runs exactly that selector. The provider prefix selects the endpoint
 and credential.
+A delegated child inherits the parent's resolved model when its executor can
+select one, unless a concrete selector is pinned for the child by `profiles.json`
+or `models.json`. An executor that cannot select a model keeps its own defaults
+and does not fail the child's start.
 
 The compiled coordinator guidance is added only for a top-level `general`
 attempt with delegation credentials, bash, and remaining child budget. It grants

@@ -229,6 +229,21 @@ func (s *Service) fantasyModelLocked(agent string, profile *Profile) string {
 	return ""
 }
 
+// delegatedModelLocked returns the selector a delegated child inherits from its
+// running parent. A concrete selector pinned for the child by profiles.json or
+// models.json still wins; otherwise the child runs on the parent's model rather
+// than its specialist class default, so delegated work does not silently drop
+// to a smaller model. Caller holds mu.
+func (s *Service) delegatedModelLocked(parent *Task, parentProfile Profile, agent string) string {
+	if explicit := s.agentModels[agent]; explicit != "" && explicit != ModelClassBig && explicit != ModelClassSmall {
+		return ""
+	}
+	if override := s.modelSelection["agent:"+agent]; strings.Contains(override, "/") {
+		return ""
+	}
+	return s.fantasyModelLocked(parent.Agent, &parentProfile)
+}
+
 // validateModelSelector reports whether a model is a well-formed provider/model
 // selector naming a known provider.
 func validateModelSelector(model string) error {

@@ -70,7 +70,7 @@ func TestCommandRunnerPassesContextOnStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "mandate") || !strings.Contains(out.String(), "not authority") || !strings.Contains(out.String(), "context") || !strings.Contains(out.String(), "role policy") {
+	if !strings.Contains(out.String(), "mandate") || !strings.Contains(out.String(), "Additional context") || !strings.Contains(out.String(), "context") || !strings.Contains(out.String(), "role policy") {
 		t.Fatal(out.String())
 	}
 }
@@ -80,7 +80,7 @@ func TestBuiltinSpecialistsRespectConfiguredExecutor(t *testing.T) {
 	must(t, s.LoadAgents(writeAgentConfig(t, `{"agents":[{"name":"tester","command":"cat","description":"Custom test runner"}]}`)))
 	s.LoadBuiltinSpecialists()
 	reviewer, ok := s.runners["reviewer"].(FantasyRunner)
-	if !ok || reviewer.instructions == "" || !strings.Contains(reviewer.systemPrompt(nil), reviewer.instructions) {
+	if !ok || reviewer.instructions == "" || !strings.Contains(reviewer.systemPrompt(Task{}), reviewer.instructions) {
 		t.Fatal("missing built-in review instructions")
 	}
 	if _, ok := s.runners["tester"].(CommandRunner); !ok || s.agentDescriptions["tester"] != "Custom test runner" {

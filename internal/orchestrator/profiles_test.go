@@ -402,14 +402,14 @@ func TestFantasyToolPaletteAndModel(t *testing.T) {
 	if got := (FantasyRunner{}).toolPalette(nil); !slices.Equal(got, agenttools.Names()) {
 		t.Fatalf("default tool palette = %v, want %v", got, agenttools.Names())
 	}
-	if prompt := (FantasyRunner{}).systemPrompt(&Profile{Name: "explorer", Instructions: "Read only; never edit."}); !strings.Contains(prompt, "Read only; never edit.") {
+	if prompt := (FantasyRunner{}).systemPrompt(Task{ProfileSpec: &Profile{Name: "explorer", Instructions: "Read only; never edit."}}); !strings.Contains(prompt, "Read only; never edit.") {
 		t.Fatalf("profile guidance missing from system prompt: %q", prompt)
 	}
 }
 
 func TestSpecialistAndProfileCompose(t *testing.T) {
 	runner := FantasyRunner{instructions: "Locate the regression."}
-	prompt := runner.systemPrompt(&Profile{Name: "audit", Instructions: "Record evidence."})
+	prompt := runner.systemPrompt(Task{ProfileSpec: &Profile{Name: "audit", Instructions: "Record evidence."}})
 	for _, want := range []string{"Locate the regression.", "Record evidence.", toolGuidance} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("missing %q in system prompt %q", want, prompt)

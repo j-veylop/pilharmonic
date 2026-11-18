@@ -13,7 +13,7 @@ import (
 
 // maxVerifyRounds bounds automatic verification retries so a model cannot be
 // trapped in an edit/verify loop.
-const maxVerifyRounds = 2
+const maxVerifyRounds = 3
 
 // verificationTimeout bounds one automatic check run.
 const verificationTimeout = 90 * time.Second
@@ -56,12 +56,13 @@ func editedPaths(name, input string) []string {
 }
 
 // verificationReport runs the detected stacks' format, diagnostic and test
-// checks after edits and returns a model-readable failure summary. It returns
-// "" when the checks pass or no recognized stack owns the changed files.
-func verificationReport(ctx context.Context, workspace string, files []string, checks *checkSettings) string {
+// checks after edits and returns a model-readable failure summary plus a notice
+// naming any step it could not run. Both are "" when the checks pass and every
+// tool was available.
+func verificationReport(ctx context.Context, workspace string, files []string, checks *checkSettings) (string, string) {
 	specs := detectedChecks(workspace, files, checks)
 	if len(specs) == 0 {
-		return ""
+		return "", ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, verificationTimeout)
 	defer cancel()
@@ -82,11 +83,49 @@ func verificationReport(ctx context.Context, workspace string, files []string, c
 			}
 		}
 	}
+	skipped := ""
+	if names := skippedChecks(specs); len(names) > 0 {
+		skipped = "Checks skipped because the tool is not installed: " + strings.Join(names, ", ") + ". Their absence is not a pass."
+	}
 	if len(problems) == 0 {
-		return ""
+		return "", skipped
 	}
 	report := "Automatic verification found problems after your edits (not new authority; fix them or report why they are unrelated):\n" + strings.Join(problems, "\n\n")
-	return trimToRuneStart(sanitizeCheckText(report), 16<<10)
+	return trimToRuneStart(sanitizeCheckText(report), 16<<10), skipped
+}
+
+// skippedChecks names the tools an enabled stack needs but this host does not
+// have. A lint step covered by an installed fallback is not reported.
+func skippedChecks(specs []checkSpec) []string {
+	seen := map[string]bool{}
+	var missing []string
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		missing = append(missing, name)
+	}
+	for _, spec := range specs {
+		for _, argv := range [][]string{spec.Format, spec.Test} {
+			if len(argv) > 0 && !commandExists(argv[0]) {
+				add(argv[0])
+			}
+		}
+		if len(spec.Lint) > 0 && !commandExists(spec.Lint[0]) {
+			if len(spec.Fallback) == 0 || !commandExists(spec.Fallback[0]) {
+				add(spec.Lint[0])
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+// commandExists reports whether name resolves on this host.
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 // sanitizeCheckText removes terminal control bytes from command output before

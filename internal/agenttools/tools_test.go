@@ -293,3 +293,104 @@ func TestDiagnosticsWithoutGoModuleIsAnAnswer(t *testing.T) {
 		t.Fatalf("diagnostics outside a module: %+v", result)
 	}
 }
+
+func TestReadToolLineWindows(t *testing.T) {
+	workspace := t.TempDir()
+	content := "one\ntwo\nthree\nfour\n"
+	writeWorkspaceFile(t, workspace, "lines.txt", content)
+
+	whole := runTool(t, workspace, "read", `{"path":"lines.txt"}`)
+	if whole.IsError || whole.Content != content {
+		t.Fatalf("whole read = %+v, want verbatim %q", whole, content)
+	}
+
+	window := runTool(t, workspace, "read", `{"path":"lines.txt","offset":2,"limit":2}`)
+	if window.IsError {
+		t.Fatalf("window read: %+v", window)
+	}
+	want := "two\nthree\n[read: lines 2-3 of 4; continue with offset=4]"
+	if window.Content != want {
+		t.Fatalf("window read = %q, want %q", window.Content, want)
+	}
+	if strings.Contains(window.Content, "1:one") {
+		t.Fatalf("windowed content was numbered: %q", window.Content)
+	}
+
+	past := runTool(t, workspace, "read", `{"path":"lines.txt","offset":9}`)
+	if !past.IsError || !strings.Contains(past.Content, "past the end") {
+		t.Fatalf("past-the-end read = %+v", past)
+	}
+}
+
+func TestEditRequiresUniqueMatchUnlessReplaceAll(t *testing.T) {
+	workspace := t.TempDir()
+	writeWorkspaceFile(t, workspace, "dup.txt", "same\nmiddle\nsame\n")
+
+	rejected := runTool(t, workspace, "edit", `{"path":"dup.txt","old_text":"same","new_text":"different"}`)
+	if !rejected.IsError || !strings.Contains(rejected.Content, "appears 2 times") {
+		t.Fatalf("non-unique edit = %+v", rejected)
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, "dup.txt"))
+	must(t, err)
+	if string(data) != "same\nmiddle\nsame\n" {
+		t.Fatalf("rejected edit changed the file: %q", data)
+	}
+
+	replaced := runTool(t, workspace, "edit", `{"path":"dup.txt","old_text":"same","new_text":"different","replace_all":true}`)
+	if replaced.IsError {
+		t.Fatalf("replace_all edit: %+v", replaced)
+	}
+	data, err = os.ReadFile(filepath.Join(workspace, "dup.txt"))
+	must(t, err)
+	if string(data) != "different\nmiddle\ndifferent\n" {
+		t.Fatalf("replace_all result: %q", data)
+	}
+}
+
+func TestEditNotFoundNamesClosestLine(t *testing.T) {
+	workspace := t.TempDir()
+	writeWorkspaceFile(t, workspace, "near.txt", "alpha\n  beta\n")
+
+	result := runTool(t, workspace, "edit", `{"path":"near.txt","old_text":"beta\nmissing","new_text":"x"}`)
+	if !result.IsError {
+		t.Fatalf("edit without a match succeeded: %+v", result)
+	}
+	if !strings.Contains(result.Content, "old_text not found") || !strings.Contains(result.Content, "closest match at line 2") {
+		t.Fatalf("not-found hint missing: %q", result.Content)
+	}
+}
+
+func TestMultieditIsAtomicAcrossFiles(t *testing.T) {
+	workspace := t.TempDir()
+	writeWorkspaceFile(t, workspace, "a.txt", "alpha\n")
+	writeWorkspaceFile(t, workspace, "b.txt", "beta\n")
+
+	result := runTool(t, workspace, "multiedit", `{"edits":[
+		{"path":"a.txt","old_text":"alpha","new_text":"ALPHA"},
+		{"path":"b.txt","old_text":"missing","new_text":"BETA"}
+	]}`)
+	if !result.IsError {
+		t.Fatalf("failing multiedit succeeded: %+v", result)
+	}
+	for path, want := range map[string]string{"a.txt": "alpha\n", "b.txt": "beta\n"} {
+		data, err := os.ReadFile(filepath.Join(workspace, path))
+		must(t, err)
+		if string(data) != want {
+			t.Fatalf("%s changed although the batch failed: %q", path, data)
+		}
+	}
+}
+
+func TestBashToolTimeoutIsASoftResult(t *testing.T) {
+	started := time.Now()
+	result := runTool(t, t.TempDir(), "bash", `{"command":"sleep 5","description":"test the timeout","timeout_ms":50}`)
+	if result.IsError {
+		t.Fatalf("tool timeout was a hard failure: %+v", result)
+	}
+	if !strings.Contains(result.Content, "timed out after 50ms") {
+		t.Fatalf("timeout not explained: %q", result.Content)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("timeout did not bound the command: %s", elapsed)
+	}
+}

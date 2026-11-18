@@ -54,7 +54,9 @@ func (w outputWriter) RecordTurn(turn Turn) error {
 	return nil
 }
 
-// boundedTurn normalizes a turn and bounds its text on a rune boundary.
+// boundedTurn normalizes a turn and bounds its text on a rune boundary. The
+// marker is visible to the model on replay, so a later attempt knows which
+// results it can no longer see in full.
 func boundedTurn(turn Turn) Turn {
 	switch turn.Role {
 	case "assistant", "tool":
@@ -62,10 +64,18 @@ func boundedTurn(turn Turn) Turn {
 		turn.Role = ""
 		return turn
 	}
-	turn.Text = trimToRuneStart(turn.Text, maxTurnTextBytes)
-	turn.Input = trimToRuneStart(turn.Input, maxTurnTextBytes)
-	turn.Output = trimToRuneStart(turn.Output, maxTurnToolBytes)
+	turn.Text = boundTurnText(turn.Text, maxTurnTextBytes)
+	turn.Input = boundTurnText(turn.Input, maxTurnTextBytes)
+	turn.Output = boundTurnText(turn.Output, maxTurnToolBytes)
 	return turn
+}
+
+// boundTurnText keeps the newest bytes of text, marking what was dropped.
+func boundTurnText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return "[earlier text truncated]\n" + trimToRuneStart(text, limit)
 }
 
 // recordTurn forwards a completed turn to the sink when it supports that

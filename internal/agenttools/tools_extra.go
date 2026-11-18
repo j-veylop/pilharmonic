@@ -230,29 +230,60 @@ type multiEditOperation struct {
 	NewText string `json:"new_text" description:"Replacement text"`
 }
 
-func multiEditTool(workspace string) fantasy.AgentTool {
+func multiEditTool(workspace string, options Options) fantasy.AgentTool {
 	type input struct {
 		Edits []multiEditOperation `json:"edits" description:"Ordered edits to apply"`
 	}
-	return fantasy.NewAgentTool("multiedit", "Apply several find-and-replace edits in order. Each edit uses the edit tool's exact match, with a whitespace-tolerant fallback.",
-		func(_ context.Context, in input, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	return fantasy.NewAgentTool("multiedit", "Apply several find-and-replace edits. Each edit uses the edit tool's matching rules, including a unique match and a whitespace-tolerant fallback. Every edit is validated against one in-memory copy first, so a failure leaves no file changed. Diagnostics for the changed files are appended to the result.",
+		func(ctx context.Context, in input, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if len(in.Edits) == 0 {
 				return fantasy.NewTextErrorResponse("edits is required"), nil
 			}
-			changed := make(map[string]int, len(in.Edits))
-			for i, edit := range in.Edits {
-				if _, err := applyEdit(workspace, edit.Path, edit.OldText, edit.NewText); err != nil {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("edit %d of %d (%s): %v", i+1, len(in.Edits), edit.Path, err)), nil
-				}
-				changed[edit.Path]++
+			files, err := applyEdits(workspace, in.Edits)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-			var files []string
-			for path := range changed {
-				files = append(files, path)
-			}
-			sort.Strings(files)
-			return fantasy.NewTextResponse(fmt.Sprintf("applied %d edits across %d file(s): %s", len(in.Edits), len(files), strings.Join(files, ", "))), nil
+			message := fmt.Sprintf("applied %d edits across %d file(s): %s", len(in.Edits), len(files), strings.Join(files, ", "))
+			return fantasy.NewTextResponse(message + diagnosticNote(ctx, options, workspace, files)), nil
 		})
+}
+
+// applyEdits validates every edit against one in-memory copy of each file and
+// only then writes them, so a failing edit cannot leave a file half changed.
+func applyEdits(workspace string, ops []multiEditOperation) ([]string, error) {
+	pending := make(map[string]string, len(ops))
+	var order []string
+	for i, op := range ops {
+		content, loaded := pending[op.Path]
+		if !loaded {
+			full, err := workspacePath(workspace, op.Path)
+			if err != nil {
+				return nil, fmt.Errorf("edit %d (%s): %w", i+1, op.Path, err)
+			}
+			data, err := os.ReadFile(full)
+			if err != nil {
+				return nil, fmt.Errorf("edit %d (%s): %w", i+1, op.Path, err)
+			}
+			content = string(data)
+			order = append(order, op.Path)
+		}
+		updated, _, _, err := replaceText(content, op.Path, op.OldText, op.NewText, false)
+		if err != nil {
+			return nil, fmt.Errorf("edit %d (%s): %w", i+1, op.Path, err)
+		}
+		pending[op.Path] = updated
+	}
+	for _, path := range order {
+		full, err := workspacePath(workspace, path)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(full, []byte(pending[path]), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	sort.Strings(order)
+	return order, nil
 }
 
 func diagnosticsTool(workspace string, run func(context.Context, string, []string) string) fantasy.AgentTool {

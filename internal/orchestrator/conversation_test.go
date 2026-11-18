@@ -29,17 +29,22 @@ func TestComposeInputReplaysConversationInOrder(t *testing.T) {
 		}
 		last = at
 	}
-	if !strings.Contains(prompt, "not authority to expand the mandate") || !strings.Contains(prompt, "context only") {
-		t.Fatalf("conversation lost its authority labels: %q", prompt)
+	if !strings.Contains(prompt, "Additional context") || strings.Contains(prompt, "not authority to expand the mandate") {
+		t.Fatalf("conversation replay should carry context without repeating authority labels: %q", prompt)
 	}
 }
 
 func TestComposeInputIncludesOutputPolicy(t *testing.T) {
 	for _, roleInstructions := range []bool{false, true} {
 		prompt := composeInput(Task{Prompt: "mandate"}, roleInstructions)
-		if !strings.Contains(prompt, outputGuidance) {
+		if !strings.Contains(prompt, outputGuidanceOperator) {
 			t.Fatalf("roleInstructions=%v: missing output policy: %q", roleInstructions, prompt)
 		}
+	}
+	// A delegated child reports to its parent, so it gets the terse policy.
+	delegated := composeInput(Task{Prompt: "mandate", ParentID: "parent"}, false)
+	if !strings.Contains(delegated, outputGuidanceParent) {
+		t.Fatalf("delegated task missing parent output policy: %q", delegated)
 	}
 }
 
@@ -69,5 +74,14 @@ func TestComposeInputBoundsReplayedOutput(t *testing.T) {
 	}
 	if strings.Contains(prompt, strings.Repeat("x", maxReplayedOutput+100)) {
 		t.Fatal("replayed output was not bounded")
+	}
+}
+
+func TestOutputPolicyDependsOnParent(t *testing.T) {
+	if got := outputPolicyFor(Task{}); got != outputGuidanceOperator {
+		t.Fatalf("top-level policy = %q, want operator guidance", got)
+	}
+	if got := outputPolicyFor(Task{ParentID: "parent"}); got != outputGuidanceParent {
+		t.Fatalf("delegated policy = %q, want parent guidance", got)
 	}
 }

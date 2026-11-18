@@ -88,6 +88,15 @@ func (s *Service) createSubagent(parentID, title, prompt, agent, profile, token 
 	if err != nil {
 		return Task{}, err
 	}
+	// A child inherits the parent's model unless a concrete selector pins its
+	// own, so hard delegated work does not fall to a smaller specialist class.
+	// An executor that cannot select a model keeps its own defaults: passing a
+	// model to it would fail the child's start for no benefit.
+	if childProfile.Model == "" {
+		if inherited := s.delegatedModelLocked(parent, parentProfile, agent); s.runnerAcceptsModelLocked(agent, inherited) {
+			childProfile.Model = inherited
+		}
+	}
 	workspace := parent.ExecutionWorkspace
 	if workspace == "" {
 		if parent.Isolated {
@@ -233,6 +242,16 @@ func coordinatorGuidance(profile Profile) string {
 		return coordinatorDelegationGuidance
 	}
 	return coordinatorDelegationGuidance + "\nCoordinator instructions:\n" + profile.CoordinatorInstructions
+}
+
+// runnerAcceptsModelLocked reports whether the registered executor can run a
+// profile that pins model. Caller holds mu.
+func (s *Service) runnerAcceptsModelLocked(agent, model string) bool {
+	if model == "" {
+		return false
+	}
+	support, ok := s.runners[agent].(ProfileSupport)
+	return ok && support.SupportsProfile(Profile{Model: model}) == nil
 }
 
 // subagentChildCountLocked counts every child already recorded for a parent.

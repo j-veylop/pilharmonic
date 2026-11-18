@@ -57,6 +57,7 @@ func (s *Service) SetTaskIsolation(id string, enabled bool) error {
 // merge and discard, which mutate the same source repository, and records it
 // before the runner starts.
 func (s *Service) prepareExecution(ctx context.Context, t Task) (Task, error) {
+	t.sourceWorkspace = t.Workspace
 	if !t.Isolated {
 		return t, nil
 	}

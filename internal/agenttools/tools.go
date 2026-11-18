@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/fantasy"
@@ -24,10 +25,18 @@ const (
 	// maxToolReadBytes bounds a single file read so a huge file cannot blow up
 	// the model's context (or the persisted tool activity).
 	maxToolReadBytes = 256 << 10
+	// maxReadScanBytes bounds how much of a file a windowed read loads before
+	// slicing lines. A larger file is served from its first 8 MiB.
+	maxReadScanBytes = 8 << 20
 	// maxToolOutputBytes bounds captured command output. The shared capped
 	// buffer keeps half the head and half the tail, because a failing command
 	// usually explains itself in its last lines.
 	maxToolOutputBytes = 64 << 10
+	// defaultBashTimeout bounds one bash call, so a hung command cannot hold an
+	// attempt open forever.
+	defaultBashTimeout = 120 * time.Second
+	// maxDiagnosticNote bounds the diagnostics appended to an edit result.
+	maxDiagnosticNote = 4 << 10
 )
 
 // names is the complete palette, in display order. A profile or a role's
@@ -81,11 +90,11 @@ func ToolsWithOptions(workspace string, palette []string, env []string, catalog 
 		case "bash":
 			tools = append(tools, bashTool(workspace, env))
 		case "write":
-			tools = append(tools, writeTool(workspace))
+			tools = append(tools, writeTool(workspace, options))
 		case "edit":
-			tools = append(tools, editTool(workspace))
+			tools = append(tools, editTool(workspace, options))
 		case "multiedit":
-			tools = append(tools, multiEditTool(workspace))
+			tools = append(tools, multiEditTool(workspace, options))
 		case "grep":
 			tools = append(tools, grepTool(workspace, env))
 		case "rg":
@@ -163,11 +172,15 @@ func commandResponse(name, text string, err error) fantasy.ToolResponse {
 }
 
 type readToolInput struct {
-	Path string `json:"path" description:"Workspace-relative path of the file to read"`
+	Path   string `json:"path" description:"Workspace-relative path of the file to read"`
+	Offset int    `json:"offset,omitempty" description:"First line to return, 1-based; omit to start at the top of the file"`
+	Limit  int    `json:"limit,omitempty" description:"Maximum number of lines to return; omit for the rest of the file within the size budget"`
 }
 
 type bashToolInput struct {
-	Command string `json:"command" description:"Shell command to run with the workspace as its working directory"`
+	Command     string `json:"command" description:"Shell command to run with the workspace as its working directory"`
+	Description string `json:"description" description:"One line saying what the command does and why it is being run"`
+	TimeoutMS   int    `json:"timeout_ms,omitempty" description:"Abort after this many milliseconds; defaults to 120000"`
 }
 
 type writeToolInput struct {
@@ -176,9 +189,10 @@ type writeToolInput struct {
 }
 
 type editToolInput struct {
-	Path    string `json:"path" description:"Workspace-relative path of the file to edit"`
-	OldText string `json:"old_text" description:"Exact text to replace; must occur in the file"`
-	NewText string `json:"new_text" description:"Replacement text"`
+	Path       string `json:"path" description:"Workspace-relative path of the file to edit"`
+	OldText    string `json:"old_text" description:"Exact text to replace; it must occur exactly once unless replace_all is set"`
+	NewText    string `json:"new_text" description:"Replacement text"`
+	ReplaceAll bool   `json:"replace_all,omitempty" description:"Replace every occurrence instead of requiring exactly one (default false)"`
 }
 
 type grepToolInput struct {
@@ -199,7 +213,7 @@ type skillToolInput struct {
 }
 
 func readTool(workspace string) fantasy.AgentTool {
-	return fantasy.NewAgentTool("read", "Read a file from the workspace. Returns at most 256 KiB.",
+	return fantasy.NewAgentTool("read", "Read a file from the workspace. Returns the whole file, or the line window named by offset and limit. Content is returned verbatim, without line numbers; grep and rg report line numbers. A window that does not reach the end of the file says how to continue.",
 		func(_ context.Context, in readToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			path, err := workspacePath(workspace, in.Path)
 			if err != nil {
@@ -210,39 +224,114 @@ func readTool(workspace string) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 			defer func() { _ = file.Close() }()
-			data, err := io.ReadAll(io.LimitReader(file, maxToolReadBytes+1))
+			data, err := io.ReadAll(io.LimitReader(file, maxReadScanBytes+1))
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			oversizedFile := len(data) > maxReadScanBytes
+			if oversizedFile {
+				data = data[:maxReadScanBytes]
 			}
 			// File contents are returned verbatim: they are the model's own
 			// working data (an edit must match them exactly), and this text
 			// travels through the provider API, never through the terminal.
-			if len(data) > maxToolReadBytes {
-				cut := maxToolReadBytes
-				for cut > 0 && !utf8.RuneStart(data[cut]) {
-					cut--
-				}
-				return fantasy.NewTextResponse(string(data[:cut]) + "\n[file truncated at 256 KiB]"), nil
+			text, err := readWindow(string(data), in.Offset, in.Limit)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-			return fantasy.NewTextResponse(string(data)), nil
+			if oversizedFile {
+				text += "\n[read stopped at 8 MiB of a larger file]"
+			}
+			return fantasy.NewTextResponse(text), nil
 		})
 }
 
+// readWindow returns the requested line range of text. Content is never
+// numbered, so an edit can still match it byte for byte; a marker names the
+// range when it is not the whole file.
+func readWindow(text string, offset, limit int) (string, error) {
+	if offset < 0 || limit < 0 {
+		return "", errors.New("offset and limit must not be negative")
+	}
+	var starts []int
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	total := len(starts) + 1
+	if len(text) == 0 || (len(starts) > 0 && starts[len(starts)-1] == len(text)) {
+		total--
+	}
+	if total == 0 {
+		return "", nil
+	}
+	if offset < 1 {
+		offset = 1
+	}
+	if offset > total {
+		return "", fmt.Errorf("offset %d is past the end of a %d-line file", offset, total)
+	}
+	start := 0
+	if offset > 1 {
+		start = starts[offset-2]
+	}
+	end := len(text)
+	if limit > 0 {
+		last := offset + limit - 1
+		if last < total {
+			end = starts[last-1]
+		}
+	}
+	if end > start+maxToolReadBytes {
+		end = start + maxToolReadBytes
+	}
+	body := text[start:end]
+	if end >= len(text) {
+		return body, nil
+	}
+	lastLine := offset + strings.Count(body, "\n")
+	if strings.HasSuffix(body, "\n") {
+		lastLine--
+	}
+	note := fmt.Sprintf("[read: lines %d-%d of %d; continue with offset=%d]", offset, lastLine, total, lastLine+1)
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return body + note, nil
+}
+
 func bashTool(workspace string, env []string) fantasy.AgentTool {
-	return fantasy.NewAgentTool("bash", "Run a shell command with the workspace as its working directory and return its combined output.",
+	return fantasy.NewAgentTool("bash", "Run a shell command with the workspace as its working directory and return its combined output. The command is killed at timeout_ms, and its output is bounded.",
 		func(ctx context.Context, in bashToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			timeout := defaultBashTimeout
+			if in.TimeoutMS > 0 {
+				timeout = time.Duration(in.TimeoutMS) * time.Millisecond
+			}
+			parent := ctx
+			ctx, cancel := context.WithTimeout(parent, timeout)
+			defer cancel()
 			// This is the adapter's only shell path:
 			// the command is the model's own, and it runs in the workspace the
 			// orchestrator prepared. It is never composed from task or trigger
 			// text by the orchestrator itself.
 			text, err := runWorkspaceCommand(ctx, workspace, env, "bash", "-c", in.Command)
+			if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				// This call's own budget ran out. Report it as a result the
+				// model can react to; a canceled attempt still fails below.
+				message := fmt.Sprintf("bash: timed out after %s", timeout)
+				if partial := strings.TrimSpace(text); partial != "" {
+					message += "\n" + partial
+				}
+				return fantasy.NewTextResponse(message), nil
+			}
 			return commandResponse("bash", text, err), nil
 		})
 }
 
-func writeTool(workspace string) fantasy.AgentTool {
-	return fantasy.NewAgentTool("write", "Write a file in the workspace, replacing it if it exists.",
-		func(_ context.Context, in writeToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+func writeTool(workspace string, options Options) fantasy.AgentTool {
+	return fantasy.NewAgentTool("write", "Write a file in the workspace, replacing it if it exists. Diagnostics for the written file are appended to the result.",
+		func(ctx context.Context, in writeToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			path, err := workspacePath(workspace, in.Path)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
@@ -253,55 +342,102 @@ func writeTool(workspace string) fantasy.AgentTool {
 			if err := os.WriteFile(path, []byte(in.Content), 0o644); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-			return fantasy.NewTextResponse(fmt.Sprintf("wrote %d bytes to %s", len(in.Content), in.Path)), nil
+			message := fmt.Sprintf("wrote %d bytes to %s", len(in.Content), in.Path)
+			return fantasy.NewTextResponse(message + diagnosticNote(ctx, options, workspace, []string{in.Path})), nil
 		})
 }
 
-func editTool(workspace string) fantasy.AgentTool {
-	return fantasy.NewAgentTool("edit", "Replace the first occurrence of text in a workspace file. Exact text is preferred; an indentation or trailing-whitespace mismatch falls back to a whitespace-tolerant match.",
-		func(_ context.Context, in editToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			exact, err := applyEdit(workspace, in.Path, in.OldText, in.NewText)
+func editTool(workspace string, options Options) fantasy.AgentTool {
+	return fantasy.NewAgentTool("edit", "Replace text in a workspace file. The text must occur exactly once unless replace_all is set; an indentation or trailing-whitespace mismatch falls back to a whitespace-tolerant match. Diagnostics for the changed file are appended to the result.",
+		func(ctx context.Context, in editToolInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			how, count, err := applyEdit(workspace, in.Path, in.OldText, in.NewText, in.ReplaceAll)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-			match := "exact"
-			if !exact {
-				match = "whitespace-tolerant"
+			message := fmt.Sprintf("replaced %d occurrence(s) in %s (%s match)", count, in.Path, how)
+			if how == "whitespace-tolerant" {
+				message += "\nThe text matched only after ignoring whitespace; check the result."
 			}
-			return fantasy.NewTextResponse(fmt.Sprintf("replaced 1 occurrence in %s (%s match, %d bytes removed, %d bytes added)",
-				in.Path, match, len(in.OldText), len(in.NewText))), nil
+			return fantasy.NewTextResponse(message + diagnosticNote(ctx, options, workspace, []string{in.Path})), nil
 		})
 }
 
-// applyEdit replaces oldText with newText in one file. It returns whether an
-// exact match was used. When exact text is absent it retries with the
-// whitespace-tolerant matcher.
-func applyEdit(workspace, path, oldText, newText string) (bool, error) {
+// applyEdit replaces oldText with newText in one file. It reports how the text
+// matched and how many occurrences changed.
+func applyEdit(workspace, path, oldText, newText string, replaceAll bool) (string, int, error) {
 	full, err := workspacePath(workspace, path)
 	if err != nil {
-		return false, err
+		return "", 0, err
 	}
 	if oldText == "" {
-		return false, errors.New("old_text is required")
+		return "", 0, errors.New("old_text is required")
 	}
 	data, err := os.ReadFile(full)
 	if err != nil {
-		return false, err
+		return "", 0, err
 	}
-	content := string(data)
-	exact := true
-	updated := content
-	if strings.Contains(content, oldText) {
-		updated = strings.Replace(content, oldText, newText, 1)
-	} else if next, ok := replaceWithWhitespaceTolerance(content, oldText, newText); ok {
-		updated, exact = next, false
-	} else {
-		return false, errors.New("old_text not found in " + path)
+	updated, how, count, err := replaceText(string(data), path, oldText, newText, replaceAll)
+	if err != nil {
+		return "", 0, err
 	}
 	if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
-		return false, err
+		return "", 0, err
 	}
-	return exact, nil
+	return how, count, nil
+}
+
+// replaceText replaces oldText in content. A non-unique match is an error
+// unless replaceAll is set, so an edit cannot silently rewrite the wrong site.
+func replaceText(content, path, oldText, newText string, replaceAll bool) (string, string, int, error) {
+	if occurrences := strings.Count(content, oldText); occurrences > 0 {
+		if occurrences > 1 && !replaceAll {
+			return "", "", 0, fmt.Errorf("old_text appears %d times in %s; include more surrounding text to make it unique, or set replace_all", occurrences, path)
+		}
+		if replaceAll {
+			return strings.ReplaceAll(content, oldText, newText), "exact", occurrences, nil
+		}
+		return strings.Replace(content, oldText, newText, 1), "exact", 1, nil
+	}
+	if next, ok := replaceWithWhitespaceTolerance(content, oldText, newText); ok {
+		return next, "whitespace-tolerant", 1, nil
+	}
+	return "", "", 0, notFoundEdit(content, path, oldText)
+}
+
+// notFoundEdit explains a failed match with the closest line it can find.
+func notFoundEdit(content, path, oldText string) error {
+	message := "old_text not found in " + path
+	first := strings.TrimSpace(strings.SplitN(oldText, "\n", 2)[0])
+	if first == "" {
+		return errors.New(message)
+	}
+	for i, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == first {
+			message += fmt.Sprintf(" (closest match at line %d: whitespace differs)", i+1)
+			break
+		}
+	}
+	return errors.New(message)
+}
+
+// diagnosticNote runs the host's language diagnostics for the files just
+// changed, so a broken edit is visible in the same turn.
+func diagnosticNote(ctx context.Context, options Options, workspace string, paths []string) string {
+	if options.Diagnostics == nil || len(paths) == 0 {
+		return ""
+	}
+	text := strings.TrimSpace(options.Diagnostics(ctx, workspace, paths))
+	if text == "" {
+		return ""
+	}
+	if len(text) > maxDiagnosticNote {
+		cut := maxDiagnosticNote
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut] + "\n[truncated]"
+	}
+	return "\n\nDiagnostics for the changed files:\n" + text
 }
 
 func grepTool(workspace string, env []string) fantasy.AgentTool {

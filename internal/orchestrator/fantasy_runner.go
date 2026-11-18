@@ -56,21 +56,33 @@ func (FantasyRunner) Capabilities() AgentCapabilities {
 	return AgentCapabilities{LiveContext: true, ToolActivity: true, StructuredReports: true}
 }
 
-// systemPrompt builds the trusted preamble: the execution policy, optional
-// operator instructions and the recorded profile's guidance. Profile text is
-// orchestrator-owned and adds no authority beyond the mandate.
-func (f FantasyRunner) systemPrompt(profile *Profile) string {
-	guidance := toolGuidance
+// systemPrompt builds the trusted preamble: execution policy, workflow and
+// output policy, optional operator instructions, the recorded profile's
+// guidance, the installed skill index and this attempt's delegation guidance,
+// followed by the volatile run context. Profile text is orchestrator-owned and
+// adds no authority beyond the mandate.
+func (f FantasyRunner) systemPrompt(t Task) string {
+	sections := []string{toolGuidance, workflowGuidance, verificationGuidance, outputPolicyFor(t)}
 	if f.instructions != "" {
-		guidance += "\n" + f.instructions
+		sections = append(sections, f.instructions)
 	}
-	if profile != nil && profile.Instructions != "" {
-		guidance += "\nOrchestrator role " + profile.Name + " (adds no authority beyond the mandate):\n" + profile.Instructions
+	if profile := t.ProfileSpec; profile != nil && profile.Instructions != "" {
+		sections = append(sections, "Orchestrator role "+profile.Name+":\n"+profile.Instructions)
 	}
 	if index := f.skills.Prompt(); index != "" {
-		guidance += "\n" + index
+		sections = append(sections, index)
 	}
-	return guidance
+	if guidance := strings.TrimSpace(t.controlGuidance); guidance != "" {
+		sections = append(sections, guidance)
+	}
+	// Volatile context goes last so a provider can cache the stable prefix.
+	if environment := environmentBlock(t); environment != "" {
+		sections = append(sections, environment)
+	}
+	if project := projectContextBlock(t); project != "" {
+		sections = append(sections, project)
+	}
+	return strings.Join(sections, "\n\n")
 }
 
 // toolPalette resolves the tools to expose: the profile snapshot, then the
@@ -153,7 +165,7 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		return err
 	}
 	agent := fantasy.NewAgent(model,
-		fantasy.WithSystemPrompt(f.systemPrompt(t.ProfileSpec)),
+		fantasy.WithSystemPrompt(f.systemPrompt(t)),
 		fantasy.WithTools(agenttools.ToolsWithOptions(t.Workspace, f.toolPalette(t.ProfileSpec), t.runnerEnvironment(), f.skills, agenttools.Options{
 			Diagnostics: func(ctx context.Context, workspace string, files []string) string {
 				return diagnosticsForWorkspace(ctx, workspace, files, f.checks)
@@ -170,7 +182,9 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		return err
 	}
 	verifyRounds := 0
+	reportedSkips := false
 	for prompt != "" {
+		history = trimLiveHistory(history)
 		result, err := agent.Stream(ctx, stream.call(prompt, history))
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -197,9 +211,20 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		// diagnostics and affected tests, and feed any failure back as the next
 		// user message so the agent can fix it in the same conversation.
 		if verifyRounds < maxVerifyRounds && len(stream.changed) > 0 {
-			if report := verificationReport(ctx, t.Workspace, stream.takeChanges(), f.checks); report != "" {
+			report, skipped := verificationReport(ctx, t.Workspace, stream.takeChanges(), f.checks)
+			if report != "" {
+				if skipped != "" {
+					report += "\n\n" + skipped
+				}
 				prompt = report
 				verifyRounds++
+			} else if skipped != "" && !reportedSkips {
+				// A missing tool never means the checks passed; say so once
+				// instead of spending a model round on it.
+				if err := adapterReport(out, "progress", skipped); err != nil {
+					return err
+				}
+				reportedSkips = true
 			}
 		}
 		if prompt != "" {
@@ -215,9 +240,31 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 		}
 	}
 	if !stream.sawText {
+		if stream.toolCalls > 0 {
+			// The work is recorded above; only the closing message is missing.
+			return adapterReport(out, "progress", "Fantasy finished with tool activity but no closing message")
+		}
 		return reportFailure(out, errors.New("fantasy produced no assistant response"))
 	}
 	return nil
+}
+
+// maxLiveHistoryBytes bounds the conversation one attempt sends to the model.
+// A provider rejects an oversized request outright, so older exchanges are
+// dropped with a note instead of failing the whole run.
+const maxLiveHistoryBytes = 96 << 10
+
+// trimLiveHistory drops the oldest exchanges once the live conversation exceeds
+// the budget, and tells the model that earlier context is gone.
+func trimLiveHistory(history []fantasy.Message) []fantasy.Message {
+	if conversationBytes(history) <= maxLiveHistoryBytes {
+		return history
+	}
+	history = trimConversation(history, maxLiveHistoryBytes)
+	note := fantasy.Message{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{
+		fantasy.TextPart{Text: "Earlier context was omitted to fit the model window; read again anything you still need."},
+	}}
+	return append([]fantasy.Message{note}, history...)
 }
 
 // reportFailure records failure as a structured report and returns it.
@@ -240,7 +287,10 @@ type fantasyStream struct {
 	// inFlight holds tool activities awaiting their result, by call ID.
 	inFlight map[string]ToolActivity
 	sawText  bool
-	failure  error
+	// toolCalls counts the calls this attempt ran, so a run that closed without
+	// prose is not mistaken for one that did nothing.
+	toolCalls int
+	failure   error
 	// text accumulates assistant prose until a tool call or the end of the
 	// stream, so one durable turn holds one assistant message.
 	text strings.Builder
@@ -324,6 +374,7 @@ func (s *fantasyStream) toolCall(call fantasy.ToolCallContent) error {
 		return err
 	}
 	name := agenttools.Sanitize(call.ToolName)
+	s.toolCalls++
 	if verifiedTool(name) {
 		s.changed = append(s.changed, editedPaths(name, call.Input)...)
 	}

@@ -41,7 +41,7 @@ func TestConfigureLoadsOptionalSkillsDirectory(t *testing.T) {
 	if !ok || runner.skills.Len() != 1 {
 		t.Fatalf("general runner did not receive the skill catalog: %+v", runner)
 	}
-	prompt := runner.systemPrompt(nil)
+	prompt := runner.systemPrompt(Task{})
 	for _, want := range []string{"skill tool", "verify: Verify a change."} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("system prompt %q missing %q", prompt, want)
@@ -127,7 +127,7 @@ func TestSetSkillEnabledPersistsAndFiltersCatalog(t *testing.T) {
 	if _, ok := runner.skills.Lookup("audit"); !ok {
 		t.Fatal("enabled skill disappeared from the runner catalog")
 	}
-	prompt := runner.systemPrompt(nil)
+	prompt := runner.systemPrompt(Task{})
 	if strings.Contains(prompt, "verify:") || !strings.Contains(prompt, "audit:") {
 		t.Fatalf("system prompt did not follow activation: %q", prompt)
 	}

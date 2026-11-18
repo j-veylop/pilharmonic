@@ -266,3 +266,58 @@ func TestFantasyRunnerFeedsVerificationFailuresBack(t *testing.T) {
 		t.Fatalf("verification feedback missing from the follow-up prompts: %q", feedback)
 	}
 }
+
+func TestFantasyRunnerToolCallsWithoutProseReportProgress(t *testing.T) {
+	workspace := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(workspace, "note.txt"), []byte("contents"), 0o600))
+	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{{
+		{Type: fantasy.StreamPartTypeToolCall, ID: "call-1", ToolCallName: "read", ToolCallInput: `{"path":"note.txt"}`},
+		{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls},
+	}}}
+	runner := FantasyRunner{ModelFactory: fakeFactory(model, "fake/model")}
+	sink := &fantasyTestSink{}
+
+	err := runner.RunLive(context.Background(), Task{Prompt: "do work", model: "fake/model", Workspace: workspace}, sink, nil,
+		func(string, bool, string) {})
+	if err != nil {
+		t.Fatalf("tool-only run failed: %v", err)
+	}
+	found := false
+	for _, report := range sink.reports {
+		if strings.HasPrefix(report, "failed: ") {
+			t.Fatalf("tool-only run reported failure: %v", sink.reports)
+		}
+		if strings.Contains(report, "tool activity but no closing message") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("tool-only progress report missing: %v", sink.reports)
+	}
+}
+
+func TestTrimLiveHistoryPrependsOmissionNote(t *testing.T) {
+	chunk := strings.Repeat("x", 60<<10)
+	history := []fantasy.Message{
+		{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: chunk}}},
+		{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{fantasy.TextPart{Text: chunk}}},
+		{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "latest request"}}},
+	}
+	trimmed := trimLiveHistory(history)
+	if len(trimmed) != 3 {
+		t.Fatalf("trimmed history has %d messages, want a note plus two kept messages", len(trimmed))
+	}
+	note, ok := trimmed[0].Content[0].(fantasy.TextPart)
+	if !ok || trimmed[0].Role != fantasy.MessageRoleUser || !strings.Contains(note.Text, "Earlier context was omitted") {
+		t.Fatalf("omission note missing: %+v", trimmed[0])
+	}
+	if trimmed[1].Role != fantasy.MessageRoleAssistant || trimmed[2].Role != fantasy.MessageRoleUser {
+		t.Fatalf("unexpected surviving messages: %+v", trimmed)
+	}
+	if latest, ok := trimmed[2].Content[0].(fantasy.TextPart); !ok || latest.Text != "latest request" {
+		t.Fatalf("latest message was not kept: %+v", trimmed[2])
+	}
+	if size := conversationBytes(trimmed[1:]); size > maxLiveHistoryBytes {
+		t.Fatalf("kept history is %d bytes, budget is %d", size, maxLiveHistoryBytes)
+	}
+}

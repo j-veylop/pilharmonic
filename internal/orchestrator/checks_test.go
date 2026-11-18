@@ -64,7 +64,7 @@ func TestVerificationDetectsNonGoStack(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(workspace, "app.js"), []byte("console.log(1)\n"), 0o644))
 	fakeTool(t, "prettier", "echo app.js")
 
-	report := verificationReport(context.Background(), workspace, []string{"app.js"}, nil)
+	report, _ := verificationReport(context.Background(), workspace, []string{"app.js"}, nil)
 	if !strings.Contains(report, "Node/TypeScript format") || !strings.Contains(report, "app.js") {
 		t.Fatalf("non-Go formatting not verified: %q", report)
 	}

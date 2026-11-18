@@ -81,10 +81,33 @@ var modelPrices = map[string]ModelPrice{
 	"openai/gpt-4.1":      {InputPerMTok: 2, OutputPerMTok: 8, CacheReadPerMTok: 0.5},
 	"openai/gpt-4.1-mini": {InputPerMTok: 0.4, OutputPerMTok: 1.6, CacheReadPerMTok: 0.1},
 
-	// DeepSeek list prices plus its off-peak discount: deepseek-chat is half
-	// price, deepseek-reasoner is 75% off input and half price on output. A
-	// cache hit is billed at the published cache-read rate; cache misses are
-	// already in the uncached input bucket.
+	// ChatGPT subscription usage is not billed per token, but the API list price
+	// of the same model is a useful estimate of what the work would have cost.
+	// The published Codex rates are used for the catalog's subscription models.
+	"openai-subscription/gpt-5-codex":       {InputPerMTok: 1.25, OutputPerMTok: 10, CacheReadPerMTok: 0.125},
+	"openai-subscription/gpt-5.1-codex":     {InputPerMTok: 1.25, OutputPerMTok: 10, CacheReadPerMTok: 0.125},
+	"openai-subscription/gpt-5.1-codex-max": {InputPerMTok: 1.25, OutputPerMTok: 10, CacheReadPerMTok: 0.125},
+	"openai-subscription/gpt-5.1-codex-mini": {
+		InputPerMTok: 0.25, OutputPerMTok: 2, CacheReadPerMTok: 0.025,
+	},
+	"openai-subscription/gpt-5.2-codex": {InputPerMTok: 1.75, OutputPerMTok: 14, CacheReadPerMTok: 0.175},
+
+	// DeepSeek list prices plus its off-peak discount, which is half the peak
+	// rate for every current model. deepseek-flash and deepseek-v4-pro are the
+	// models DeepSeek's API currently serves; deepseek-chat and deepseek-reasoner
+	// are kept for selectors pinned before the rename. A cache hit is billed at
+	// the published cache-read rate; cache misses are already in the uncached
+	// input bucket.
+	"deepseek/deepseek-flash": {
+		InputPerMTok: 0.30, OutputPerMTok: 1.20, CacheReadPerMTok: 0.006,
+		OffPeakInputPerMTok: 0.15, OffPeakOutputPerMTok: 0.60, OffPeakCacheReadPerMTok: 0.003,
+		TimeOfDay: true,
+	},
+	"deepseek/deepseek-v4-pro": {
+		InputPerMTok: 1.32, OutputPerMTok: 3.96, CacheReadPerMTok: 0.044,
+		OffPeakInputPerMTok: 0.66, OffPeakOutputPerMTok: 1.98, OffPeakCacheReadPerMTok: 0.022,
+		TimeOfDay: true,
+	},
 	"deepseek/deepseek-chat": {
 		InputPerMTok: 0.28, OutputPerMTok: 0.42, CacheReadPerMTok: 0.028,
 		OffPeakInputPerMTok: 0.14, OffPeakOutputPerMTok: 0.21, OffPeakCacheReadPerMTok: 0.014,

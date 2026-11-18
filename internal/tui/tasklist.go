@@ -49,12 +49,44 @@ func (m model) groupOf(task orchestrator.Task) taskGroup {
 	}
 }
 
-// mainRows is the board's display order: attention, running, queued, then
-// completed work. Newest stays first inside each group because the service
-// snapshot is newest first and the sort is stable.
+// workspaceOrder ranks each source workspace present in rows: the operator's
+// current workspace first, then the others in order of their newest task.
+func (m model) workspaceOrder(rows []taskListRow) map[string]int {
+	order := map[string]int{}
+	if m.workspace != "" {
+		for _, row := range rows {
+			if row.task.Workspace == m.workspace {
+				order[m.workspace] = 0
+				break
+			}
+		}
+	}
+	for _, row := range rows {
+		if _, ok := order[row.task.Workspace]; !ok {
+			order[row.task.Workspace] = len(order)
+		}
+	}
+	return order
+}
+
+// workspaceCount reports how many source workspaces the rows span. One
+// workspace needs no heading.
+func (m model) workspaceCount(rows []taskListRow) int {
+	return len(m.workspaceOrder(rows))
+}
+
+// mainRows is the board's display order: tasks cluster by source workspace,
+// then within each workspace attention, running, queued and completed work.
+// Newest stays first inside each group because the service snapshot is newest
+// first and the sort is stable.
 func (m model) mainRows() []taskListRow {
 	rows := taskListRows(m.tasks)
+	order := m.workspaceOrder(rows)
 	sort.SliceStable(rows, func(i, j int) bool {
+		wi, wj := order[rows[i].task.Workspace], order[rows[j].task.Workspace]
+		if wi != wj {
+			return wi < wj
+		}
 		return m.groupOf(rows[i].task) < m.groupOf(rows[j].task)
 	})
 	if !m.doneCollapsed(rows) {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -82,9 +83,19 @@ func (m model) taskPanel(width, height int) string {
 	highlight := rootIndex(m.tasks, m.selected)
 	selectedStart, selectedEnd := -1, -1
 	showHeaders := m.visibleGroupCount(rows) > 1
+	showWorkspaces := m.workspaceCount(rows) > 1
 	current := taskGroup(-1)
+	currentWorkspace, haveWorkspace := "", false
 	for i, row := range rows {
 		group := m.groupOf(row.task)
+		if showWorkspaces && (!haveWorkspace || row.task.Workspace != currentWorkspace) {
+			if haveWorkspace {
+				lines = append(lines, "")
+			}
+			lines = append(lines, workspaceHeader(row.task.Workspace, inner))
+			currentWorkspace, haveWorkspace = row.task.Workspace, true
+			current = -1
+		}
 		if showHeaders && group != current {
 			if current >= 0 {
 				lines = append(lines, "")
@@ -129,6 +140,20 @@ func (m model) taskPanel(width, height int) string {
 	}
 	end := min(len(lines), start+available)
 	return surfacePanel(strings.Join(lines[start:end], "\n"), width, height)
+}
+
+// workspaceHeader names the source workspace a cluster of tasks belongs to: its
+// directory name, then as much of the full path as fits.
+func workspaceHeader(workspace string, width int) string {
+	if workspace == "" {
+		return fit(accentStyle.Render("(no workspace)"), width, 1)
+	}
+	name := filepath.Base(workspace)
+	line := accentStyle.Render(terminalText(name))
+	if path := terminalText(workspace); path != name {
+		line += faintStyle.Render("  " + path)
+	}
+	return fit(line, width, 1)
 }
 
 // groupHeader names one board group. The header already carries the counts, so

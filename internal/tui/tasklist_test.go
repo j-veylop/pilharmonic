@@ -179,3 +179,37 @@ func TestActionHintNamesReviewKeys(t *testing.T) {
 		t.Fatalf("failed hint = %q", got)
 	}
 }
+
+func TestMainRowsClusterByWorkspace(t *testing.T) {
+	tasks := []orchestrator.Task{
+		{ID: "b-run", Workspace: "/w/b", Status: orchestrator.Running},
+		{ID: "a-queued", Workspace: "/w/a", Status: orchestrator.Queued},
+		{ID: "b-review", Workspace: "/w/b", Status: orchestrator.Completed, ReviewStatus: orchestrator.ReviewPending},
+		{ID: "a-run", Workspace: "/w/a", Status: orchestrator.Running},
+	}
+	m := model{tasks: tasks, workspace: "/w/a"}
+	got := strings.Join(taskIDs(m.mainRows()), ",")
+	if want := "a-run,a-queued,b-review,b-run"; got != want {
+		t.Fatalf("rows = %q, want %q", got, want)
+	}
+	m.workspace = ""
+	got = strings.Join(taskIDs(m.mainRows()), ",")
+	if want := "b-review,b-run,a-run,a-queued"; got != want {
+		t.Fatalf("rows without current workspace = %q, want %q", got, want)
+	}
+}
+
+func TestTaskPanelShowsWorkspaceHeaders(t *testing.T) {
+	m := model{tasks: []orchestrator.Task{
+		{ID: "1", Title: "one", Workspace: "/w/alpha", Status: orchestrator.Running},
+		{ID: "2", Title: "two", Workspace: "/w/beta", Status: orchestrator.Running},
+	}, workspace: "/w/alpha"}
+	out := ansi.Strip(m.taskPanel(80, 20))
+	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") {
+		t.Fatalf("panel lacks workspace headers:\n%s", out)
+	}
+	m.tasks = m.tasks[:1]
+	if out := ansi.Strip(m.taskPanel(80, 20)); strings.Contains(out, "/w/alpha") {
+		t.Fatalf("single workspace should have no header:\n%s", out)
+	}
+}

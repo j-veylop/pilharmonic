@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"pilharmonic/internal/worktree"
+	"github.com/j-veylop/pilharmonic/internal/worktree"
 )
 
 // Merge outcomes are recorded separately from the execution attempt. A merge

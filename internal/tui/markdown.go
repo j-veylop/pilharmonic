@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
 
 	"github.com/charmbracelet/glamour"
 	glamouransi "github.com/charmbracelet/glamour/ansi"

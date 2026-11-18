@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"pilharmonic/internal/instance"
+	"github.com/j-veylop/pilharmonic/internal/instance"
 )
 
 // Spec identifies one task's worktree.

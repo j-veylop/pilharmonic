@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
-	"pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
 )
 
 // activityFilter selects which tool calls the activity panel lists.

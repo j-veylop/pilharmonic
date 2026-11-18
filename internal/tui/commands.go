@@ -8,8 +8,8 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"pilharmonic/internal/orchestrator"
-	"pilharmonic/internal/providers"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/providers"
 )
 
 // slashCommandsHelp is shown alongside an unknown command, so the operator

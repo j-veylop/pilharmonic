@@ -7,7 +7,7 @@ import (
 	"slices"
 	"time"
 
-	"pilharmonic/internal/worktree"
+	"github.com/j-veylop/pilharmonic/internal/worktree"
 )
 
 // DefaultConcurrency is the default number of simultaneous agent runs.

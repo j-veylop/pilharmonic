@@ -10,9 +10,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"pilharmonic/internal/orchestrator"
-	"pilharmonic/internal/tui/anim"
-	"pilharmonic/internal/tui/editor"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/tui/anim"
+	"github.com/j-veylop/pilharmonic/internal/tui/editor"
 )
 
 const runningGlyphPlaceholder = "\uE000"

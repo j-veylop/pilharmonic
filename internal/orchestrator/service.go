@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"pilharmonic/internal/providers"
-	"pilharmonic/internal/skills"
+	"github.com/j-veylop/pilharmonic/internal/providers"
+	"github.com/j-veylop/pilharmonic/internal/skills"
 )
 
 type Service struct {

@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
 )
 
 // runeKey builds the key message for a typed character.

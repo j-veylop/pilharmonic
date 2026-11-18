@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
 )
 
 // terminalText makes untrusted task data safe to lay out in a terminal. Tabs

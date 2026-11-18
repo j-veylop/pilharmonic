@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"pilharmonic/internal/orchestrator"
-	"pilharmonic/internal/tui/editor"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/tui/editor"
 )
 
 type inputKind string

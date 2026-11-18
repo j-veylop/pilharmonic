@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
 )
 
 // Token and cost formats are shared by the header, the task summary and the

@@ -10,7 +10,7 @@ import (
 
 	"charm.land/fantasy"
 
-	"pilharmonic/internal/skills"
+	"github.com/j-veylop/pilharmonic/internal/skills"
 )
 
 func must(t *testing.T, err error) {

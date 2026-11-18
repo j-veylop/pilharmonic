@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"pilharmonic/internal/instance"
+	"github.com/j-veylop/pilharmonic/internal/instance"
 )
 
 // SkillInfo is one installed skill and whether the operator has enabled it.

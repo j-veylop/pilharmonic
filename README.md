@@ -7,9 +7,13 @@ pilharmonic is a local terminal application for submitting work to coding agents
 Requires Go 1.27.3+ and an interactive terminal. The built-in Fantasy executor needs a provider API key (environment, e.g. `OPENAI_API_KEY`, or stored with `/login <provider>`) and a `provider/model` selector from `profiles.json`, `-model` or the model menu. OpenAI ChatGPT subscriptions use the `openai-subscription` provider without an API key; the official Codex CLI handles sign-in.
 
 ```sh
-go run .                 # run
-go build -o pilharmonic . # or go install .
+go install github.com/j-veylop/pilharmonic@latest   # installs the latest tagged release
+go install github.com/j-veylop/pilharmonic@v0.1.0   # or pin a release
+go run .                 # run from a checkout
+go build -o pilharmonic .
 ```
+
+The binary is written to `$(go env GOPATH)/bin`. `go install` needs a release tag on the default branch; `@latest` resolves to the highest semver tag. Builds made with `go install` report the module version from `-version`; repository builds report the version and commit passed with `-ldflags`.
 
 pilharmonic opens on the task board with the **REQUEST** box always docked at the bottom (or the login menu when no credential exists); `/` or `i` focuses it and **Esc** leaves it while the draft stays visible. Type a request and press **Enter**: one compiled-in authorization step records the decision, and an accepted request becomes a task routed to an executor and started. A short display title is generated from the mandate with the small model when one is configured (otherwise the task's model); the first line is shown immediately and kept whenever generation is unavailable or an explicit title was supplied. **Ctrl-s** instead holds the accepted task queued so `o` can set it up before `r` starts it. The docked box always keeps three draft rows and scrolls longer drafts inside them. Shortcut hints live only in the bottom footer and change with the active mode. The OUTPUT tab is a Crush-style chat: user turns carry a left rail, assistant turns are indented under a muted attempt line, and a running turn ends with the multi-character animated spinner and elapsed-time suffix. A follow-up replays the earlier answer and its tool calls and results in a bounded structured conversation, so the next attempt continues rather than restarts. After file edits the executor runs `gofmt`, diagnostics and the affected packages' tests and feeds failures back into the same conversation. The workspace tools are `read`, `bash`, `edit`, `multiedit`, `write`, `grep`, `rg`, `glob`, `find`, `ls` and `diagnostics`. `read` returns a whole file or the 1-based `offset`/`limit` line window and marks a partial window with the offset to continue. `edit` requires exactly one match unless `replace_all` is set, falls back to a whitespace-tolerant match and names the closest line when nothing matches; `multiedit` validates every edit before writing, so a failed batch changes no file. `bash` requires a one-line `description` and accepts `timeout_ms` (default 120000); its own timeout is returned as a result, while a canceled task still fails the attempt. `edit`, `multiedit` and `write` append diagnostics for the changed files. Start with `@NAME` to pick an executor (`@tester add regression tests`); otherwise `general` runs it. Typing `@` lists matches and **Tab** completes. Up to four agents run at once (`-max-concurrent`); further starts queue FIFO.
 
@@ -137,7 +141,7 @@ State, workspaces and the control socket stay under `<user config dir>/orchestra
 
 ## Releases
 
-Tagged builds (`v1.2.3`, optional suffix) publish one self-contained binary per platform (`pilharmonic_<tag>_<os>_<arch>`, Linux/macOS amd64+arm64, Windows amd64) plus `sha256sums.txt`. `scripts/build-release.sh <tag>` builds them locally into `dist/`.
+Tagged builds (`v1.2.3`, optional suffix) publish one self-contained binary per platform (`pilharmonic_<tag>_<os>_<arch>`, Linux/macOS amd64+arm64, Windows amd64) plus `sha256sums.txt`. The same tag is installable with `go install github.com/j-veylop/pilharmonic@v1.2.3`. `scripts/build-release.sh <tag>` builds the binaries locally into `dist/`.
 
 ```sh
 git tag -a v0.1.0 -m "pilharmonic v0.1.0" && git push origin v0.1.0

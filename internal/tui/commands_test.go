@@ -10,8 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-	"pilharmonic/internal/orchestrator"
-	"pilharmonic/internal/tui/editor"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/tui/editor"
 )
 
 // errTestCredential stands in for an orchestrator rejection during login.

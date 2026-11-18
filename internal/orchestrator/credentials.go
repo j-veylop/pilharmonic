@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"pilharmonic/internal/instance"
-	"pilharmonic/internal/providers"
+	"github.com/j-veylop/pilharmonic/internal/instance"
+	"github.com/j-veylop/pilharmonic/internal/providers"
 )
 
 // ProviderCredential reports whether a provider has a stored API key. The key

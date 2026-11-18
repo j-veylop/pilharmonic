@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"pilharmonic/internal/orchestrator"
-	"pilharmonic/internal/tui/editor"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/tui/editor"
 )
 
 func TestRequestBoxHoldQueuesWithoutStarting(t *testing.T) {

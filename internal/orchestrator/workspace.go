@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"pilharmonic/internal/worktree"
+	"github.com/j-veylop/pilharmonic/internal/worktree"
 )
 
 // SetTaskIsolation changes the workspace choice of an unscheduled queued task.

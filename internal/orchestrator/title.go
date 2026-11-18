@@ -7,7 +7,7 @@ import (
 
 	"charm.land/fantasy"
 
-	"pilharmonic/internal/agenttools"
+	"github.com/j-veylop/pilharmonic/internal/agenttools"
 )
 
 const (

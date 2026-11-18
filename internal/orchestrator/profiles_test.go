@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"pilharmonic/internal/agenttools"
+	"github.com/j-veylop/pilharmonic/internal/agenttools"
 )
 
 // supportingRunner is a fake adapter that can translate profile parameters.

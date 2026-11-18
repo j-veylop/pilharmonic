@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"strings"
 
-	"pilharmonic/internal/instance"
-	"pilharmonic/internal/orchestrator"
-	"pilharmonic/internal/providers"
-	"pilharmonic/internal/tui"
+	"github.com/j-veylop/pilharmonic/internal/instance"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/providers"
+	"github.com/j-veylop/pilharmonic/internal/tui"
 )
 
 func main() {
@@ -40,10 +41,18 @@ var (
 var errUsage = errors.New("usage")
 
 func versionString() string {
-	if commit == "" {
-		return version
+	v := version
+	// go install module@version leaves the ldflags empty but records the
+	// selected module version in the build info.
+	if v == "devel" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			v = info.Main.Version
+		}
 	}
-	return version + " (" + commit + ")"
+	if commit == "" {
+		return v
+	}
+	return v + " (" + commit + ")"
 }
 
 type options struct {

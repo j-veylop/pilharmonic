@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"pilharmonic/internal/orchestrator"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
 )
 
 // taskGroup is the board's display order. Attention comes first because it is

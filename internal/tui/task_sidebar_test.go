@@ -8,8 +8,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/j-veylop/pilharmonic/internal/orchestrator"
 	"github.com/muesli/termenv"
-	"pilharmonic/internal/orchestrator"
 )
 
 func TestSelectedTaskTitleKeepsBackground(t *testing.T) {

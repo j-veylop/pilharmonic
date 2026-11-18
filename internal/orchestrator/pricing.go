@@ -66,12 +66,57 @@ func PriceFor(model string, now time.Time) (ModelPrice, bool) {
 }
 
 // deepseekOffPeak reports whether t falls inside DeepSeek's daily off-peak
-// discount window. DeepSeek publishes the window as 00:30–08:30 Beijing time
-// (UTC+8), which is 16:30–00:30 UTC.
+// discount window. DeepSeek publishes peak hours in UTC: 01:00–04:00 and
+// 06:00–10:00, Monday through Friday, excluding Chinese public holidays. Every
+// other hour, including weekends and holidays in full, is off-peak.
 func deepseekOffPeak(t time.Time) bool {
 	utc := t.UTC()
+	if weekday := utc.Weekday(); weekday == time.Saturday || weekday == time.Sunday || chinesePublicHoliday(utc) {
+		return true
+	}
 	minutes := utc.Hour()*60 + utc.Minute()
-	return minutes >= 16*60+30 || minutes < 30
+	return !(minutes >= 1*60 && minutes < 4*60 || minutes >= 6*60 && minutes < 10*60)
+}
+
+// chineseHolidayRanges lists the Chinese public holidays announced by the State
+// Council, inclusively, as local calendar dates. They are held in UTC here
+// because DeepSeek's peak windows (01:00–10:00 UTC) fall inside the same
+// Beijing calendar day. Extend the table when a later year is published.
+var chineseHolidayRanges = [][2]string{
+	// 2025
+	{"2025-01-01", "2025-01-01"},
+	{"2025-01-28", "2025-02-04"},
+	{"2025-04-04", "2025-04-06"},
+	{"2025-05-01", "2025-05-05"},
+	{"2025-05-31", "2025-06-02"},
+	{"2025-10-01", "2025-10-08"},
+	// 2026
+	{"2026-01-01", "2026-01-03"},
+	{"2026-02-15", "2026-02-23"},
+	{"2026-04-04", "2026-04-06"},
+	{"2026-05-01", "2026-05-05"},
+	{"2026-06-19", "2026-06-21"},
+	{"2026-09-25", "2026-09-27"},
+	{"2026-10-01", "2026-10-07"},
+	// 2027
+	{"2027-01-01", "2027-01-01"},
+	{"2027-02-05", "2027-02-13"},
+	{"2027-04-05", "2027-04-05"},
+	{"2027-05-01", "2027-05-05"},
+	{"2027-06-09", "2027-06-09"},
+	{"2027-09-15", "2027-09-15"},
+	{"2027-10-01", "2027-10-07"},
+}
+
+// chinesePublicHoliday reports whether t's date is a Chinese public holiday.
+func chinesePublicHoliday(t time.Time) bool {
+	day := t.UTC().Format("2006-01-02")
+	for _, span := range chineseHolidayRanges {
+		if day >= span[0] && day <= span[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // providerWindows maps a provider prefix to the window function for a daily

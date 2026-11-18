@@ -751,8 +751,8 @@ func deepSeekMenuService() *fakeLoginService {
 // Only models the price table charges by time of day name a window: in the
 // label itself, the model rows, the pinned class and the confirmation notice.
 func TestModelRateWindows(t *testing.T) {
-	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
-	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
+	peak := time.Date(2025, 9, 1, 2, 0, 0, 0, time.UTC)
+	offPeak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		selector string
 		at       time.Time
@@ -819,8 +819,8 @@ func TestModelRateWindows(t *testing.T) {
 // selected, with a warning at peak and a check off-peak. All-day providers and
 // the model menu carry no badge.
 func TestModelRateWindowNextToWordmark(t *testing.T) {
-	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
-	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
+	peak := time.Date(2025, 9, 1, 2, 0, 0, 0, time.UTC)
+	offPeak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	deepseekService := deepSeekMenuService()
 	deepseekService.overrides = orchestrator.ModelSelection{Big: "deepseek/deepseek-chat"}
 	deepseek := model{service: deepseekService}

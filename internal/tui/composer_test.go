@@ -70,7 +70,7 @@ func TestComposerPageKeysScrollLongDraft(t *testing.T) {
 	if !strings.Contains(before, "line-30") || strings.Contains(before, "line-01") {
 		t.Fatalf("long composer did not open at the cursor: %q", before)
 	}
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 30; i++ {
 		m = key(m, tea.KeyMsg{Type: tea.KeyPgUp})
 	}
 	after := ansi.Strip(strings.Join(m.composerBlock(m.composerHeight()), "\n"))
@@ -98,18 +98,33 @@ func boxRows(t *testing.T, m model) []string {
 	return rows
 }
 
-func TestComposerBoxGrowsWithTheDraftWithinItsLimit(t *testing.T) {
+func TestComposerBoxAlwaysKeepsThreeDraftRows(t *testing.T) {
 	m := boardWithTask()
 	m.input = composer{kind: reportInput}
-	if got := m.composerDraftRows(1); got != 2 {
-		t.Fatalf("empty draft rows = %d, want the two-row floor", got)
+	if got := m.composerDraftRows(); got != 3 {
+		t.Fatalf("empty draft rows = %d, want 3", got)
 	}
-	for lines, want := range map[int]int{1: 2, 3: 3, composerMaxLines + 20: composerMaxLines} {
+	for _, lines := range []int{1, 3, 9, 40} {
 		text := strings.Repeat("line\n", lines-1) + "line"
 		m.input = composer{kind: reportInput, Editor: editor.Editor{Text: text, Cursor: len(text)}}
-		if got := m.composerDraftRows(1); got != want {
-			t.Fatalf("%d draft lines: rows = %d, want %d", lines, got, want)
+		if got := m.composerDraftRows(); got != 3 {
+			t.Fatalf("%d draft lines: rows = %d, want 3", lines, got)
 		}
+	}
+	for _, size := range [][2]int{{120, 35}, {40, 12}, {30, 10}} {
+		m.width, m.height = size[0], size[1]
+		if got := m.composerDraftRows(); got != 3 {
+			t.Fatalf("%v: rows = %d, want 3", size, got)
+		}
+	}
+	m.width, m.height = 100, 28
+	m.input = composer{kind: reportInput}
+	if rows := m.composerBlock(m.composerHeight()); len(rows) != 1+composerDraftHeight {
+		t.Fatalf("empty box renders %d rows, want a rule and 3 draft rows", len(rows))
+	}
+	m.input = composer{kind: reportInput, Editor: editor.Editor{Text: "one line", Cursor: len("one line")}}
+	if rows := m.composerBlock(m.composerHeight()); len(rows) != 1+composerDraftHeight {
+		t.Fatalf("short draft box renders %d rows, want a rule and 3 draft rows", len(rows))
 	}
 }
 

@@ -173,7 +173,7 @@ func TestSlashCommandsSetNotices(t *testing.T) {
 		{
 			name:              "login starts key entry",
 			command:           "/login openai",
-			wantNotice:        []string{"Enter API key for openai", "Esc to cancel"},
+			wantNotice:        []string{"Enter API key for openai"},
 			wantLoginProvider: "openai",
 		},
 		{

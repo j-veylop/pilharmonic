@@ -233,8 +233,14 @@ func transcriptStyle() glamouransi.StyleConfig {
 	style.Code.Color = stringPtr(colorAmber)
 	style.Code.Prefix = " "
 	style.Code.Suffix = " "
+	// Code keeps the canvas: the dark style's grey inline and block fills read
+	// as black patches on the pastel surface.
+	style.Code.BackgroundColor = nil
 	style.CodeBlock.Color = stringPtr(colorInk)
 	style.CodeBlock.Margin = uintPtr(0)
+	if style.CodeBlock.Chroma != nil {
+		style.CodeBlock.Chroma.Background = glamouransi.StylePrimitive{Color: stringPtr(colorInk)}
+	}
 	style.Table.Color = stringPtr(colorMuted)
 	style.Table.ColumnSeparator = stringPtr(" │ ")
 	style.Table.CenterSeparator = stringPtr("─┼─")

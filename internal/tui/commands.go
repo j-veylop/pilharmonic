@@ -48,7 +48,7 @@ func (m model) slashCommand(line string) model {
 			return m
 		}
 		m.login.provider, m.login.key = arg, ""
-		m.notice.text = "Enter API key for " + arg + " (Enter to save, Esc to cancel)"
+		m.notice.text = "Enter API key for " + arg
 	case "/attach":
 		if err := m.attach(arg); err != nil {
 			m.notice.text = err.Error()
@@ -189,7 +189,7 @@ func (m model) providerMenuKey(key string) model {
 		// menu was opened.
 		m.router.open = true
 		m.clearRouterDraft()
-		m.notice.text = "Enter API key for " + provider + " (Enter to save, Esc to cancel)"
+		m.notice.text = "Enter API key for " + provider
 	}
 	return m
 }

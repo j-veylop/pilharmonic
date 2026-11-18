@@ -157,7 +157,7 @@ func (m model) activityContent(width int) []string {
 func (m model) activityDetail(add func(...string), width int) {
 	a, _, ok := m.selectedActivity()
 	if !ok {
-		add("This call is no longer retained. Esc returns to the list.")
+		add("This call is no longer retained.")
 		return
 	}
 	statusStyle, glyph := toolStatusStyle(a.Status, m.runningGlyph())

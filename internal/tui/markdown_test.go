@@ -38,6 +38,17 @@ func TestMarkdownRenderingAndBounds(t *testing.T) {
 		}
 	}
 }
+func TestCodeKeepsTheCanvasBackground(t *testing.T) {
+	input := "text `inline` here\n\n```go\npackage main\n\nfunc main() {}\n```\n"
+	all := strings.Join(renderTestOutput(input, 40), "\n")
+	if strings.Contains(all, "48;5;") || strings.Contains(all, "48;2;") {
+		t.Fatalf("code painted a background over the canvas: %q", all)
+	}
+	if !strings.Contains(ansi.Strip(all), "package main") {
+		t.Fatalf("code block content missing: %q", all)
+	}
+}
+
 func TestToolActivityIsDistinctFromAssistantText(t *testing.T) {
 	input := "# Plan\n\nChecks next.\n\n[running] bash: go test ./...\n[finished] bash: go test ./...\n[failed] bash: go vet ./...\n\nAll good.\n"
 	lines := renderTestOutput(input, 80)

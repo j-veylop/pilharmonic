@@ -47,13 +47,13 @@ func TestSidebarToggle(t *testing.T) {
 func TestLandingShownWithoutTasks(t *testing.T) {
 	m := model{width: 100, height: 28}
 	plain := ansi.Strip(m.View())
-	for _, want := range []string{"PILHARMONIC", "submit a request", "/model"} {
+	for _, want := range []string{"PILHARMONIC", "Describe the work", "/model"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("landing missing %q: %q", want, plain)
 		}
 	}
 	m.tasks = []orchestrator.Task{{ID: "task", Title: "work", Status: orchestrator.Queued}}
-	if plain := ansi.Strip(m.View()); strings.Contains(plain, "submit a request") {
+	if plain := ansi.Strip(m.View()); strings.Contains(plain, "GET STARTED") {
 		t.Fatal("landing stayed over a non-empty board")
 	}
 }
@@ -207,5 +207,18 @@ func TestTasksAndDetailsAreSeparateViews(t *testing.T) {
 	}
 	if back := key(m, tea.KeyMsg{Type: tea.KeyEsc}); !strings.Contains(ansi.Strip(back.View()), "TASKS  /") {
 		t.Fatal("esc did not return to the task list")
+	}
+}
+
+// A bare SGR reset used to drop the canvas background for the cells after it,
+// which showed as black patches at the right edge of wrapped tool output.
+func TestPaintCanvasRepaintsTheBackgroundAfterEveryReset(t *testing.T) {
+	bg := canvasEscape()
+	painted := paintCanvas("text\x1b[m  ", 12, 1)
+	if strings.Contains(painted, "\x1b[m  ") {
+		t.Fatalf("bare reset left the trailing cells unpainted: %q", painted)
+	}
+	if !strings.Contains(painted, "\x1b[m"+bg+"  ") {
+		t.Fatalf("canvas background missing after the reset: %q", painted)
 	}
 }

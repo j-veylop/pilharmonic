@@ -21,9 +21,9 @@ const (
 	rejectReviewInput inputKind = "REJECT REVIEW"
 )
 
-// composerMaxLines bounds the draft rows so the box never crowds out the
-// panels above it.
-const composerMaxLines = 6
+// composerDraftHeight is the fixed number of draft rows in the docked input.
+// Longer drafts scroll inside those rows, so the box never changes height.
+const composerDraftHeight = 3
 
 // composer is a task-scoped input. target is captured when it opens, because
 // task ordering can change while the operator types.
@@ -71,18 +71,9 @@ func (m model) composerWidth() int {
 
 func (m model) composerHeight() int { return max(1, m.layout().composerDraft) }
 
-// composerDraftRows grows the box with the draft, keeping two rows when it can
-// and always leaving the header, the reserved rows, the border and a three-row
-// body.
-func (m model) composerDraftRows(reserved int) int {
-	_, height := m.size()
-	limit := min(composerMaxLines, max(1, height-1-reserved-2-3))
-	needed := 1
-	if e := m.composerEditor(); e.Text != "" && !(m.router.open && m.login.provider != "") {
-		needed = e.LineCount(m.composerWidth())
-	}
-	return max(min(2, limit), min(limit, needed))
-}
+// composerDraftRows is the fixed draft height. The box keeps three rows at
+// every terminal size, like Crush, and the draft scrolls inside them.
+func (m model) composerDraftRows() int { return composerDraftHeight }
 
 // composerExtraRows counts the completion popup rows above the box.
 func (m model) composerExtraRows() int {
@@ -115,6 +106,9 @@ func (m model) composerBoxLines(rows int) []string {
 		visible = []string{fit(mutedStyle.Render(placeholder), m.composerWidth(), 1)}
 	} else {
 		visible = e.View(m.composerWidth(), rows, focused)
+	}
+	for len(visible) < rows {
+		visible = append(visible, "")
 	}
 	return visible
 }

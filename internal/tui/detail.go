@@ -265,7 +265,7 @@ func (m model) detailPanel(width, height int) string {
 	if available > 0 {
 		lines = append(lines, m.highlightSelection(content, start, end, inner)...)
 	}
-	position := fmt.Sprintf("%s  %d–%d / %d  ·  %s", detailTabNames[m.tab], min(start+1, end), end, len(content), m.detailFocusHint())
+	position := fmt.Sprintf("%s  %d–%d / %d", detailTabNames[m.tab], min(start+1, end), end, len(content))
 	lines = append(lines, mutedStyle.Render(position))
 	return surfacePanel(strings.Join(lines, "\n"), width, height)
 }
@@ -285,29 +285,11 @@ func (m model) landingContent(width int) string {
 		"",
 		faintStyle.Render(strings.Repeat("─", ruleWidth)),
 		sectionStyle.Render("GET STARTED"),
-		pinkStyle().Render("i")+mutedStyle.Render("  submit a request"),
-		cyanStyle().Render("@tester")+mutedStyle.Render("  pick an executor"),
-		blueStyle().Render("/model")+mutedStyle.Render("  choose a model"),
-		"",
-		faintStyle.Render(strings.Repeat("─", ruleWidth)),
-		faintStyle.Render("f1 help  ·  q quit"),
+		mutedStyle.Render("Describe the work in the request box."),
+		mutedStyle.Render("Name an executor with @name."),
+		mutedStyle.Render("Choose a model with /model."),
 	)
 	return strings.Join(lines, "\n")
-}
-
-func (m model) detailFocusHint() string {
-	switch {
-	case !m.detailFocus && !m.fullscreen:
-		return "l to focus"
-	case m.tab != activityTab:
-		if m.selectedHasSubtasks() && !m.fullscreen {
-			return "j/k scroll · [/] subtasks · h tasks"
-		}
-		return "j/k scroll · h tasks"
-	case m.activity.expanded:
-		return "j/k scroll · esc collapse"
-	}
-	return "j/k select · enter expand"
 }
 
 func (m model) selectedTask() (orchestrator.Task, bool) {

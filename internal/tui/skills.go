@@ -17,7 +17,6 @@ type skillMenuState struct {
 func (m *model) openSkillMenu() {
 	m.skills = skillMenuState{open: true}
 	m.router.open = false
-	m.notice.text = "Skills: enter toggles the selected skill."
 }
 
 func (m model) skillAgent() string {

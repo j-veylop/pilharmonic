@@ -78,7 +78,7 @@ func (m model) layout() layout {
 	footerRows := strings.Count(m.footer(w), "\n") + 1
 	if m.composerOpen() {
 		extra := m.composerExtraRows()
-		l.composerDraft = m.composerDraftRows(footerRows + extra)
+		l.composerDraft = m.composerDraftRows()
 		l.composerRows = l.composerDraft + 1 + extra
 	}
 	l.bodyHeight = h - 1 - footerRows - l.composerRows
@@ -183,13 +183,24 @@ func paintCanvas(screen string, width, height int) string {
 	}
 	lines = lines[:height]
 	for i, line := range lines {
-		line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+bg)
+		line = repaintAfterResets(line, bg)
 		if pad := width - ansi.StringWidth(line); pad > 0 {
 			line += strings.Repeat(" ", pad)
 		}
 		lines[i] = bg + line + "\x1b[0m"
 	}
 	return strings.Join(lines, "\n")
+}
+
+// repaintAfterResets reapplies the canvas background after every SGR reset.
+// Lipgloss emits both `\x1b[0m` and the bare `\x1b[m`, and a reset that is not
+// followed by the canvas escape leaves later cells on the terminal's default
+// background.
+func repaintAfterResets(line, bg string) string {
+	for _, reset := range []string{"\x1b[0m", "\x1b[m", "\x1b[00m"} {
+		line = strings.ReplaceAll(line, reset, reset+bg)
+	}
+	return line
 }
 
 func (m model) attentionCount() int { return len(m.attentionTasks()) }
@@ -381,6 +392,8 @@ func (m model) footer(w int) string {
 	switch {
 	case m.reviewDiff.target != "":
 		footerText = "j/k scroll · y approve + merge · n reject · ctrl+o nvim · ctrl+g lazygit · esc close · ? help · q quit"
+	case m.login.provider != "":
+		footerText = withHelpHint("enter save · esc cancel", w)
 	case m.router.open && (m.detailFocus || m.fullscreen):
 		footerText = withHelpHint("enter send · esc leave · ctrl+c quit", w)
 	case m.router.open:

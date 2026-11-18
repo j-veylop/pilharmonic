@@ -56,9 +56,7 @@ func (m model) quitKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		// With two buttons, either direction cycles to the other one.
 		m.quitChoice = 1 - m.quitChoice
 	case "q":
-		// q opened the dialog, so it must not answer it by accident; say so
-		// rather than leave the key silently ignored.
-		m.notice.text = "Choose with y, n, Enter, h/l or Tab."
+		// q opened the dialog, so it must not answer it by accident.
 	}
 	return m, nil
 }

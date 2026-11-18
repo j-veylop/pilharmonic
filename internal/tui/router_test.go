@@ -47,8 +47,12 @@ func TestRouterRoutesRequestAndReturnsToBoard(t *testing.T) {
 		t.Fatal("escape did not return to the task board")
 	}
 	m = key(m, runeKey("/"))
+	if m.router.open {
+		t.Fatal("/ unexpectedly reopened the router")
+	}
+	m = key(m, runeKey("i"))
 	if !m.router.open {
-		t.Fatal("/ did not reopen the router")
+		t.Fatal("i did not reopen the router")
 	}
 }
 
@@ -157,7 +161,7 @@ func TestRequestBoxKeepsItsDraftOverEscAndShowsTheBoard(t *testing.T) {
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "visible task") || !strings.Contains(view, "draft") {
 		t.Fatalf("the board is not visible under the request box: %s", view)
 	}
-	m = key(key(m, tea.KeyMsg{Type: tea.KeyEsc}), runeKey("/"))
+	m = key(key(m, tea.KeyMsg{Type: tea.KeyEsc}), runeKey("i"))
 	if !m.router.open || m.router.Text != "draft" || m.router.Cursor != 5 {
 		t.Fatalf("esc and reopen lost the draft: %q at %d", m.router.Text, m.router.Cursor)
 	}

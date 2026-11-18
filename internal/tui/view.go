@@ -337,7 +337,6 @@ func boardHints(w int, task orchestrator.Task, attention bool) string {
 	}
 	add("? help", true)
 	add(keyHint("q"), false)
-	add(keyHint("/"), true)
 	add(keyHint("i"), true)
 	if w < 76 {
 		add("j/k tasks", true)

@@ -86,20 +86,6 @@ func (p ModelPrice) Rate(t time.Time) string {
 	return RatePeak
 }
 
-// ProviderRate names the time-of-day price in force for a provider that
-// publishes a daily discount window, or "" for one priced the same all day.
-// The window belongs to the provider, so it can be shown before a model is
-// chosen.
-func ProviderRate(provider string, t time.Time) string {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	for selector, price := range modelPrices {
-		if price.TimeOfDay && strings.HasPrefix(selector, provider+"/") {
-			return price.Rate(t)
-		}
-	}
-	return ""
-}
-
 // InputRate is the price per 1M input tokens in force at t.
 func (p ModelPrice) InputRate(t time.Time) float64 {
 	if p.TimeOfDay && deepseekOffPeak(t) {

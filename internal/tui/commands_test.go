@@ -793,7 +793,7 @@ func TestModelRateWindows(t *testing.T) {
 	}
 	menuRows := rows[menuAt:]
 	classMenu := class[classAt:]
-	if !strings.Contains(rows, "deepseek-chat") || strings.Count(menuRows, label) != 3 {
+	if !strings.Contains(rows, "deepseek-chat") || strings.Count(menuRows, label) != 2 {
 		t.Fatalf("model rows lost the %q window: %s", label, rows)
 	}
 	if !strings.Contains(class, "deepseek/deepseek-chat · "+label+" now") || strings.Count(classMenu, label) != 1 {
@@ -813,9 +813,10 @@ func TestModelRateWindows(t *testing.T) {
 	}
 }
 
-// The discount window is visible at the top of the frame once a DeepSeek model
-// is selected, and at the top of the provider step before a model exists.
-func TestModelRateWindowAtTopOfDisplay(t *testing.T) {
+// The discount window sits next to the wordmark once a time-of-day model is
+// selected, with a warning at peak and a check off-peak. All-day providers and
+// the model menu carry no badge.
+func TestModelRateWindowNextToWordmark(t *testing.T) {
 	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
 	deepseekService := deepSeekMenuService()
@@ -825,11 +826,11 @@ func TestModelRateWindowAtTopOfDisplay(t *testing.T) {
 	openaiService.overrides = orchestrator.ModelSelection{Big: "openai/gpt-5"}
 	openai := model{service: openaiService}
 
-	if got := ansi.Strip(deepseek.headerRateBadge(peak)); got != "deepseek peak" {
-		t.Errorf("peak header badge = %q, want %q", got, "deepseek peak")
+	if got := ansi.Strip(deepseek.headerRateBadge(peak)); got != "deepseek ⚠ peak" {
+		t.Errorf("peak header badge = %q, want %q", got, "deepseek ⚠ peak")
 	}
-	if got := ansi.Strip(deepseek.headerRateBadge(offPeak)); got != "deepseek off-peak" {
-		t.Errorf("off-peak header badge = %q, want %q", got, "deepseek off-peak")
+	if got := ansi.Strip(deepseek.headerRateBadge(offPeak)); got != "deepseek ✓ off-peak" {
+		t.Errorf("off-peak header badge = %q, want %q", got, "deepseek ✓ off-peak")
 	}
 	if got := openai.headerRateBadge(offPeak); got != "" {
 		t.Errorf("all-day provider showed a header badge: %q", got)
@@ -838,26 +839,25 @@ func TestModelRateWindowAtTopOfDisplay(t *testing.T) {
 		Big:    "openai/gpt-5",
 		Agents: map[string]string{"general": "deepseek/deepseek-chat"},
 	}}}
-	if got := ansi.Strip(agentOnly.headerRateBadge(offPeak)); got != "deepseek off-peak" {
+	if got := ansi.Strip(agentOnly.headerRateBadge(offPeak)); got != "deepseek ✓ off-peak" {
 		t.Errorf("agent-selected provider lost its header badge: %q", got)
 	}
 
 	label := modelRateLabel("deepseek/deepseek-chat", time.Now())
-	provider := model{service: deepseekService, models: modelMenuState{menu: true, step: modelStepProvider, class: "big"}}
 	header := ansi.Strip(deepseek.headerRow(120))
-	title := provider.modelMenuTitle()
 	if after := modelRateLabel("deepseek/deepseek-chat", time.Now()); after != label {
 		t.Skipf("pricing window changed during the test: %s then %s", label, after)
 	}
-	if !strings.Contains(header, "deepseek "+label) {
-		t.Fatalf("header lost the %q window: %q", label, header)
+	icon := "⚠"
+	if label == orchestrator.RateOffPeak {
+		icon = "✓"
 	}
-	if !strings.Contains(title, "deepseek "+label+" now") {
-		t.Fatalf("provider step did not name the window: %q", title)
+	if !strings.HasPrefix(header, ansi.Strip(wordmark())+"  deepseek "+icon+" "+label) {
+		t.Fatalf("badge is not next to the wordmark: %q", header)
 	}
-	allDay := model{service: openaiService, models: modelMenuState{menu: true, step: modelStepProvider, class: "big"}}
-	if strings.Contains(allDay.modelMenuTitle(), "now") {
-		t.Fatalf("all-day provider named a window: %q", allDay.modelMenuTitle())
+	provider := model{service: deepseekService, models: modelMenuState{menu: true, step: modelStepProvider, class: "big"}}
+	if got := provider.modelMenuTitle(); got != "Select a provider for big" {
+		t.Fatalf("model selector named the window: %q", got)
 	}
 }
 

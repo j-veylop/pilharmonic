@@ -122,6 +122,7 @@ var (
 	faintStyle   = lipgloss.NewStyle().Foreground(faint)
 	accentStyle  = lipgloss.NewStyle().Foreground(accent).Bold(true)
 	warningStyle = lipgloss.NewStyle().Foreground(statusWaiting).Bold(true)
+	successStyle = lipgloss.NewStyle().Foreground(statusCompleted).Bold(true)
 	panelStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1)
 
 	selectionRailStyle = lipgloss.NewStyle().

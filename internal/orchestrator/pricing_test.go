@@ -251,6 +251,47 @@ func TestPriceForSelectors(t *testing.T) {
 	}
 }
 
+// TestPriceForBedrockSelectors checks every spelling of one Bedrock model, from
+// foundation-model ID to cross-region profile and ARN, resolves to its price,
+// and a model without a published price stays unpriced.
+func TestPriceForBedrockSelectors(t *testing.T) {
+	now := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		selector string
+		in, out  float64
+	}{
+		{"bedrock/us.anthropic.claude-sonnet-4-6-v1:0", 3, 15},
+		{"bedrock/global.anthropic.claude-sonnet-4-6-v1:0", 3, 15},
+		{"bedrock/us.anthropic.claude-haiku-4-5-v1:0", 1, 5},
+		{"bedrock/anthropic.claude-haiku-4-5-20251001-v1:0", 1, 5},
+		{"bedrock/us.anthropic.claude-opus-4-8-v1:0", 5, 25},
+		{"bedrock/eu.anthropic.claude-opus-4-1-20250805-v1:0", 15, 75},
+		{"bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0", 3, 15},
+		{"bedrock/us.amazon.nova-pro-v1:0", 0.8, 3.2},
+		{"Bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-6-v1:0", 3, 15},
+	}
+	for _, tc := range cases {
+		price, ok := PriceFor(tc.selector, now)
+		if !ok {
+			t.Errorf("%s has no price", tc.selector)
+			continue
+		}
+		if price.Rate(now) != "" || !floatMatches(price.InputRate(now), tc.in) || !floatMatches(price.OutputRate(now), tc.out) {
+			t.Errorf("%s priced %v in / %v out, want %v / %v", tc.selector, price.InputRate(now), price.OutputRate(now), tc.in, tc.out)
+		}
+	}
+	for _, selector := range []string{
+		"bedrock/",
+		"bedrock/us.unknown.model-v1:0",
+		"bedrock/arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123",
+		"bedrock/us.anthropic.claude-sonnet-9-v1:0",
+	} {
+		if price, ok := PriceFor(selector, now); ok {
+			t.Errorf("%s priced as %+v, want unpriced", selector, price)
+		}
+	}
+}
+
 func TestModelPriceCostBreakdownCoversCacheAndTiers(t *testing.T) {
 	price := ModelPrice{
 		InputPerMTok: 2, OutputPerMTok: 8,

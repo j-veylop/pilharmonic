@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
@@ -120,12 +121,80 @@ var modelPrices = map[string]ModelPrice{
 	},
 }
 
+// bedrockPrices holds AWS Bedrock on-demand prices in US dollars per 1M tokens,
+// keyed by the model family with its geography prefix, date stamp and version
+// suffix removed (see bedrockModelKey). Bedrock bills Anthropic models at
+// Anthropic's list price, and cache writes at the 5-minute rate. Amazon Nova
+// cache reads are billed at a quarter of the input price. The table ignores
+// the premium some regional endpoints charge over global ones.
+var bedrockPrices = map[string]ModelPrice{
+	"anthropic.claude-opus-4-8":   {InputPerMTok: 5, OutputPerMTok: 25, CacheReadPerMTok: 0.5, CacheWritePerMTok: 6.25},
+	"anthropic.claude-opus-4-6":   {InputPerMTok: 5, OutputPerMTok: 25, CacheReadPerMTok: 0.5, CacheWritePerMTok: 6.25},
+	"anthropic.claude-opus-4-5":   {InputPerMTok: 5, OutputPerMTok: 25, CacheReadPerMTok: 0.5, CacheWritePerMTok: 6.25},
+	"anthropic.claude-opus-4-1":   {InputPerMTok: 15, OutputPerMTok: 75, CacheReadPerMTok: 1.5, CacheWritePerMTok: 18.75},
+	"anthropic.claude-opus-4":     {InputPerMTok: 15, OutputPerMTok: 75, CacheReadPerMTok: 1.5, CacheWritePerMTok: 18.75},
+	"anthropic.claude-sonnet-4-6": {InputPerMTok: 3, OutputPerMTok: 15, CacheReadPerMTok: 0.3, CacheWritePerMTok: 3.75},
+	"anthropic.claude-sonnet-4-5": {InputPerMTok: 3, OutputPerMTok: 15, CacheReadPerMTok: 0.3, CacheWritePerMTok: 3.75},
+	"anthropic.claude-sonnet-4":   {InputPerMTok: 3, OutputPerMTok: 15, CacheReadPerMTok: 0.3, CacheWritePerMTok: 3.75},
+	"anthropic.claude-3-7-sonnet": {InputPerMTok: 3, OutputPerMTok: 15, CacheReadPerMTok: 0.3, CacheWritePerMTok: 3.75},
+	"anthropic.claude-3-5-sonnet": {InputPerMTok: 3, OutputPerMTok: 15, CacheReadPerMTok: 0.3, CacheWritePerMTok: 3.75},
+	"anthropic.claude-haiku-4-5":  {InputPerMTok: 1, OutputPerMTok: 5, CacheReadPerMTok: 0.1, CacheWritePerMTok: 1.25},
+	"anthropic.claude-3-5-haiku":  {InputPerMTok: 0.8, OutputPerMTok: 4, CacheReadPerMTok: 0.08, CacheWritePerMTok: 1},
+	"anthropic.claude-3-haiku":    {InputPerMTok: 0.25, OutputPerMTok: 1.25},
+	"amazon.nova-micro":           {InputPerMTok: 0.035, OutputPerMTok: 0.14, CacheReadPerMTok: 0.00875},
+	"amazon.nova-lite":            {InputPerMTok: 0.06, OutputPerMTok: 0.24, CacheReadPerMTok: 0.015},
+	"amazon.nova-pro":             {InputPerMTok: 0.8, OutputPerMTok: 3.2, CacheReadPerMTok: 0.2},
+	"meta.llama3-3-70b-instruct":  {InputPerMTok: 0.72, OutputPerMTok: 0.72},
+}
+
+var (
+	// bedrockGeoPrefix is a cross-region inference profile's geography prefix.
+	bedrockGeoPrefix = regexp.MustCompile(`^(?:global|us|eu|apac|jp|au|ca|us-gov)\.`)
+	// bedrockVersionSuffix is the trailing model version, such as "-v1:0".
+	bedrockVersionSuffix = regexp.MustCompile(`-v\d+(?::\d+)?(?::\d+k)?$`)
+	// bedrockDateStamp is the release date Anthropic models carry, such as
+	// "-20250929".
+	bedrockDateStamp = regexp.MustCompile(`-\d{8}$`)
+)
+
+// bedrockModelKey reduces a lowercased "bedrock/..." selector to the model
+// family key of bedrockPrices. A foundation-model ID, a cross-region inference
+// profile ID and an inference-profile ARN of the same model share one key.
+func bedrockModelKey(selector string) (string, bool) {
+	id, ok := strings.CutPrefix(selector, "bedrock/")
+	if !ok {
+		return "", false
+	}
+	if strings.HasPrefix(id, "arn:") {
+		// The model or profile ID follows the last slash of the resource.
+		id = id[strings.LastIndex(id, "/")+1:]
+	}
+	id = bedrockGeoPrefix.ReplaceAllString(id, "")
+	id = bedrockVersionSuffix.ReplaceAllString(id, "")
+	id = bedrockDateStamp.ReplaceAllString(id, "")
+	return id, id != ""
+}
+
+// bedrockPriceFor prices a lowercased Bedrock selector. An application
+// inference profile ARN names no model, so it stays unpriced.
+func bedrockPriceFor(selector string) (ModelPrice, bool) {
+	id, ok := bedrockModelKey(selector)
+	if !ok {
+		return ModelPrice{}, false
+	}
+	price, ok := bedrockPrices[id]
+	return price, ok
+}
+
 // PriceFor reports the curated price of a model selector and whether it is
 // known. An unknown selector is reported as unpriced rather than guessed, so a
 // session total never claims a cost it cannot support.
 func PriceFor(model string, now time.Time) (ModelPrice, bool) {
 	key := strings.ToLower(strings.TrimSpace(model))
 	price, ok := modelPrices[key]
+	if !ok {
+		price, ok = bedrockPriceFor(key)
+	}
 	if !ok {
 		return ModelPrice{}, false
 	}

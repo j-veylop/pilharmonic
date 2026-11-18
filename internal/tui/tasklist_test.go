@@ -95,13 +95,29 @@ func TestMainTaskMetaLineCarriesLiveDetail(t *testing.T) {
 		},
 	}
 	plain := ansi.Strip(m.mainTaskMetaLine(task, 120))
-	for _, want := range []string{"isolated", "4m", "gpt-6.1-terra", "+120", "−18", "last 9s", "bash"} {
+	for _, want := range []string{glyphWorktree, "⋔ 0", "00:04:00", "gpt-6.1-terra", "+120", "−18", "last 9s", "bash"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("meta line lost %q: %q", want, plain)
 		}
 	}
+	if strings.Contains(plain, "isolated") || strings.Contains(plain, "subtask(s)") {
+		t.Fatalf("meta line still spells out the workspace badge or subtask count: %q", plain)
+	}
 	if strings.Contains(plain, task.Agent) {
 		t.Fatalf("meta line still names the executor %q: %q", task.Agent, plain)
+	}
+}
+
+func TestMainTaskMetaLineShowsProviderAndModelGlyphs(t *testing.T) {
+	task := orchestrator.Task{
+		ID: "task", Status: orchestrator.Running,
+		Attempts: []orchestrator.Attempt{{ID: "a", RequestedModel: "deepseek/deepseek-flash"}},
+	}
+	plain := ansi.Strip((model{tasks: []orchestrator.Task{task}}).mainTaskMetaLine(task, 120))
+	for _, want := range []string{"🐳", "deepseek-flash", "⚡", "⋔ 0"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("meta line lost %q: %q", want, plain)
+		}
 	}
 }
 
@@ -116,7 +132,7 @@ func TestMainTaskMetaLineMarksStaleRun(t *testing.T) {
 		UpdatedAt: now.Add(-21 * time.Minute),
 	}
 	plain := ansi.Strip((model{tasks: []orchestrator.Task{task}}).mainTaskMetaLine(task, 120))
-	if !strings.Contains(plain, "⚠ 25m") {
+	if !strings.Contains(plain, "⚠ 00:25:00") {
 		t.Fatalf("stale run not marked: %q", plain)
 	}
 }

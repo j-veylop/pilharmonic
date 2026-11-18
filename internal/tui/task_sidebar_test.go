@@ -139,7 +139,7 @@ func TestTaskPanelGroupsChildrenUnderParentByIndentation(t *testing.T) {
 		}
 		last = position
 	}
-	for _, want := range []string{"1 ◷ parent work", "2 ● other work"} {
+	for _, want := range []string{"1 ◷ parent work", "2 ● other work", "⋔ 3", "⋔ 0"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("missing numbered layout %q in %q", want, plain)
 		}

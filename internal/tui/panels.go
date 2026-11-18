@@ -192,17 +192,18 @@ func (m model) selectedPosition() (position, total int, ok bool) {
 	return 0, 0, false
 }
 
-// mainTaskMetaLine is the task list's secondary row: workspace or review state,
-// elapsed time, model, line churn and the keys that resolve an attention state.
+// mainTaskMetaLine is the task list's secondary row: a workspace or review
+// glyph, an always-present subtask count, elapsed time, a provider and model
+// badge, token usage, line churn and the keys that resolve an attention state.
 // The executor is left to task details because routing usually picks general. A
 // running task also shows the last observed activity, so a silent agent looks
 // different from a busy one.
 func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
 	now := time.Now()
-	sep := mutedStyle.Render("  ·  ")
-	parts := []string{workspaceBadgeFor(task).render()}
-	if count := len(subtaskRows(m.tasks, task.ID)); count > 0 {
-		parts = append(parts, mutedStyle.Render(fmt.Sprintf("%d subtask(s)", count)))
+	sep := mutedStyle.Render(" · ")
+	parts := []string{
+		workspaceBadgeFor(task).render(),
+		mutedStyle.Render(m.subtaskBadge(task)),
 	}
 	elapsed, hasElapsed := taskElapsed(task, now)
 	stale := false
@@ -212,15 +213,15 @@ func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
 		}
 	}
 	if hasElapsed {
-		text := shortDuration(elapsed)
+		text := formatElapsed(elapsed)
 		if stale {
 			parts = append(parts, warningStyle.Render("⚠ "+text))
 		} else {
 			parts = append(parts, mutedStyle.Render(text))
 		}
 	}
-	if model := taskModel(task); model != "" {
-		parts = append(parts, mutedStyle.Render(model))
+	if selector := taskModelSelector(task); selector != "" {
+		parts = append(parts, mutedStyle.Render(modelBadge(selector)))
 	}
 	if usage := taskUsageWithSubtasks(task, m.tasks); !usage.IsZero() {
 		available := width - 2 - lipgloss.Width(strings.Join(parts, sep)) - lipgloss.Width(sep)

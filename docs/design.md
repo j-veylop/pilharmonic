@@ -182,8 +182,11 @@ so a later rate change cannot rewrite history. ChatGPT subscription usage is
 priced at the API list price of the same model as an estimate, since the
 subscription itself is not billed per token. Unpriced models report tokens
 without a cost. Task rows abbreviate prompt, output and cache-read tokens with
-`↑`, `↓` and `⚡` glyphs and omit the executor, which routing usually sets to
-`general`; task details keep both. The session total covers attempts started by
+`↑`, `↓` and `⚡` glyphs, separated by single spaces, and omit the executor,
+which routing usually sets to `general`; task details keep both. Workspace and
+merge state is a glyph on the board, with the label left to task details. A
+provider glyph and a model-character glyph sit beside the model ID, and the
+subtask count is always present, including zero. The session total covers attempts started by
 this process; the board instead totals each main-view task with its descendants,
 so delegated work is part of the visible usage and cost while it runs. Peak hours are
 01:00–04:00 and 06:00–10:00 UTC on weekdays, excluding Chinese public

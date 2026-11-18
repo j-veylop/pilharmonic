@@ -69,24 +69,24 @@ func usageVariants(tokens orchestrator.TokenUsage, cost float64, priced bool) []
 	prompt := tokens.PromptTokens()
 	detailed := glyphTokensIn + formatTokens(prompt)
 	if tokens.CacheReadTokens > 0 {
-		detailed += " · " + glyphTokensCached + formatTokens(tokens.CacheReadTokens)
+		detailed += " " + glyphTokensCached + formatTokens(tokens.CacheReadTokens)
 		if prompt > 0 {
-			detailed += " (" + formatCacheHit(float64(tokens.CacheReadTokens)/float64(prompt)) + ")"
+			detailed += "(" + formatCacheHit(float64(tokens.CacheReadTokens)/float64(prompt)) + ")"
 		}
 	}
 	if tokens.CacheWriteTokens > 0 {
-		detailed += " · " + glyphTokensWritten + formatTokens(tokens.CacheWriteTokens)
+		detailed += " " + glyphTokensWritten + formatTokens(tokens.CacheWriteTokens)
 	}
-	detailed += " · " + glyphTokensOut + formatTokens(tokens.OutputTokens)
+	detailed += " " + glyphTokensOut + formatTokens(tokens.OutputTokens)
 	compact := glyphTokensIn + formatTokens(prompt) + "/" + glyphTokensOut + formatTokens(tokens.OutputTokens)
 	if tokens.CacheReadTokens > 0 {
-		compact += " · " + glyphTokensCached + formatTokens(tokens.CacheReadTokens)
+		compact += " " + glyphTokensCached + formatTokens(tokens.CacheReadTokens)
 	}
 	if !priced {
 		return []string{detailed, compact, ""}
 	}
 	amount := formatCost(cost)
-	return []string{detailed + " · " + amount, compact + " · " + amount, amount, ""}
+	return []string{detailed + " " + amount, compact + " " + amount, amount, ""}
 }
 
 func taskUsageLine(usage orchestrator.TaskUsage) string {

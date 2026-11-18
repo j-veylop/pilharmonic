@@ -331,5 +331,5 @@ func workspaceBadgeFor(task orchestrator.Task) workspaceBadge {
 }
 
 func (b workspaceBadge) render() string {
-	return lipgloss.NewStyle().Foreground(b.color).Render(b.glyph) + mutedStyle.Render(" "+b.label)
+	return lipgloss.NewStyle().Foreground(b.color).Render(b.glyph)
 }

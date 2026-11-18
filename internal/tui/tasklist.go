@@ -116,6 +116,16 @@ func (m *model) toggleDone() {
 	m.ensureVisibleSelection()
 }
 
+// formatElapsed writes a task's runtime as hh:mm:ss so a long attempt stays
+// readable without depending on its unit.
+func formatElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int64(d / time.Second)
+	return fmt.Sprintf("%02d:%02d:%02d", total/3600, total/60%60, total%60)
+}
+
 // shortDuration formats an age for a task row at terminal density.
 func shortDuration(d time.Duration) string {
 	if d < 0 {
@@ -157,13 +167,24 @@ func taskElapsed(task orchestrator.Task, now time.Time) (time.Duration, bool) {
 	return attempt.FinishedAt.Sub(start), true
 }
 
-// taskModel is the selector recorded on the latest attempt.
-func taskModel(task orchestrator.Task) string {
+// taskModelSelector is the provider/model selector recorded on the latest
+// attempt.
+func taskModelSelector(task orchestrator.Task) string {
 	attempt, ok := lastAttempt(task)
-	if !ok || attempt.RequestedModel == "" {
+	if !ok {
 		return ""
 	}
-	return shortModel(attempt.RequestedModel)
+	return attempt.RequestedModel
+}
+
+// subtaskBadge always shows how many descendants a row stands for. The count
+// is useful at zero too: it says the row has no delegated work.
+func (m model) subtaskBadge(task orchestrator.Task) string {
+	glyph := "⋔"
+	if m.icons {
+		glyph = "\uf0e8" // nf-fa-sitemap
+	}
+	return fmt.Sprintf("%s %d", glyph, len(subtaskRows(m.tasks, task.ID)))
 }
 
 // lastActivity is the most recent observable sign of life: a tool call, a

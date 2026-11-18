@@ -120,6 +120,7 @@ type Service interface {
 	WorktreeDiscardCandidates() []string
 	DeleteTask(id string) error
 	DiscardWorktree(id string) error
+	ForceDiscardWorktree(id string) error
 	DeleteCompletedTasksDetailed(ids []string) (int, []orchestrator.SkippedDeletion, error)
 	DiscardMergedWorktrees(ids []string) (int, error)
 	SetProviderCredential(provider, key string) error

@@ -175,10 +175,13 @@ The policy shapes output only and grants no authority.
 
 Token usage is execution metadata, priced when recorded (time-of-day rates
 apply at that moment). Unpriced models report tokens without a cost. The
-session total covers attempts started by this process. While a DeepSeek model
-is selected, a badge beside the wordmark names peak or off-peak in force,
-marked `⚠` at peak and `✓` off-peak. The window belongs to the provider, so an
-unpriced DeepSeek model carries the badge without claiming a cost.
+session total covers attempts started by this process. Peak hours are
+01:00–04:00 and 06:00–10:00 UTC on weekdays, excluding Chinese public
+holidays; every other hour, including weekends and holidays, is off-peak.
+While a DeepSeek model is selected, a badge beside the wordmark names peak or
+off-peak in force, marked `⚠` at peak and `✓` off-peak. The window belongs to
+the provider, so an unpriced DeepSeek model carries the badge without claiming
+a cost.
 
 ## Workspaces and integration
 

@@ -11,25 +11,45 @@ import (
 // operator could see, so a rounding difference cannot hide a real error.
 func floatMatches(got, want float64) bool { return math.Abs(got-want) <= 1e-12 }
 
-// TestDeepSeekOffPeakBoundaries pins both edges of the daily discount window
-// (16:30-00:30 UTC, published as 00:30-08:30 Beijing time) to the second.
+// TestDeepSeekOffPeakBoundaries pins both peak windows, the weekend exception
+// and a Chinese public holiday to the second. DeepSeek publishes peak hours in
+// UTC: 01:00–04:00 and 06:00–10:00, Monday through Friday, excluding Chinese
+// public holidays.
 func TestDeepSeekOffPeakBoundaries(t *testing.T) {
-	beijing := time.FixedZone("CST", 8*60*60)
+	monday := func(hour, minute, second int) time.Time {
+		return time.Date(2025, 9, 1, hour, minute, second, 0, time.UTC)
+	}
 	cases := []struct {
+		name string
 		when time.Time
 		want bool
 	}{
-		{time.Date(2025, 9, 1, 16, 29, 59, 0, time.UTC), false},
-		{time.Date(2025, 9, 1, 16, 30, 0, 0, time.UTC), true},
-		{time.Date(2025, 9, 1, 0, 29, 59, 0, time.UTC), true},
-		{time.Date(2025, 9, 1, 0, 30, 0, 0, time.UTC), false},
-		{time.Date(2025, 9, 1, 0, 30, 0, 0, beijing), true},
-		{time.Date(2025, 9, 1, 8, 30, 0, 0, beijing), false},
+		{"before the first peak window", monday(0, 59, 59), true},
+		{"the first peak window opens", monday(1, 0, 0), false},
+		{"the first peak window closes", monday(4, 0, 0), true},
+		{"between the peak windows", monday(5, 59, 59), true},
+		{"the second peak window opens", monday(6, 0, 0), false},
+		{"inside the second peak window", monday(9, 59, 59), false},
+		{"the second peak window closes", monday(10, 0, 0), true},
+		{"after the second peak window", monday(23, 59, 59), true},
+		{"a Saturday stays off-peak", time.Date(2025, 9, 6, 2, 0, 0, 0, time.UTC), true},
+		{"a Sunday stays off-peak", time.Date(2025, 9, 7, 2, 0, 0, 0, time.UTC), true},
+		{"a weekday holiday stays off-peak", time.Date(2025, 10, 1, 2, 0, 0, 0, time.UTC), true},
 	}
 	for _, tc := range cases {
 		if got := deepseekOffPeak(tc.when); got != tc.want {
-			t.Errorf("%s: off-peak = %v, want %v", tc.when.Format(time.RFC3339), got, tc.want)
+			t.Errorf("%s (%s): off-peak = %v, want %v", tc.name, tc.when.Format(time.RFC3339), got, tc.want)
 		}
+	}
+
+	// The window is published in UTC, so the same instant in any zone must be
+	// judged by its UTC time: 02:00 UTC is peak, 12:00 UTC is off-peak.
+	beijing := time.FixedZone("CST", 8*60*60)
+	if deepseekOffPeak(time.Date(2025, 9, 1, 10, 0, 0, 0, beijing)) {
+		t.Error("10:00 Beijing (02:00 UTC) should be peak")
+	}
+	if !deepseekOffPeak(time.Date(2025, 9, 1, 20, 0, 0, 0, beijing)) {
+		t.Error("20:00 Beijing (12:00 UTC) should be off-peak")
 	}
 }
 
@@ -37,8 +57,8 @@ func TestDeepSeekOffPeakBoundaries(t *testing.T) {
 // curated price table does not list: the window belongs to the provider, so any
 // DeepSeek model carries it, while all-day and unknown providers carry none.
 func TestProviderRateNamesTheWindowForAnyModel(t *testing.T) {
-	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
-	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
+	peak := time.Date(2025, 9, 1, 2, 0, 0, 0, time.UTC)
+	offPeak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		provider string
 		at       time.Time
@@ -66,8 +86,8 @@ func TestProviderRateNamesTheWindowForAnyModel(t *testing.T) {
 // own off-peak pair rather than one shared discount: deepseek-chat is half
 // price, deepseek-reasoner is 75% off input and half price on output.
 func TestPriceForDeepSeekDiscountedRates(t *testing.T) {
-	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
-	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
+	peak := time.Date(2025, 9, 1, 2, 0, 0, 0, time.UTC)
+	offPeak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
 		model                       string
 		peakInput, peakOutput       float64
@@ -118,8 +138,8 @@ func TestPriceForDeepSeekDiscountedRates(t *testing.T) {
 // is charged in direct proportion to a non-round token count instead of being
 // rounded to whole millions or cents.
 func TestModelPriceCostScalesPerMillionTokens(t *testing.T) {
-	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
-	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
+	peak := time.Date(2025, 9, 1, 2, 0, 0, 0, time.UTC)
+	offPeak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name  string
 		model string

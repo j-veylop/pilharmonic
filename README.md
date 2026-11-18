@@ -17,7 +17,7 @@ Fantasy attempts receive a system prompt assembled stable-first: tool, workflow,
 
 In a prompt composer, **Ctrl-o** opens the current draft in the executable named by `$EDITOR`; save and exit to return it to the composer. If the editor fails, the draft file is retained and its path is shown.
 
-**F1** opens help everywhere; **?** opens it wherever it is not typed text. `/help` in the request box opens it too, and its **Commands** topic lists slash commands. **q** or **Ctrl-c** opens a quit dialog that counts the work in flight: **y** quits, **n**/**Esc** stays, **h**/**l** or **Tab** moves between its two buttons, and **Enter** presses the focused one. Quitting cancels active attempts.
+**F1** opens help everywhere; **?** opens it wherever it is not typed text. `/help` in the request box opens it too, and its **Commands** topic lists slash commands. The topic strip names each page, **←**/**→** (or **h**/**l**) switches topics, and **↑**/**↓** (or **j**/**k**) scrolls. **q** or **Ctrl-c** opens a quit dialog that counts the work in flight: **y** quits, **n**/**Esc** stays, **h**/**l** or **Tab** moves between its two buttons, and **Enter** presses the focused one. Quitting cancels active attempts.
 
 Inputs use standard text editing keys (word delete, line kill, word movement, Home/End). **Ctrl-J** or **Alt-Enter** inserts a newline.
 

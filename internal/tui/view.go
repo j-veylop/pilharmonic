@@ -394,7 +394,7 @@ func (m model) footer(w int) string {
 	board := false
 	switch {
 	case m.reviewDiff.target != "":
-		footerText = "j/k scroll · y approve + merge · n reject · ctrl+o nvim · ctrl+g lazygit · esc close · ? help · q quit"
+		footerText = "j/k scroll · y approve + merge · n reject · ctrl+o nvim · ctrl+g lazygit · ctrl+t terminal · esc close · q quit"
 	case m.login.provider != "":
 		footerText = withHelpHint("enter save · esc cancel", w)
 	case m.router.open && (m.detailFocus || m.fullscreen):

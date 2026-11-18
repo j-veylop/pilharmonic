@@ -77,6 +77,11 @@ func init() {
 			m.notice.text = ""
 			return m.loadReviewDiff(t.ID, t.ReviewCommit, t.Title)
 		})},
+		{"ctrl+t", "terminal", "Open a terminal shell in the task's worktree, e.g. to run its own tests before approving", "Tasks", onTask(func(m *model, t orchestrator.Task) tea.Cmd {
+			updated, cmd := m.worktreeTerminal(t)
+			*m = updated
+			return cmd
+		})},
 		{"f", "follow up", "Continue the conversation; a finished task resumes immediately", "Tasks", onTask(func(m *model, t orchestrator.Task) tea.Cmd {
 			notice := "Follow-up continues the conversation from the existing output."
 			if t.Status == orchestrator.Queued || t.Status == orchestrator.Running {

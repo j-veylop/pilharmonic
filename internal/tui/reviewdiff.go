@@ -1,8 +1,7 @@
 package tui
 
 import (
-	"fmt"
-	"os"
+	"errors"
 	"os/exec"
 	"strings"
 
@@ -59,12 +58,9 @@ func (m model) reviewTask() (orchestrator.Task, bool) {
 }
 
 func openReviewTool(key string, task orchestrator.Task) tea.Cmd {
-	dir := task.ExecutionWorkspace
-	if dir == "" {
-		return func() tea.Msg { return actionResultMsg{err: fmt.Errorf("review task has no worktree")} }
-	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return func() tea.Msg { return actionResultMsg{err: fmt.Errorf("review worktree is unavailable: %s", dir)} }
+	dir, refusal := worktreeDir(task)
+	if refusal != "" {
+		return func() tea.Msg { return actionResultMsg{err: errors.New(refusal)} }
 	}
 	name := "nvim"
 	if key == "ctrl+g" {
@@ -89,11 +85,14 @@ func shortID(id string) string {
 
 func (m model) reviewDiffKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	key := msg.String()
-	if key == "ctrl+o" || key == "ctrl+g" {
+	if key == "ctrl+o" || key == "ctrl+g" || key == "ctrl+t" {
 		t, ok := m.reviewTask()
 		if !ok {
 			m.notice.text = "Review task is no longer available."
 			return m, nil
+		}
+		if key == "ctrl+t" {
+			return m.worktreeTerminal(t)
 		}
 		return m, openReviewTool(key, t)
 	}

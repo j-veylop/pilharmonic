@@ -52,6 +52,9 @@ func TestLandingShownWithoutTasks(t *testing.T) {
 			t.Fatalf("landing missing %q: %q", want, plain)
 		}
 	}
+	if n := strings.Count(plain, "PILHARMONIC"); n != 1 {
+		t.Fatalf("empty board shows the title %d times: %q", n, plain)
+	}
 	m.tasks = []orchestrator.Task{{ID: "task", Title: "work", Status: orchestrator.Queued}}
 	if plain := ansi.Strip(m.View()); strings.Contains(plain, "GET STARTED") {
 		t.Fatal("landing stayed over a non-empty board")

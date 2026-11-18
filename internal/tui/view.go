@@ -241,9 +241,9 @@ func (m model) headerRateBadge(now time.Time) string {
 			continue
 		}
 		provider, _, _ := strings.Cut(selector, "/")
-		icon, style := warningStyle.Render("⚠"), warningStyle
+		icon, style := warningStyle.Render(glyphWarning), warningStyle
 		if label == orchestrator.RateOffPeak {
-			icon, style = successStyle.Render("✓"), successStyle
+			icon, style = successStyle.Render(glyphCheck), successStyle
 		}
 		return mutedStyle.Render(provider) + " " + icon + " " + style.Render(label)
 	}
@@ -259,56 +259,57 @@ func shortModel(selector string) string {
 	return selector
 }
 
-// providerGlyphs give each provider prefix a recognizable mark so a row can
-// name the provider without spelling it out.
+// providerGlyphs give each provider prefix a recognizable Nerd Font mark so a
+// row can name the provider without spelling it out.
 var providerGlyphs = map[string]string{
-	"openai":              "⬡",
-	"openai-subscription": "⬡",
-	"deepseek":            "🐳",
-	"anthropic":           "✳",
-	"google":              "✦",
-	"xai":                 "✕",
-	"meta-llama":          "∞",
-	"mistral":             "▲",
-	"qwen":                "✧",
-	"groq":                "◆",
-	"openrouter":          "⇄",
-	"hyper":               "◈",
-	"bedrock":             "☁",
+	"openai":              "\uf2db", // nf-fa-microchip
+	"openai-subscription": "\uf2db", // nf-fa-microchip
+	"deepseek":            "\uf578", // nf-fa-fish
+	"anthropic":           "\uf0c3", // nf-fa-flask
+	"google":              "\uf1a0", // nf-fa-google
+	"xai":                 "\uf168", // nf-fa-xing
+	"meta-llama":          "\uf09a", // nf-fa-facebook
+	"mistral":             "\uf0d8", // nf-fa-caret_up
+	"qwen":                "\uf005", // nf-fa-star
+	"groq":                "\uf085", // nf-fa-cogs
+	"openrouter":          "\uf0ec", // nf-fa-exchange
+	"hyper":               "\uf1b2", // nf-fa-cube
+	"bedrock":             "\uf0c2", // nf-fa-cloud
 }
 
-// modelGlyph marks a model's character from its ID: a lightning bolt for a
-// fast model, a half circle for a reasoning one, and so on. Unknown names get
-// no glyph rather than an arbitrary one.
+// modelGlyph marks a model's character from its ID with a Nerd Font icon: a
+// lightning bolt for a fast model, a lightbulb for a reasoning one, and so on.
+// Unknown names get no glyph rather than an arbitrary one.
 func modelGlyph(model string) string {
 	name := strings.ToLower(model)
 	switch {
 	case strings.Contains(name, "flash"), strings.Contains(name, "instant"):
-		return "⚡"
+		return "\uf0e7" // nf-fa-bolt
 	case strings.Contains(name, "codex"):
-		return "⌘"
+		return "\uf120" // nf-fa-terminal
 	case strings.Contains(name, "reason"), strings.Contains(name, "think"), strings.HasSuffix(name, "r1"):
-		return "◐"
+		return "\uf0eb" // nf-fa-lightbulb_o
 	case strings.Contains(name, "mini"), strings.Contains(name, "small"):
-		return "▽"
+		return "\uf068" // nf-fa-minus
 	case strings.Contains(name, "pro"), strings.Contains(name, "max"), strings.Contains(name, "ultra"):
-		return "▲"
+		return "\uf062" // nf-fa-arrow_up
 	case strings.Contains(name, "sonnet"):
-		return "♪"
+		return "\uf001" // nf-fa-music
 	case strings.Contains(name, "haiku"):
-		return "❀"
+		return "\uf06c" // nf-fa-leaf
 	case strings.Contains(name, "opus"):
-		return "♛"
+		return "\uf521" // nf-fa-crown
 	case strings.Contains(name, "llama"):
-		return "🦙"
+		return "\uf1b0" // nf-fa-paw
 	}
 	return ""
 }
 
 // modelBadge is the compact provider and model mark for a task row. A model
-// with its own glyph keeps only the marks, such as "🐳 ⚡" for deepseek-flash;
-// naming the model beside them would repeat what the glyphs already say. A
-// model without a character glyph keeps its ID so the row stays meaningful.
+// with its own glyph keeps only the marks, such as a fish and a bolt for
+// deepseek-flash; naming the model beside them would repeat what the glyphs
+// already say. A model without a character glyph keeps its ID so the row stays
+// meaningful.
 func modelBadge(selector string) string {
 	provider, model, ok := strings.Cut(selector, "/")
 	if !ok {

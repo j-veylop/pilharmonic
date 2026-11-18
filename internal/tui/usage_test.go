@@ -83,13 +83,13 @@ func TestHistoryAttemptsShowRecordedUsage(t *testing.T) {
 	}
 	m := model{width: 120, height: 40, tasks: []orchestrator.Task{task}, tab: infoTab}
 	detail := ansi.Strip(strings.Join(m.detailContent(100), "\n"))
-	if want := "1a2b · 12.3k in · 4.5k out · $0.0043"; !strings.Contains(detail, want) {
+	if want := "1a2b · ↑12.3k · ↓4.5k · $0.0043"; !strings.Contains(detail, want) {
 		t.Fatalf("attempt row missing %q: %s", want, detail)
 	}
-	if want := "3c4d · 12.3k in · 4.5k out"; !strings.Contains(detail, want) {
+	if want := "3c4d · ↑12.3k · ↓4.5k"; !strings.Contains(detail, want) {
 		t.Fatalf("unpriced attempt row missing %q: %s", want, detail)
 	}
-	if strings.Contains(detail, "3c4d · 12.3k in · 4.5k out · $") {
+	if strings.Contains(detail, "3c4d · ↑12.3k · ↓4.5k · $") {
 		t.Fatalf("unpriced attempt row printed a cost: %s", detail)
 	}
 	if strings.Contains(detail, "5e6f ·") {
@@ -128,12 +128,12 @@ func TestUsageVariantsShowCacheBuckets(t *testing.T) {
 	if len(variants) < 2 {
 		t.Fatalf("missing variants: %v", variants)
 	}
-	for _, want := range []string{"4.2k in", "3k cached (71%)", "200 written", "500 out", "$0.01"} {
+	for _, want := range []string{"↑4.2k", "⚡3k (71%)", "✎200", "↓500", "$0.01"} {
 		if !strings.Contains(variants[0], want) {
 			t.Fatalf("detailed variant missing %q: %q", want, variants[0])
 		}
 	}
-	if !strings.Contains(variants[1], "4.2k/500 · 3k cached") {
+	if !strings.Contains(variants[1], "↑4.2k/↓500 · ⚡3k") {
 		t.Fatalf("compact variant missing cache: %q", variants[1])
 	}
 }
@@ -146,7 +146,7 @@ func TestTaskListUsageDropsDetailBeforeCost(t *testing.T) {
 		CostUSD:    0.0043,
 		Priced:     true,
 	}
-	if got := taskListUsage(usage, 80); got != "12.3k in · 4.5k out · $0.0043" {
+	if got := taskListUsage(usage, 80); got != "↑12.3k · ↓4.5k · $0.0043" {
 		t.Fatalf("full usage = %q", got)
 	}
 	if got := taskListUsage(usage, 7); got != "$0.0043" {

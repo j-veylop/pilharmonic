@@ -95,10 +95,13 @@ func TestMainTaskMetaLineCarriesLiveDetail(t *testing.T) {
 		},
 	}
 	plain := ansi.Strip(m.mainTaskMetaLine(task, 120))
-	for _, want := range []string{"general", "4m", "gpt-6.1-terra", "+120", "−18", "last 9s", "bash"} {
+	for _, want := range []string{"isolated", "4m", "gpt-6.1-terra", "+120", "−18", "last 9s", "bash"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("meta line lost %q: %q", want, plain)
 		}
+	}
+	if strings.Contains(plain, task.Agent) {
+		t.Fatalf("meta line still names the executor %q: %q", task.Agent, plain)
 	}
 }
 

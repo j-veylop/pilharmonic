@@ -51,6 +51,15 @@ func formatCacheHit(rate float64) string {
 	return strconv.FormatFloat(rate*100, 'f', 0, 64) + "%"
 }
 
+// Token glyphs keep a usage segment compact enough to sit beside its cost on a
+// task row. They are plain Unicode so they need no patched terminal font.
+const (
+	glyphTokensIn      = "↑"
+	glyphTokensOut     = "↓"
+	glyphTokensCached  = "⚡"
+	glyphTokensWritten = "✎"
+)
+
 // usageVariants lists a usage segment richest first, ending with "" so a
 // caller can drop it. Prompt input is the whole request, including cache reads
 // and writes; the detailed form names those buckets, and the compact form keeps
@@ -58,20 +67,20 @@ func formatCacheHit(rate float64) string {
 // was priced.
 func usageVariants(tokens orchestrator.TokenUsage, cost float64, priced bool) []string {
 	prompt := tokens.PromptTokens()
-	detailed := formatTokens(prompt) + " in"
+	detailed := glyphTokensIn + formatTokens(prompt)
 	if tokens.CacheReadTokens > 0 {
-		detailed += " · " + formatTokens(tokens.CacheReadTokens) + " cached"
+		detailed += " · " + glyphTokensCached + formatTokens(tokens.CacheReadTokens)
 		if prompt > 0 {
 			detailed += " (" + formatCacheHit(float64(tokens.CacheReadTokens)/float64(prompt)) + ")"
 		}
 	}
 	if tokens.CacheWriteTokens > 0 {
-		detailed += " · " + formatTokens(tokens.CacheWriteTokens) + " written"
+		detailed += " · " + glyphTokensWritten + formatTokens(tokens.CacheWriteTokens)
 	}
-	detailed += " · " + formatTokens(tokens.OutputTokens) + " out"
-	compact := formatTokens(prompt) + "/" + formatTokens(tokens.OutputTokens)
+	detailed += " · " + glyphTokensOut + formatTokens(tokens.OutputTokens)
+	compact := glyphTokensIn + formatTokens(prompt) + "/" + glyphTokensOut + formatTokens(tokens.OutputTokens)
 	if tokens.CacheReadTokens > 0 {
-		compact += " · " + formatTokens(tokens.CacheReadTokens) + " cached"
+		compact += " · " + glyphTokensCached + formatTokens(tokens.CacheReadTokens)
 	}
 	if !priced {
 		return []string{detailed, compact, ""}

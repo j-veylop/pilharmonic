@@ -29,7 +29,7 @@ func TestHeaderLeavesCountsAndUsageToTaskRows(t *testing.T) {
 		}
 	}
 	board := ansi.Strip(m.View())
-	for _, want := range []string{"12.3k in", "4.5k out", "$0.0043"} {
+	for _, want := range []string{"↑12.3k", "↓4.5k", "$0.0043"} {
 		if !strings.Contains(board, want) {
 			t.Fatalf("task row missing usage %q: %q", want, board)
 		}

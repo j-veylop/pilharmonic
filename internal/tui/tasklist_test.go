@@ -114,10 +114,22 @@ func TestMainTaskMetaLineShowsProviderAndModelGlyphs(t *testing.T) {
 		Attempts: []orchestrator.Attempt{{ID: "a", RequestedModel: "deepseek/deepseek-flash"}},
 	}
 	plain := ansi.Strip((model{tasks: []orchestrator.Task{task}}).mainTaskMetaLine(task, 120))
-	for _, want := range []string{"🐳", "deepseek-flash", "⚡", "⋔ 0"} {
+	for _, want := range []string{"🐳", "⚡", "⋔ 0"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("meta line lost %q: %q", want, plain)
 		}
+	}
+	if strings.Contains(plain, "deepseek-flash") {
+		t.Fatalf("meta line names a model that its glyphs already mark: %q", plain)
+	}
+}
+
+func TestModelBadgeKeepsUnknownModelNames(t *testing.T) {
+	if got := modelBadge("openai/gpt-6.1-terra"); got != "⬡ gpt-6.1-terra" {
+		t.Fatalf("unknown model badge = %q", got)
+	}
+	if got := modelBadge("deepseek/deepseek-flash"); got != "🐳 ⚡" {
+		t.Fatalf("known model badge = %q", got)
 	}
 }
 

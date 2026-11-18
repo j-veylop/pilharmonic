@@ -264,7 +264,7 @@ func shortModel(selector string) string {
 var providerGlyphs = map[string]string{
 	"openai":              "\uf2db", // nf-fa-microchip
 	"openai-subscription": "\uf2db", // nf-fa-microchip
-	"deepseek":            "\uf578", // nf-fa-fish
+	"deepseek":            "\uee41", // nf-fa-fish
 	"anthropic":           "\uf0c3", // nf-fa-flask
 	"google":              "\uf1a0", // nf-fa-google
 	"xai":                 "\uf168", // nf-fa-xing
@@ -283,6 +283,14 @@ var providerGlyphs = map[string]string{
 func modelGlyph(model string) string {
 	name := strings.ToLower(model)
 	switch {
+	case strings.Contains(name, "luna"):
+		return "\uf186" // nf-fa-moon_o
+	case strings.Contains(name, "terra"):
+		return "\uf0ac" // nf-fa-globe
+	case strings.Contains(name, "sol"):
+		return "\uf185" // nf-fa-sun_o
+	case strings.Contains(name, "astra"):
+		return "\uf005" // nf-fa-star
 	case strings.Contains(name, "flash"), strings.Contains(name, "instant"):
 		return "\uf0e7" // nf-fa-bolt
 	case strings.Contains(name, "codex"):

@@ -83,7 +83,7 @@ func TestMainTaskMetaLineCarriesLiveDetail(t *testing.T) {
 	task := orchestrator.Task{
 		ID: "task", Title: "work", Agent: "general", Status: orchestrator.Running,
 		Isolated: true, ExecutionWorkspace: "/tmp/worktree",
-		Attempts: []orchestrator.Attempt{{ID: "a", StartedAt: now.Add(-4 * time.Minute), RequestedModel: "provider/gpt-6.1-terra"}},
+		Attempts: []orchestrator.Attempt{{ID: "a", StartedAt: now.Add(-4 * time.Minute), RequestedModel: "provider/gpt-4.1"}},
 		Activities: []orchestrator.ToolActivity{{
 			ID: "call", Name: "bash", Status: orchestrator.ActivityRunning, StartedAt: now.Add(-9 * time.Second),
 		}},
@@ -95,7 +95,7 @@ func TestMainTaskMetaLineCarriesLiveDetail(t *testing.T) {
 		},
 	}
 	plain := ansi.Strip(m.mainTaskMetaLine(task, 120))
-	for _, want := range []string{glyphWorktree, "⋔ 0", "00:04:00", "gpt-6.1-terra", "+120", "−18", "last 9s", "bash"} {
+	for _, want := range []string{glyphWorktree, "⋔ 0", "00:04:00", "gpt-4.1", "+120", "−18", "last 9s", "bash"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("meta line lost %q: %q", want, plain)
 		}
@@ -125,11 +125,31 @@ func TestMainTaskMetaLineShowsProviderAndModelGlyphs(t *testing.T) {
 }
 
 func TestModelBadgeKeepsUnknownModelNames(t *testing.T) {
-	if got, want := modelBadge("openai/gpt-6.1-terra"), providerGlyphs["openai"]+" gpt-6.1-terra"; got != want {
+	if got, want := modelBadge("openai/gpt-6.1-unknown"), providerGlyphs["openai"]+" gpt-6.1-unknown"; got != want {
 		t.Fatalf("unknown model badge = %q, want %q", got, want)
 	}
 	if got, want := modelBadge("deepseek/deepseek-flash"), providerGlyphs["deepseek"]+" "+modelGlyph("deepseek-flash"); got != want {
 		t.Fatalf("known model badge = %q, want %q", got, want)
+	}
+}
+
+// The fish and the GPT name glyphs use codepoints present in Nerd Fonts 3.4;
+// the older Font Awesome fish codepoint renders as a blank cell.
+func TestModelGlyphUsesInstalledNerdFontCodepoints(t *testing.T) {
+	if got := providerGlyphs["deepseek"]; got != "\uee41" {
+		t.Fatalf("deepseek glyph = %q, want nf-fa-fish", got)
+	}
+	for _, tc := range []struct {
+		model, glyph string
+	}{
+		{"gpt-5.6-luna", "\uf186"},  // nf-fa-moon_o
+		{"gpt-6.1-terra", "\uf0ac"}, // nf-fa-globe
+		{"gpt-6.1-sol", "\uf185"},   // nf-fa-sun_o
+		{"gpt-6.1-astra", "\uf005"}, // nf-fa-star
+	} {
+		if got := modelGlyph(tc.model); got != tc.glyph {
+			t.Fatalf("%s glyph = %q, want %q", tc.model, got, tc.glyph)
+		}
 	}
 }
 

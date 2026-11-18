@@ -74,6 +74,7 @@ func (m model) modelMenuTitle() string {
 	}
 	return "Select a model class or agent"
 }
+
 func (m *model) openModelMenu(target string) {
 	m.models = modelMenuState{menu: true}
 	m.router.open = false

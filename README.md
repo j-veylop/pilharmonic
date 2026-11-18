@@ -53,7 +53,7 @@ Transient notices appear as toasts over the top-right corner, and confirmations 
 
 Status glyphs: `●` running, `✓` completed, `✗` failed/blocked/merge failed, `⊘` interrupted/canceled, `◷` queued/waiting (including a parent waiting for subagents), `◆` awaiting review. Children are indented under their parent and every row is numbered in grouped display order, matching the `TASK n/N` title in narrow layouts. Group headings appear only when the board shows more than one group. The footer shows only actions valid for the selection. The header shows counts and, once reported, session token usage and estimated cost; task details show per-task usage and the current price.
 
-Prices are a curated USD-per-1M snapshot for the catalog's OpenAI and DeepSeek models; other models show tokens without a cost. DeepSeek's off-peak window (16:30–00:30 UTC) is applied at recording time.
+Prices are a curated USD-per-1M snapshot for the catalog's OpenAI and DeepSeek models; other models show tokens without a cost. DeepSeek's off-peak window (16:30–00:30 UTC) is applied at recording time; while a time-of-day model is selected, a badge beside the wordmark names peak (`⚠`) or off-peak (`✓`) in force now.
 
 ## Workspaces and review
 

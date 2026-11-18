@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
@@ -217,6 +218,9 @@ func (m model) inputFocused() bool { return m.router.open || m.input.kind != "" 
 // before a counter loses its wording.
 func (m model) headerRow(width int) string {
 	header := wordmark()
+	if badge := m.headerRateBadge(time.Now()); badge != "" {
+		header += "  " + badge
+	}
 	available := max(1, width-lipgloss.Width(header)-1)
 	options := m.headerCountOptions()
 	summary, usage := options[len(options)-1], ""
@@ -238,6 +242,34 @@ fit:
 		return fit(header+right, width, 1)
 	}
 	return fit(header+" "+lipgloss.NewStyle().Foreground(accent).Render(strings.Repeat("╱", fill))+" "+right, width, 1)
+}
+
+// headerRateBadge names the discount window in force for the provider of a
+// selected model, so peak and off-peak stay visible after the model menu
+// closes. Peak carries a warning and off-peak a check; all-day providers carry
+// no badge.
+func (m model) headerRateBadge(now time.Time) string {
+	if m.service == nil {
+		return ""
+	}
+	selection := m.service.ModelSelection()
+	selectors := []string{selection.Big, selection.Small}
+	for _, selector := range selection.Agents {
+		selectors = append(selectors, selector)
+	}
+	for _, selector := range selectors {
+		label := modelRateLabel(selector, now)
+		if label == "" {
+			continue
+		}
+		provider, _, _ := strings.Cut(selector, "/")
+		icon, style := warningStyle.Render("⚠"), warningStyle
+		if label == orchestrator.RateOffPeak {
+			icon, style = successStyle.Render("✓"), successStyle
+		}
+		return mutedStyle.Render(provider) + " " + icon + " " + style.Render(label)
+	}
+	return ""
 }
 
 // shortModel keeps the model ID without its provider prefix, which the pill

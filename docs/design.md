@@ -179,9 +179,10 @@ session total covers attempts started by this process. Peak hours are
 01:00–04:00 and 06:00–10:00 UTC on weekdays, excluding Chinese public
 holidays; every other hour, including weekends and holidays, is off-peak.
 While a DeepSeek model is selected, a badge beside the wordmark names peak or
-off-peak in force, marked `⚠` at peak and `✓` off-peak. The window belongs to
-the provider, so an unpriced DeepSeek model carries the badge without claiming
-a cost.
+off-peak in force, marked `⚠` at peak and `✓` off-peak. That badge is the only
+place the window is named; the model menu and task details do not repeat it.
+The window belongs to the provider, so an unpriced DeepSeek model carries the
+badge without claiming a cost.
 
 ## Workspaces and integration
 

@@ -66,24 +66,14 @@ func taskUsageLine(usage orchestrator.TaskUsage) string {
 }
 
 // priceLine describes the price in force now for the model a task last used,
-// which is what matters when deciding whether to run more work. An attempt
-// that straddled a discount window names both rates.
-func priceLine(selector, rate string, now time.Time) (string, bool) {
+// which is what matters when deciding whether to run more work.
+func priceLine(selector string, now time.Time) (string, bool) {
 	price, known := orchestrator.PriceFor(selector, now)
 	if !known {
 		return "", false
 	}
-	line := "Price: " + formatPrice(price.InputRate(now)) + "/M in · " +
-		formatPrice(price.OutputRate(now)) + "/M out"
-	if !price.TimeOfDay {
-		return line, true
-	}
-	label := price.Rate(now)
-	if rate == orchestrator.RateMixed {
-		label = orchestrator.RatePeak + "/" + orchestrator.RateOffPeak
-	}
-	provider, _, _ := strings.Cut(selector, "/")
-	return line + " · " + provider + " " + label, true
+	return "Price: " + formatPrice(price.InputRate(now)) + "/M in · " +
+		formatPrice(price.OutputRate(now)) + "/M out", true
 }
 
 // attemptUsageSuffix is the richest usage variant that fits on an attempt's

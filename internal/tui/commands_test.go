@@ -459,7 +459,7 @@ func TestLoginAndModelMenuViews(t *testing.T) {
 			unwanted: []string{secret},
 		},
 		{
-			name:  "rate-tagged model rows",
+			name:  "deepseek model rows",
 			m:     model{service: deepSeekMenuService(), models: modelMenuState{menu: true, step: modelStepModel, class: "big", provider: "deepseek"}},
 			sizes: small,
 			want:  []string{"deepseek-chat"},
@@ -748,8 +748,9 @@ func deepSeekMenuService() *fakeLoginService {
 	}
 }
 
-// Only models the price table charges by time of day name a window: in the
-// label itself, the model rows, the pinned class and the confirmation notice.
+// Only models whose provider publishes a time-of-day window name one. The
+// window is not repeated in the model menu, the pinned class or the
+// confirmation notice; it belongs only beside the wordmark.
 func TestModelRateWindows(t *testing.T) {
 	peak := time.Date(2025, 9, 1, 2, 0, 0, 0, time.UTC)
 	offPeak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
@@ -769,6 +770,9 @@ func TestModelRateWindows(t *testing.T) {
 		if got := modelRateLabel(tc.selector, tc.at); got != tc.want {
 			t.Errorf("%s at %s: label %q, want %q", tc.selector, tc.at.Format("15:04"), got, tc.want)
 		}
+	}
+	if line, ok := priceLine("deepseek/deepseek-chat", peak); !ok || strings.Contains(line, orchestrator.RatePeak) {
+		t.Errorf("price line named the window: %q", line)
 	}
 
 	// The menu reads the clock itself, so render everything inside one window
@@ -793,22 +797,21 @@ func TestModelRateWindows(t *testing.T) {
 	if menuAt < 0 || classAt < 0 {
 		t.Fatalf("menu title missing: model %d class %d", menuAt, classAt)
 	}
-	menuRows := rows[menuAt:]
-	classMenu := class[classAt:]
-	if !strings.Contains(rows, "deepseek-chat") || strings.Count(menuRows, label) != 2 {
-		t.Fatalf("model rows lost the %q window: %s", label, rows)
+	if !strings.Contains(rows, "deepseek-chat") {
+		t.Fatalf("model rows lost the catalog: %s", rows)
 	}
-	if !strings.Contains(class, "deepseek/deepseek-chat · "+label+" now") || strings.Count(classMenu, label) != 1 {
-		t.Fatalf("class step did not label only the pinned class: %s", class)
+	// The header owns the one badge; the menu and notices below it repeat no
+	// window.
+	for _, named := range []string{rows[menuAt:], class[classAt:], pinned.notice.text, openaiRows, openai.notice.text} {
+		if strings.Contains(named, orchestrator.RatePeak) || strings.Contains(named, orchestrator.RateOffPeak) {
+			t.Fatalf("menu repeated the pricing window: %q", named)
+		}
 	}
 	if len(pinnedFake.setModelCalls) != 1 || pinnedFake.setModelCalls[0] != "big=deepseek/deepseek-chat" {
 		t.Fatalf("model step pinned %v, want big=deepseek/deepseek-chat", pinnedFake.setModelCalls)
 	}
-	if want := "Model for big: deepseek/deepseek-chat · " + label + " now"; !strings.Contains(pinned.notice.text, want) {
-		t.Fatalf("confirmation notice missing %q: %q", want, pinned.notice.text)
-	}
-	if strings.Contains(openaiRows, orchestrator.RatePeak) || strings.Contains(openaiRows, orchestrator.RateOffPeak) {
-		t.Fatalf("all-day provider named a window: %s", openaiRows)
+	if want := "Model for big: deepseek/deepseek-chat"; pinned.notice.text != want {
+		t.Fatalf("confirmation notice = %q, want %q", pinned.notice.text, want)
 	}
 	if openai.notice.text != "Model for big: openai/gpt-5" {
 		t.Fatalf("all-day confirmation = %q, want no window", openai.notice.text)

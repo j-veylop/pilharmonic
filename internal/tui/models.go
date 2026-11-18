@@ -160,9 +160,6 @@ func (m model) applyModelSelection(selector string) model {
 	if agent != "" {
 		notice = "Model for " + agent + ": " + selector
 	}
-	if label := modelRateLabel(selector, time.Now()); label != "" {
-		notice += " · " + label + " now"
-	}
 	if agent != "" {
 		m.notice.text = resultFor(notice, m.service.SetAgentModel(agent, selector)).text()
 	} else {
@@ -258,15 +255,9 @@ func (m model) modelChoiceTag(choice string) string {
 	case modelStepClass:
 		current := m.service.ModelSelection()
 		if choice == orchestrator.ModelClassBig && current.Big != "" {
-			if tag := modelRateTag(current.Big, time.Now()); tag != "" {
-				return accentStyle.Render(current.Big) + mutedStyle.Render(" · ") + tag + mutedStyle.Render(" now")
-			}
 			return accentStyle.Render(current.Big)
 		}
 		if choice == orchestrator.ModelClassSmall && current.Small != "" {
-			if tag := modelRateTag(current.Small, time.Now()); tag != "" {
-				return accentStyle.Render(current.Small) + mutedStyle.Render(" · ") + tag + mutedStyle.Render(" now")
-			}
 			return accentStyle.Render(current.Small)
 		}
 		if (choice == orchestrator.ModelClassBig && current.Big == "") || (choice == orchestrator.ModelClassSmall && current.Small == "") {
@@ -277,7 +268,6 @@ func (m model) modelChoiceTag(choice string) string {
 		if choice == customModelChoice {
 			return mutedStyle.Render("type any ID")
 		}
-		return modelRateTag(m.models.provider+"/"+choice, time.Now())
 	}
 	return ""
 }
@@ -290,15 +280,6 @@ func modelRateLabel(selector string, now time.Time) string {
 	// price table does not list still names peak or off-peak.
 	provider, _, _ := strings.Cut(selector, "/")
 	return orchestrator.ProviderRate(provider, now)
-}
-func modelRateTag(selector string, now time.Time) string {
-	switch modelRateLabel(selector, now) {
-	case orchestrator.RateOffPeak:
-		return accentStyle.Render(orchestrator.RateOffPeak)
-	case orchestrator.RatePeak:
-		return mutedStyle.Render(orchestrator.RatePeak)
-	}
-	return ""
 }
 func (m model) modelEmptyHint() string {
 	switch m.models.step {

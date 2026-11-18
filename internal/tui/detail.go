@@ -82,7 +82,7 @@ func (m model) taskSummary(t orchestrator.Task, add func(...string)) {
 	}
 	if usage := t.Usage(); !usage.IsZero() {
 		add(mutedStyle.Render("Usage: " + terminalText(taskUsageLine(usage))))
-		if price, ok := priceLine(usage.Model, usage.Rate, time.Now()); ok {
+		if price, ok := priceLine(usage.Model, time.Now()); ok {
 			add(mutedStyle.Render(terminalText(price)))
 		}
 	}

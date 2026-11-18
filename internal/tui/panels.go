@@ -222,7 +222,7 @@ func (m model) mainTaskMetaLine(task orchestrator.Task, width int) string {
 	if model := taskModel(task); model != "" {
 		parts = append(parts, mutedStyle.Render(model))
 	}
-	if usage := task.Usage(); !usage.IsZero() {
+	if usage := taskUsageWithSubtasks(task, m.tasks); !usage.IsZero() {
 		available := width - 2 - lipgloss.Width(strings.Join(parts, sep)) - lipgloss.Width(sep)
 		if segment := taskListUsage(usage, available); segment != "" {
 			parts = append(parts, mutedStyle.Render(segment))

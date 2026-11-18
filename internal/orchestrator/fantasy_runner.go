@@ -172,7 +172,7 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 			},
 		})...),
 	)
-	stream := &fantasyStream{transcript: transcript{out: out}, reasoning: map[string]int{}, inFlight: map[string]ToolActivity{}}
+	stream := &fantasyStream{transcript: transcript{out: out}, usageModel: selector, reasoning: map[string]int{}, inFlight: map[string]ToolActivity{}}
 	stream.recorder, _ = out.(ToolActivityRecorder)
 	defer func() {
 		_ = stream.closeThinking()
@@ -196,16 +196,6 @@ func (f FantasyRunner) RunLive(ctx context.Context, t Task, out io.Writer, follo
 			history = append(history, step.Messages...)
 		}
 		if err := stream.flushText(); err != nil {
-			return err
-		}
-		// Fantasy totals one Stream call across its steps and retries, so
-		// recording this total per call counts each token once.
-		if err := adapterUsage(out, selector, TokenUsage{
-			InputTokens:      result.TotalUsage.InputTokens,
-			OutputTokens:     result.TotalUsage.OutputTokens,
-			CacheReadTokens:  result.TotalUsage.CacheReadTokens,
-			CacheWriteTokens: result.TotalUsage.CacheCreationTokens,
-		}); err != nil {
 			return err
 		}
 		if stream.failure != nil {
@@ -286,6 +276,8 @@ func reportFailure(out io.Writer, failure error) error {
 type fantasyStream struct {
 	transcript
 	recorder ToolActivityRecorder
+	// usageModel is the selector this stream reports usage for.
+	usageModel string
 	// reasoning gives each provider reasoning ID a stable display index, so a
 	// late reasoning end cannot close a different block.
 	reasoning map[string]int
@@ -328,7 +320,18 @@ func (s *fantasyStream) call(prompt string, history []fantasy.Message) fantasy.A
 		OnReasoningEnd: func(id string, _ fantasy.ReasoningContent) error { return s.thinkingEnd(s.reasoningIndex(id)) },
 		OnToolCall:     s.toolCall,
 		OnToolResult:   s.toolResult,
-		OnStreamFinish: func(_ fantasy.Usage, reason fantasy.FinishReason, _ fantasy.ProviderMetadata) error {
+		OnStreamFinish: func(usage fantasy.Usage, reason fantasy.FinishReason, _ fantasy.ProviderMetadata) error {
+			// Each step's finish carries that model call's usage. Recording it
+			// here advances the task total while the agent keeps working
+			// instead of only when the whole Stream call returns.
+			if err := adapterUsage(s.out, s.usageModel, TokenUsage{
+				InputTokens:      usage.InputTokens,
+				OutputTokens:     usage.OutputTokens,
+				CacheReadTokens:  usage.CacheReadTokens,
+				CacheWriteTokens: usage.CacheCreationTokens,
+			}); err != nil {
+				return err
+			}
 			// Only these reasons mean the step itself failed; a length or tool
 			// call finish shows in the output and the final result.
 			if reason == fantasy.FinishReasonError || reason == fantasy.FinishReasonContentFilter {

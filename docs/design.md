@@ -184,8 +184,8 @@ subscription itself is not billed per token. Unpriced models report tokens
 without a cost. Task rows abbreviate prompt, output and cache-read tokens with
 `↑`, `↓` and `⚡` glyphs and omit the executor, which routing usually sets to
 `general`; task details keep both. The session total covers attempts started by
-this process; the board shows each task's own total instead of a session total in
-the header. Peak hours are
+this process; the board instead totals each main-view task with its descendants,
+so delegated work is part of the visible usage and cost while it runs. Peak hours are
 01:00–04:00 and 06:00–10:00 UTC on weekdays, excluding Chinese public
 holidays; every other hour, including weekends and holidays, is off-peak.
 While a DeepSeek model is selected, a badge beside the wordmark names peak or

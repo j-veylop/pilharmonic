@@ -134,11 +134,11 @@ func TestSessionUsageResetsOnRestart(t *testing.T) {
 	}
 }
 
-func TestFantasyRunnerRecordsUsagePerStreamCall(t *testing.T) {
-	finish := func(input, output, cacheRead, cacheWrite int64) fantasy.StreamPart {
+func TestFantasyRunnerRecordsUsagePerModelCall(t *testing.T) {
+	finish := func(reason fantasy.FinishReason, input, output, cacheRead, cacheWrite int64) fantasy.StreamPart {
 		return fantasy.StreamPart{
 			Type:         fantasy.StreamPartTypeFinish,
-			FinishReason: fantasy.FinishReasonStop,
+			FinishReason: reason,
 			Usage: fantasy.Usage{
 				InputTokens: input, OutputTokens: output,
 				CacheReadTokens: cacheRead, CacheCreationTokens: cacheWrite,
@@ -151,7 +151,7 @@ func TestFantasyRunnerRecordsUsagePerStreamCall(t *testing.T) {
 			{Type: fantasy.StreamPartTypeTextStart, ID: "text-1"},
 			{Type: fantasy.StreamPartTypeTextDelta, ID: "text-1", Delta: text},
 			{Type: fantasy.StreamPartTypeTextEnd, ID: "text-1"},
-			finish(input, output, cacheRead, cacheWrite),
+			finish(fantasy.FinishReasonStop, input, output, cacheRead, cacheWrite),
 		}
 	}
 	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{
@@ -177,6 +177,48 @@ func TestFantasyRunnerRecordsUsagePerStreamCall(t *testing.T) {
 		{InputTokens: 50, OutputTokens: 20, CacheReadTokens: 5},
 	} {
 		if sink.calls[i].model != "deepseek/deepseek-chat" || sink.calls[i].usage != want {
+			t.Fatalf("call %d = %+v, want %+v", i, sink.calls[i], want)
+		}
+	}
+}
+
+// A single Stream call runs several model/tool steps. Recording each step's
+// finish makes the task usage advance while the run is still in progress.
+func TestFantasyRunnerRecordsUsagePerStep(t *testing.T) {
+	workspace := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(workspace, "note.txt"), []byte("contents"), 0o600))
+	finish := func(reason fantasy.FinishReason, input, output int64) fantasy.StreamPart {
+		return fantasy.StreamPart{
+			Type:         fantasy.StreamPartTypeFinish,
+			FinishReason: reason,
+			Usage:        fantasy.Usage{InputTokens: input, OutputTokens: output},
+		}
+	}
+	model := &fakeFantasyModel{scripts: [][]fantasy.StreamPart{
+		{
+			{Type: fantasy.StreamPartTypeToolCall, ID: "call-1", ToolCallName: "read", ToolCallInput: `{"path":"note.txt"}`},
+			finish(fantasy.FinishReasonToolCalls, 100, 40),
+		},
+		{
+			{Type: fantasy.StreamPartTypeTextStart, ID: "text-1"},
+			{Type: fantasy.StreamPartTypeTextDelta, ID: "text-1", Delta: "read the file"},
+			{Type: fantasy.StreamPartTypeTextEnd, ID: "text-1"},
+			finish(fantasy.FinishReasonStop, 50, 20),
+		},
+	}}
+	runner := FantasyRunner{}
+	runner.ModelFactory = fakeFactory(model, "fake/model")
+
+	sink := &usageSink{}
+	must(t, runner.Run(context.Background(), Task{Prompt: "do work", model: "fake/model", Workspace: workspace}, sink))
+	if len(sink.calls) != 2 {
+		t.Fatalf("usage calls = %+v", sink.calls)
+	}
+	for i, want := range []TokenUsage{
+		{InputTokens: 100, OutputTokens: 40},
+		{InputTokens: 50, OutputTokens: 20},
+	} {
+		if sink.calls[i].model != "fake/model" || sink.calls[i].usage != want {
 			t.Fatalf("call %d = %+v, want %+v", i, sink.calls[i], want)
 		}
 	}

@@ -61,7 +61,7 @@ var helpTopics = []helpTopic{
 			{"Attempt", "One run of a task. Retry keeps the task and adds an attempt."},
 			{"Skill", "Operator instructions an agent loads on demand; /skills enables or disables one for the next attempt."},
 			{"Language check", "Recognized Go, Node/TypeScript, Rust and Python toolchains run after edits; /lsp toggles them."},
-			{"Usage", "Prompt, output and cache tokens with estimated cost per attempt; the board header sums them for this session, subagents included."},
+			{"Usage", "Prompt, output and cache tokens with estimated cost per attempt, recorded as each model call finishes; a main-view task row totals that task and its subtasks."},
 			{"Review", "v opens the exact prepared commit diff; y approves and merges it, n rejects with a reason, and Esc closes. During review, Ctrl-o opens the review task workspace in nvim; Ctrl-g opens lazygit. Ctrl-t opens a terminal in the worktree, on the board or while reviewing, so the project's own checks can run there before approving."},
 		}}},
 	},

@@ -125,10 +125,6 @@ func (m model) activityContent(width int) []string {
 	selected, _, ok := m.selectedActivity()
 	for _, a := range activities {
 		isSelected := ok && a.ID == selected.ID && a.AttemptID == selected.AttemptID
-		marker := "  "
-		if isSelected {
-			marker = "▸ "
-		}
 		style, glyph := toolStatusStyle(a.Status, m.runningGlyph())
 		stamp := a.StartedAt.Local().Format("15:04:05")
 		summary := terminalText(a.Summary())
@@ -137,14 +133,16 @@ func (m model) activityContent(width int) []string {
 			duration = fmt.Sprintf(" · %.0fms", *a.DurationMS)
 		}
 		if isSelected {
-			plain := marker + stamp + " " + glyph
+			// The selection rail occupies the same two cells as the blank
+			// gutter, so moving the cursor never reindents the row.
+			plain := stamp + " " + glyph
 			if summary != "" {
 				plain += " · " + summary
 			}
 			add(selectionRow(plain+duration, width))
 			continue
 		}
-		row := marker + mutedStyle.Render(stamp) + " " + style.Bold(true).Render(glyph)
+		row := "  " + mutedStyle.Render(stamp) + " " + style.Bold(true).Render(glyph)
 		if summary != "" {
 			row += mutedStyle.Render(" · ") + styledToolSummary(a.Summary())
 		}

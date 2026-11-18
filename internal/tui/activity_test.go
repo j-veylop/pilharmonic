@@ -132,6 +132,30 @@ func TestActivityListDistinguishesStatuses(t *testing.T) {
 	}
 }
 
+func TestActivitySelectionKeepsRowsAligned(t *testing.T) {
+	// Moving the cursor must not indent the selected row: the rail stands in
+	// for the blank gutter so every timestamp starts in the same column.
+	m := activityModel()
+	for _, selected := range []string{"one", "two"} {
+		m.activity.id = selected
+		rows := m.activityContent(80)[1:]
+		columns := make([]int, len(rows))
+		for i, row := range rows {
+			plain := ansi.Strip(row)
+			at := strings.IndexAny(plain, "✓⠋")
+			if at < 0 {
+				t.Fatalf("selected %s: row %d has no status glyph: %q", selected, i, plain)
+			}
+			columns[i] = lipgloss.Width(plain[:at])
+		}
+		for i, column := range columns {
+			if column != columns[0] {
+				t.Fatalf("selected %s shifted row %d: status columns %v", selected, i, columns)
+			}
+		}
+	}
+}
+
 func TestActivityFiltersAndCurrentAction(t *testing.T) {
 	task := orchestrator.Task{Status: orchestrator.Running, Attempts: []orchestrator.Attempt{{ID: "old"}, {ID: "new"}}, Activities: []orchestrator.ToolActivity{
 		{ID: "same", AttemptID: "old", Status: "failed"},

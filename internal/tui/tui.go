@@ -504,6 +504,9 @@ func (m model) keyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.takePendingCommand()
 		return m, cmd
 	case m.models.menu:
+		if m.models.step == modelStepCustom {
+			return m.modelCustomKey(msg), nil
+		}
 		return m.modelMenuKey(key)
 	case m.skills.open:
 		return m.skillMenuKey(key)

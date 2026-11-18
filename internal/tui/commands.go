@@ -84,16 +84,10 @@ func (m model) slashCommand(line string) model {
 		m.notice.text = "Theme: " + m.theme
 	case "/model":
 		if arg != "" && !slices.Contains(modelClasses, arg) && !slices.ContainsFunc(m.service.ListAgents(), func(a orchestrator.AgentInfo) bool { return a.Name == arg }) {
-			m.notice.text = "Unknown class: " + arg + " · use big or small"
+			m.notice.text = "Unknown class or agent: " + arg + " · use big, small, or an agent name"
 			return m
 		}
 		m.openModelMenu(arg)
-		if arg == "" {
-			m.models.step = modelStepClass
-		} else if !slices.Contains(modelClasses, arg) {
-			m.models.step = modelStepAgent
-			m.models.agent = ""
-		}
 	case "/skills":
 		m.openSkillMenu()
 	case "/logout":

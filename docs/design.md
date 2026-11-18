@@ -107,8 +107,9 @@ keep the prompt they started with. Enabling a skill restores its instructions;
 neither direction changes the mandate or the profile's tool palette.
 
 The service resolves a Fantasy attempt's model as the task profile model, else
-the agent-specific model (`models.json`) if set, then its class model (`general` is big, specialists small),
-else the specialist model (`profiles.json`), else `-model`. A profile or
+the agent-specific custom model (`models.json`) if set, then its assigned or
+default class model (`general` is big, specialists small), else the specialist
+model (`profiles.json`), else `-model`. A profile or
 specialist model of `big` or `small` stands for that class's model, and a
 specialist alias also sets its class; an alias whose class is unset is skipped,
 never sent to a provider. It fixes the selector on the attempt and the adapter

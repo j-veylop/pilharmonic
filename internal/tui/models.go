@@ -15,6 +15,7 @@ type modelStep int
 const (
 	modelStepClass modelStep = iota
 	modelStepAgent
+	modelStepAgentModel
 	modelStepProvider
 	modelStepModel
 	modelStepCustom
@@ -27,6 +28,8 @@ func (m model) modelChoices() []string {
 	switch m.models.step {
 	case modelStepClass:
 		return append(append([]string(nil), modelClasses...), "Agents…")
+	case modelStepAgentModel:
+		return append(append([]string(nil), modelClasses...), customModelChoice)
 	case modelStepAgent:
 		names := make([]string, 0)
 		for _, agent := range m.service.ListAgents() {
@@ -54,55 +57,61 @@ func (m model) modelChoices() []string {
 }
 func (m model) modelMenuTitle() string {
 	switch m.models.step {
+	case modelStepAgent:
+		return "Select an agent"
+	case modelStepAgentModel:
+		return "Select a model for " + m.models.agent
 	case modelStepProvider:
-		return "Select a provider for " + m.models.class
+		target := m.models.class
+		if m.models.agent != "" {
+			target = m.models.agent
+		}
+		return "Select a provider for " + target
 	case modelStepModel:
 		return "Select a model (" + m.models.provider + ")"
 	case modelStepCustom:
 		return "Enter a model ID (" + m.models.provider + ")"
 	}
-	switch m.models.step {
-	case modelStepAgent:
-		return "Select an agent"
-	}
-	if m.models.step == modelStepClass {
-		return "Select a model class or agent"
-	}
-	return "Select a model class"
+	return "Select a model class or agent"
 }
-func (m *model) openModelMenu(class string) {
-	m.models = modelMenuState{menu: true, class: class}
+func (m *model) openModelMenu(target string) {
+	m.models = modelMenuState{menu: true}
 	m.router.open = false
-	m.notice.text = "Select a model class or agent"
-	if class == orchestrator.ModelClassBig || class == orchestrator.ModelClassSmall {
-		m.models.step = modelStepProvider
-		m.notice.text = "Select a provider for " + class
-	} else if class != "" {
-		m.models.agent = class
-		m.notice.text = "Select a model class for " + class
+	switch target {
+	case orchestrator.ModelClassBig, orchestrator.ModelClassSmall:
+		m.models.step, m.models.class = modelStepProvider, target
+	case "":
+	default:
+		m.models.step, m.models.agent = modelStepAgentModel, target
 	}
+	m.notice.text = m.modelMenuTitle()
 }
 func (m model) modelMenuKey(key string) (model, tea.Cmd) {
-	if m.models.step == modelStepCustom {
-		return m.modelCustomKey(key), nil
-	}
 	choices := m.modelChoices()
 	if m.listMenuKey(key, &m.models.index, len(choices)) {
 		return m, nil
 	}
 	switch key {
 	case "esc":
-		if m.models.step == modelStepAgent && m.models.agent != "" {
-			m.models.agent, m.models.class, m.models.index = "", "", 0
-			return m, nil
-		}
-		if m.models.step == modelStepClass || m.models.step == modelStepAgent {
+		switch m.models.step {
+		case modelStepClass:
 			m.models.menu = false
 			m.notice.text = "Model menu closed"
 			return m, nil
+		case modelStepAgent:
+			m.models.step = modelStepClass
+		case modelStepAgentModel:
+			m.models.step, m.models.agent = modelStepAgent, ""
+		case modelStepProvider:
+			m.models.step, m.models.class = modelStepClass, ""
+			if m.models.agent != "" {
+				m.models.step = modelStepAgentModel
+			}
+		case modelStepModel:
+			m.models = modelMenuState{menu: true, step: modelStepProvider, class: m.models.class, agent: m.models.agent}
 		}
-		m.models.step--
 		m.models.index = 0
+		m.notice.text = m.modelMenuTitle()
 	case "enter":
 		if len(choices) == 0 {
 			m.notice.text = "Nothing to choose"
@@ -121,21 +130,16 @@ func (m model) selectModelChoice(choice string) (model, tea.Cmd) {
 			m.notice.text = "Select an agent"
 			return m, nil
 		}
-		if m.models.agent != "" {
-			m.models.menu = false
-			m.notice.text = resultFor("Model class for "+m.models.agent+": "+choice, m.service.SetAgentModel(m.models.agent, choice)).text()
-			return m, nil
-		}
-		m.models.class = choice
-		m.models.step = modelStepProvider
-		m.models.index = 0
-		m.notice.text = "Select a provider for " + choice
+		m.openModelMenu(choice)
 	case modelStepAgent:
-		m.models.agent = choice
-		m.models.index = 0
-		m.models.step = modelStepClass
-		m.models.class = "agent:" + choice
-		m.notice.text = "Select a model class for " + choice
+		m.models = modelMenuState{menu: true, step: modelStepAgentModel, agent: choice}
+		m.notice.text = m.modelMenuTitle()
+	case modelStepAgentModel:
+		if choice != customModelChoice {
+			return m.applyModelSelection(choice), nil
+		}
+		m.models.step, m.models.index = modelStepProvider, 0
+		m.notice.text = m.modelMenuTitle()
 	case modelStepProvider:
 		m.models = modelMenuState{menu: true, step: modelStepModel, class: m.models.class, agent: m.models.agent, provider: choice, loading: true}
 		return m, fetchModelsCmd(m.service, choice)
@@ -166,7 +170,7 @@ func (m model) applyModelSelection(selector string) model {
 	return m
 }
 func (m *model) fetchedModels(msg fetchModelsMsg) {
-	if msg.provider != m.models.provider {
+	if !m.models.menu || m.models.step != modelStepModel || msg.provider != m.models.provider {
 		return
 	}
 	m.models.loading = false
@@ -190,39 +194,32 @@ func fetchModelsCmd(service Service, provider string) tea.Cmd {
 		return fetchModelsMsg{provider: provider, models: models, err: err}
 	}
 }
-func (m model) modelCustomKey(key string) model {
-	switch key {
-	case "ctrl+c":
+func (m model) modelCustomKey(msg tea.KeyMsg) model {
+	switch msg.Type {
+	case tea.KeyCtrlC:
 		return m.requestQuit()
-	case "enter":
+	case tea.KeyEnter:
 		id := strings.TrimSpace(m.models.customInput)
 		if id == "" {
 			m.notice.text = "Enter a model ID"
 			return m
 		}
 		return m.applyModelSelection(m.models.provider + "/" + id)
-	case "esc":
+	case tea.KeyEsc:
 		m.models.step = modelStepModel
 		m.models.index = 0
 		m.models.customInput = ""
-	case "backspace", "ctrl+h":
+	case tea.KeyBackspace, tea.KeyCtrlH:
 		m.models.customInput = trimLastRune(m.models.customInput)
 	default:
-		if modelTextKey(key) {
-			m.models.customInput += key
+		if msg.Type == tea.KeyRunes && !msg.Alt {
+			id := string(msg.Runes)
+			if strings.IndexFunc(id, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) < 0 {
+				m.models.customInput += id
+			}
 		}
 	}
 	return m
-}
-func modelTextKey(key string) bool {
-	if key == "" || strings.Contains(key, "+") || strings.IndexFunc(key, unicode.IsControl) >= 0 {
-		return false
-	}
-	switch key {
-	case "tab", "enter", "esc", "backspace", "delete", "insert", "space", "home", "end", "up", "down", "left", "right", "pgup", "pgdown":
-		return false
-	}
-	return true
 }
 func (m model) modelMenuView(background string, w, h int) string {
 	choices := m.modelChoices()
@@ -246,14 +243,17 @@ func (m model) modelMenuView(background string, w, h int) string {
 func (m model) modelChoiceTag(choice string) string {
 	switch m.models.step {
 	case modelStepAgent:
-		for _, agent := range m.service.ListAgents() {
-			if agent.Name == choice {
-				if class := m.service.ModelSelection().Agents[choice]; class != "" {
-					return accentStyle.Render(class)
-				}
-			}
+		if selector := m.service.ModelSelection().Agents[choice]; selector != "" {
+			return accentStyle.Render(terminalText(selector))
 		}
-		return ""
+	case modelStepAgentModel:
+		selector := m.service.ModelSelection().Agents[m.models.agent]
+		if selector == choice {
+			return accentStyle.Render("selected")
+		}
+		if choice == customModelChoice && strings.Contains(selector, "/") {
+			return accentStyle.Render(terminalText(selector))
+		}
 	case modelStepClass:
 		current := m.service.ModelSelection()
 		if choice == orchestrator.ModelClassBig && current.Big != "" {

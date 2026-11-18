@@ -130,6 +130,7 @@ var helpTopics = []helpTopic{
 			{"Left / Right", "One character (also Ctrl-b / Ctrl-f)"},
 			{"Ctrl-← / →", "One word (also Alt-b / Alt-f)"},
 			{"Up / Down", "One wrapped line (also Ctrl-p / Ctrl-n)"},
+			{"Up / Down at edge", "Request box: earlier / later submitted request"},
 			{"Home / End", "Line start / line end (also Ctrl-a / Ctrl-e)"},
 			{"PgUp / PgDn", "Move through long input"},
 		}}},

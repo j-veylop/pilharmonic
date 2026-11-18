@@ -45,10 +45,67 @@ func routeNotice(task orchestrator.Task) string {
 	return "Request accepted · " + terminalText(executorLabel(task)) + " · " + string(task.Status) + " · " + workspace + " — " + terminalText(task.Title)
 }
 
-func (m *model) clearRouterDraft() { m.router.Editor = editor.Editor{} }
+func (m *model) clearRouterDraft() {
+	m.router.Editor = editor.Editor{}
+	m.router.history = m.router.history.reset()
+}
+
+// requestHistory remembers submitted requests so Up and Down can recall them,
+// like a shell. It lives only for the session; durable history is the tasks.
+// index == len(entries) means the operator is not browsing, and draft holds
+// the unsent text that browsing replaced.
+type requestHistory struct {
+	entries []string
+	index   int
+	draft   string
+}
+
+// record appends a submitted request, skipping an immediate repeat.
+func (h requestHistory) record(text string) requestHistory {
+	if n := len(h.entries); n == 0 || h.entries[n-1] != text {
+		h.entries = append(h.entries[:n:n], text)
+	}
+	return h.reset()
+}
+
+func (h requestHistory) reset() requestHistory {
+	h.index, h.draft = len(h.entries), ""
+	return h
+}
+
+// browseHistory moves through submitted requests and reports whether it did.
+// It only acts when the cursor cannot move further in the draft, so Up and
+// Down still edit multi-line text.
+func (m *model) browseHistory(delta int) bool {
+	h, e := m.router.history, &m.router.Editor
+	if h.index > len(h.entries) {
+		h = h.reset()
+	}
+	atEdge := e.OnFirstLine(m.composerWidth())
+	if delta > 0 {
+		atEdge = e.OnLastLine(m.composerWidth())
+	}
+	target := h.index + delta
+	if !atEdge || target < 0 || target > len(h.entries) {
+		return false
+	}
+	if h.index == len(h.entries) {
+		h.draft = e.Text
+	}
+	text := h.draft
+	if target < len(h.entries) {
+		text = h.entries[target]
+	}
+	h.index = target
+	e.Text, e.Cursor = text, len(text)
+	e.HandleKey(tea.KeyMsg{Type: tea.KeyCtrlEnd}, m.composerWidth(), m.composerHeight())
+	m.router.history = h
+	return true
+}
 
 // routerKey handles the request box. Typing goes to the draft; Tab completes a
-// leading @executor mention.
+// leading @executor mention; Up and Down recall earlier requests from the
+// draft's first and last line.
 func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	switch key := msg.String(); key {
 	case "ctrl+c":
@@ -62,6 +119,14 @@ func (m model) routerKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.completeRouterMention()
 	case "enter", "ctrl+s":
 		return m.submitRequest(key == "ctrl+s")
+	case "up", "down":
+		delta := 1
+		if key == "up" {
+			delta = -1
+		}
+		if !m.browseHistory(delta) {
+			m.router.HandleKey(msg, m.composerWidth(), m.composerHeight())
+		}
 	default:
 		m.router.HandleKey(msg, m.composerWidth(), m.composerHeight())
 	}
@@ -84,6 +149,7 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 	text := strings.TrimSpace(m.router.Text)
 	switch {
 	case strings.HasPrefix(text, "/"):
+		m.router.history = m.router.history.record(text)
 		m = m.slashCommand(text)
 		m.clearRouterDraft()
 		cmd := m.takePendingCommand()
@@ -101,6 +167,7 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 			m.notice.text = "Ctrl-s holds new tasks; this message continues the selected task."
 			return m, nil
 		}
+		m.router.history = m.router.history.record(text)
 		service, id, attachments := m.service, target.ID, append([]string(nil), m.attachments...)
 		return m, func() tea.Msg {
 			prompt, err := composeRequest(text, attachments)
@@ -114,6 +181,7 @@ func (m model) submitRequest(hold bool) (model, tea.Cmd) {
 			return routerResultMsg{task: target, notice: notice, err: err}
 		}
 	}
+	m.router.history = m.router.history.record(text)
 	service, workspace, attachments := m.service, m.workspace, append([]string(nil), m.attachments...)
 	if hold {
 		return m, func() tea.Msg {

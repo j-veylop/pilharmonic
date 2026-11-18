@@ -33,6 +33,35 @@ func TestDeepSeekOffPeakBoundaries(t *testing.T) {
 	}
 }
 
+// TestProviderRateNamesTheWindowForAnyModel covers the badge on selectors the
+// curated price table does not list: the window belongs to the provider, so any
+// DeepSeek model carries it, while all-day and unknown providers carry none.
+func TestProviderRateNamesTheWindowForAnyModel(t *testing.T) {
+	peak := time.Date(2025, 9, 1, 12, 0, 0, 0, time.UTC)
+	offPeak := time.Date(2025, 9, 1, 20, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		provider string
+		at       time.Time
+		want     string
+	}{
+		{"deepseek", peak, RatePeak},
+		{"DeepSeek", offPeak, RateOffPeak},
+		{" deepseek ", offPeak, RateOffPeak},
+		{"openai", offPeak, ""},
+		{"openrouter", offPeak, ""},
+		{"", offPeak, ""},
+	} {
+		if got := ProviderRate(tc.provider, tc.at); got != tc.want {
+			t.Errorf("%q at %s: rate %q, want %q", tc.provider, tc.at.Format("15:04"), got, tc.want)
+		}
+	}
+	// Naming the provider window must not invent a price for a model the
+	// curated table does not list.
+	if _, ok := PriceFor("deepseek/deepseek-flash", offPeak); ok {
+		t.Errorf("unpriced DeepSeek model gained a curated cost")
+	}
+}
+
 // TestPriceForDeepSeekDiscountedRates checks both DeepSeek models apply their
 // own off-peak pair rather than one shared discount: deepseek-chat is half
 // price, deepseek-reasoner is 75% off input and half price on output.

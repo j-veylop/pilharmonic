@@ -74,6 +74,27 @@ func deepseekOffPeak(t time.Time) bool {
 	return minutes >= 16*60+30 || minutes < 30
 }
 
+// providerWindows maps a provider prefix to the window function for a daily
+// discount it publishes. The window belongs to the provider, so it can be
+// named for any model under that prefix even when the curated price table does
+// not list the individual model.
+var providerWindows = map[string]func(time.Time) bool{
+	"deepseek": deepseekOffPeak,
+}
+
+// ProviderRate names the time-of-day price in force at t for a provider that
+// publishes a daily discount window, or "" for one priced the same all day.
+func ProviderRate(provider string, t time.Time) string {
+	window, ok := providerWindows[strings.ToLower(strings.TrimSpace(provider))]
+	if !ok {
+		return ""
+	}
+	if window(t) {
+		return RateOffPeak
+	}
+	return RatePeak
+}
+
 // Rate names the price in force at t: peak, off-peak, or empty for a model
 // priced the same all day.
 func (p ModelPrice) Rate(t time.Time) string {

@@ -760,8 +760,10 @@ func TestModelRateWindows(t *testing.T) {
 	}{
 		{"deepseek/deepseek-chat", peak, orchestrator.RatePeak},
 		{"deepseek/deepseek-reasoner", offPeak, orchestrator.RateOffPeak},
+		{"deepseek/deepseek-flash", offPeak, orchestrator.RateOffPeak},
+		{"deepseek/deepseek-unlisted", peak, orchestrator.RatePeak},
 		{"openai/gpt-5", offPeak, ""},
-		{"deepseek/deepseek-unlisted", offPeak, ""},
+		{"openai/gpt-unlisted", offPeak, ""},
 		{"custom/model", offPeak, ""},
 	} {
 		if got := modelRateLabel(tc.selector, tc.at); got != tc.want {
@@ -834,6 +836,16 @@ func TestModelRateWindowNextToWordmark(t *testing.T) {
 	}
 	if got := openai.headerRateBadge(offPeak); got != "" {
 		t.Errorf("all-day provider showed a header badge: %q", got)
+	}
+	flashService := deepSeekMenuService()
+	flashService.overrides = orchestrator.ModelSelection{Small: "deepseek/deepseek-flash"}
+	flash := model{service: flashService}
+	if got := ansi.Strip(flash.headerRateBadge(offPeak)); got != "deepseek ✓ off-peak" {
+		t.Errorf("unpriced DeepSeek model lost its header badge: %q", got)
+	}
+	openaiUnlisted := model{service: &fakeLoginService{overrides: orchestrator.ModelSelection{Small: "openai/gpt-unlisted"}}}
+	if got := openaiUnlisted.headerRateBadge(offPeak); got != "" {
+		t.Errorf("unpriced all-day model showed a header badge: %q", got)
 	}
 	agentOnly := model{service: &fakeLoginService{overrides: orchestrator.ModelSelection{
 		Big:    "openai/gpt-5",

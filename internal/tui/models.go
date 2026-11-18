@@ -282,11 +282,14 @@ func (m model) modelChoiceTag(choice string) string {
 	return ""
 }
 func modelRateLabel(selector string, now time.Time) string {
-	price, known := orchestrator.PriceFor(selector, now)
-	if !known || !price.TimeOfDay {
-		return ""
+	price, _ := orchestrator.PriceFor(selector, now)
+	if price.TimeOfDay {
+		return price.Rate(now)
 	}
-	return price.Rate(now)
+	// The window belongs to the provider, so a DeepSeek model that the curated
+	// price table does not list still names peak or off-peak.
+	provider, _, _ := strings.Cut(selector, "/")
+	return orchestrator.ProviderRate(provider, now)
 }
 func modelRateTag(selector string, now time.Time) string {
 	switch modelRateLabel(selector, now) {
